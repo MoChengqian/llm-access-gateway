@@ -4,5 +4,8 @@ server:
 log:
   level: info
 
+mysql:
+  dsn: ""
+
 gateway:
   default_model: gpt-4o-mini

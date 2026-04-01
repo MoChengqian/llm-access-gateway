@@ -9,6 +9,7 @@ import (
 type Config struct {
 	Server  ServerConfig  `mapstructure:"server" json:"server"`
 	Log     LogConfig     `mapstructure:"log" json:"log"`
+	MySQL   MySQLConfig   `mapstructure:"mysql" json:"mysql"`
 	Gateway GatewayConfig `mapstructure:"gateway" json:"gateway"`
 }
 
@@ -18,6 +19,10 @@ type ServerConfig struct {
 
 type LogConfig struct {
 	Level string `mapstructure:"level" json:"level"`
+}
+
+type MySQLConfig struct {
+	DSN string `mapstructure:"dsn" json:"dsn"`
 }
 
 type GatewayConfig struct {
@@ -52,5 +57,6 @@ func Load() (Config, error) {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.address", ":8080")
 	v.SetDefault("log.level", "info")
+	v.SetDefault("mysql.dsn", "")
 	v.SetDefault("gateway.default_model", "gpt-4o-mini")
 }

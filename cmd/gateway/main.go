@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"os"
@@ -10,9 +11,12 @@ import (
 	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/api"
+	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
+	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
+	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
 )
 
@@ -33,12 +37,30 @@ func main() {
 		_ = logger.Sync()
 	}()
 
+	if cfg.MySQL.DSN == "" {
+		logger.Fatal("mysql dsn is required", zap.String("field", "mysql.dsn"))
+	}
+
+	db, err := sql.Open("mysql", cfg.MySQL.DSN)
+	if err != nil {
+		logger.Fatal("mysql open failed", zap.Error(err))
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	if err := db.PingContext(context.Background()); err != nil {
+		logger.Fatal("mysql ping failed", zap.Error(err))
+	}
+
+	authStore := mysqlstore.NewAuthStore(db)
+	authService := auth.NewService(authStore)
 	chatProvider := providermock.New()
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService),
+		Handler:           api.NewRouter(logger, chatService, authService),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -1,0 +1,356 @@
+# Local Development
+
+This document is the shortest path to run the current repository locally with
+MySQL-backed auth enabled.
+
+All commands below are based on the current code and current repo layout:
+
+- MySQL compose: `deployments/docker/docker-compose.yml`
+- local init command: `go run ./cmd/devinit`
+- gateway command: `go run ./cmd/gateway`
+
+## Verified Local Path
+
+The current local verification path for this repo is:
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml up -d
+export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+go run ./cmd/devinit
+go run ./cmd/gateway
+```
+
+The expected API results are:
+
+- missing key -> `401`
+- invalid key -> `401`
+- valid key -> `200`
+- `stream:true` -> `text/event-stream` and final `[DONE]`
+
+## Prerequisites
+
+- Docker Desktop is running
+- `docker` and `docker compose` are available
+- Go is installed
+- current working directory is the repo root:
+  `/Users/luan/Desktop/llm-access-gateway`
+
+## 1. Start Docker MySQL
+
+Run:
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml up -d
+```
+
+Expected output:
+
+```text
+[+] Running ...
+ ✔ Container llm-access-gateway-mysql Started
+```
+
+The compose file creates:
+
+- database: `llm_access_gateway`
+- user: `user`
+- password: `pass`
+- port: `3306`
+
+## 2. Wait for MySQL Ready
+
+Run:
+
+```bash
+until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql)" = "healthy" ]; do
+  sleep 1
+done
+
+docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql
+```
+
+Expected output:
+
+```text
+healthy
+```
+
+If you want to inspect container state:
+
+```bash
+docker ps --filter name=llm-access-gateway-mysql
+docker logs llm-access-gateway-mysql
+```
+
+## 3. Configure APP_MYSQL_DSN
+
+Run:
+
+```bash
+export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+```
+
+Expected output:
+
+```text
+# no output
+```
+
+This DSN matches the compose file exactly.
+
+## 4. Initialize Local Tenant and API Key
+
+Run:
+
+```bash
+go run ./cmd/devinit
+```
+
+Expected output:
+
+```text
+development auth seed ready
+tenant=local-dev
+api_key=lag-local-dev-key
+```
+
+What this command does:
+
+- ensures the `tenants` table exists
+- ensures the `api_keys` table exists
+- creates or updates tenant `local-dev`
+- creates or updates one valid API key: `lag-local-dev-key`
+
+## 5. Start the Gateway
+
+In a separate terminal, still at repo root, run:
+
+```bash
+export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+go run ./cmd/gateway
+```
+
+Expected output:
+
+```text
+INFO gateway starting address=:8080
+```
+
+If startup succeeds, the gateway is listening on:
+
+```text
+http://127.0.0.1:8080
+```
+
+## 6. Verify Missing API Key
+
+Run:
+
+```bash
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Expected response:
+
+```text
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer
+...
+{"error":"missing api key"}
+```
+
+## 7. Verify Invalid API Key
+
+Run:
+
+```bash
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer invalid-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Expected response:
+
+```text
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer
+...
+{"error":"invalid api key"}
+```
+
+## 8. Verify Valid API Key
+
+Run:
+
+```bash
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Expected response:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+...
+{"id":"chatcmpl-mock","object":"chat.completion",...}
+```
+
+The body should contain mock assistant content from the current provider
+implementation.
+
+## 9. Verify SSE Streaming
+
+Run:
+
+```bash
+curl -i -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+Expected response:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+...
+data: {"id":"chatcmpl-mock","object":"chat.completion.chunk",...}
+
+data: [DONE]
+```
+
+The key checks for streaming are:
+
+- response header includes `Content-Type: text/event-stream`
+- response contains multiple `data:` events
+- response ends with `data: [DONE]`
+
+## 10. Optional Cleanup
+
+Stop the gateway with `Ctrl+C`.
+
+Stop MySQL:
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml down
+```
+
+If you want to remove persisted database data too:
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml down -v
+```
+
+## Common Errors
+
+### 3306 port occupied
+
+Symptom:
+
+```text
+Bind for 0.0.0.0:3306 failed
+```
+
+Check:
+
+```bash
+lsof -nP -iTCP:3306 -sTCP:LISTEN
+```
+
+Fix:
+
+- stop the process already using `3306`
+- or stop your local MySQL if it is already running
+- then rerun:
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml up -d
+```
+
+### 8080 port occupied
+
+Symptom:
+
+```text
+listen tcp :8080: bind: address already in use
+```
+
+Check:
+
+```bash
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+```
+
+Fix option 1:
+
+- stop the existing process using `8080`
+
+Fix option 2:
+
+```bash
+export APP_SERVER_ADDRESS='127.0.0.1:18080'
+go run ./cmd/gateway
+```
+
+Then use `http://127.0.0.1:18080` in your curl commands.
+
+### connection refused
+
+Common causes:
+
+- MySQL container is not ready yet
+- gateway is not running
+- wrong port
+
+Checks:
+
+```bash
+docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+```
+
+Fix:
+
+- wait until MySQL is `healthy`
+- rerun `go run ./cmd/devinit`
+- restart `go run ./cmd/gateway`
+
+### access denied
+
+Symptom:
+
+```text
+Error 1045 (28000): Access denied
+```
+
+Cause:
+
+- `APP_MYSQL_DSN` does not match the compose credentials
+
+Use the exact DSN below:
+
+```bash
+export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+```
+
+If you changed the compose credentials, update the DSN to match.
+
+### `.zshrc` 报错与项目无关
+
+You may see shell startup noise like:
+
+```text
+/Users/luan/.zshrc:source:17: no such file or directory: ...
+```
+
+This is a local shell initialization issue. It is not caused by the
+`llm-access-gateway` repo itself.
+
+If the command still runs afterward, you can ignore it for this project.
