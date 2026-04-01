@@ -1,0 +1,8 @@
+server:
+  address: ":8080"
+
+log:
+  level: info
+
+gateway:
+  default_model: gpt-4o-mini
