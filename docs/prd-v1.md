@@ -8,10 +8,12 @@ Ship the minimum runnable gateway service that can start, expose basic health en
 
 - Load config from `configs/config.yaml`
 - Start a Go HTTP server
+- Keep a clear `api -> service -> provider` layering
 - Expose `GET /healthz`
 - Expose `GET /readyz`
 - Expose `POST /v1/chat/completions`
 - Return a mock JSON completion response
+- Use a mock chat provider behind a provider interface
 - Emit structured request logs with request IDs
 
 ## Out of scope

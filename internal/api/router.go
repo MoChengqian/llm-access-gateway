@@ -1,10 +1,10 @@
-package http
+package api
 
 import (
 	"net/http"
 	"time"
 
-	"github.com/MoChengqian/llm-access-gateway/internal/http/handlers"
+	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"

@@ -3,22 +3,26 @@ package chat
 import (
 	"context"
 	"errors"
-	"time"
+
+	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
 
 var ErrInvalidRequest = errors.New("messages are required")
 
 type Service interface {
 	CreateCompletion(ctx context.Context, req CompletionRequest) (CompletionResponse, error)
+	StreamCompletion(ctx context.Context, req CompletionRequest) (<-chan CompletionChunk, error)
 }
 
-type MockService struct {
+type service struct {
 	defaultModel string
+	provider     provider.ChatCompletionProvider
 }
 
 type CompletionRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
+	Stream   bool      `json:"stream"`
 }
 
 type Message struct {
@@ -47,13 +51,92 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-func NewMockService(defaultModel string) MockService {
-	return MockService{defaultModel: defaultModel}
+type CompletionChunk struct {
+	ID      string        `json:"id"`
+	Object  string        `json:"object"`
+	Created int64         `json:"created"`
+	Model   string        `json:"model"`
+	Choices []ChunkChoice `json:"choices"`
 }
 
-func (s MockService) CreateCompletion(_ context.Context, req CompletionRequest) (CompletionResponse, error) {
+type ChunkChoice struct {
+	Index        int        `json:"index"`
+	Delta        ChunkDelta `json:"delta"`
+	FinishReason string     `json:"finish_reason"`
+}
+
+type ChunkDelta struct {
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+func NewService(defaultModel string, chatProvider provider.ChatCompletionProvider) Service {
+	return service{
+		defaultModel: defaultModel,
+		provider:     chatProvider,
+	}
+}
+
+func (s service) CreateCompletion(ctx context.Context, req CompletionRequest) (CompletionResponse, error) {
+	providerReq, err := s.prepareProviderRequest(req)
+	if err != nil {
+		return CompletionResponse{}, err
+	}
+
+	providerResp, err := s.provider.CreateChatCompletion(ctx, providerReq)
+	if err != nil {
+		return CompletionResponse{}, err
+	}
+
+	return CompletionResponse{
+		ID:      providerResp.ID,
+		Object:  providerResp.Object,
+		Created: providerResp.Created,
+		Model:   providerResp.Model,
+		Choices: toChoices(providerResp.Choices),
+		Usage: Usage{
+			PromptTokens:     providerResp.Usage.PromptTokens,
+			CompletionTokens: providerResp.Usage.CompletionTokens,
+			TotalTokens:      providerResp.Usage.TotalTokens,
+		},
+	}, nil
+}
+
+func (s service) StreamCompletion(ctx context.Context, req CompletionRequest) (<-chan CompletionChunk, error) {
+	providerReq, err := s.prepareProviderRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	providerChunks, err := s.provider.StreamChatCompletion(ctx, providerReq)
+	if err != nil {
+		return nil, err
+	}
+
+	serviceChunks := make(chan CompletionChunk)
+	go func() {
+		defer close(serviceChunks)
+		for chunk := range providerChunks {
+			select {
+			case <-ctx.Done():
+				return
+			case serviceChunks <- CompletionChunk{
+				ID:      chunk.ID,
+				Object:  chunk.Object,
+				Created: chunk.Created,
+				Model:   chunk.Model,
+				Choices: toChunkChoices(chunk.Choices),
+			}:
+			}
+		}
+	}()
+
+	return serviceChunks, nil
+}
+
+func (s service) prepareProviderRequest(req CompletionRequest) (provider.ChatCompletionRequest, error) {
 	if len(req.Messages) == 0 {
-		return CompletionResponse{}, ErrInvalidRequest
+		return provider.ChatCompletionRequest{}, ErrInvalidRequest
 	}
 
 	model := req.Model
@@ -61,25 +144,59 @@ func (s MockService) CreateCompletion(_ context.Context, req CompletionRequest) 
 		model = s.defaultModel
 	}
 
-	return CompletionResponse{
-		ID:      "chatcmpl-mock",
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   model,
-		Choices: []Choice{
-			{
-				Index: 0,
-				Message: Message{
-					Role:    "assistant",
-					Content: "This is a mock response from LLM Access Gateway.",
-				},
-				FinishReason: "stop",
-			},
-		},
-		Usage: Usage{
-			PromptTokens:     0,
-			CompletionTokens: 0,
-			TotalTokens:      0,
-		},
+	return provider.ChatCompletionRequest{
+		Model:    model,
+		Messages: toProviderMessages(req.Messages),
+		Stream:   req.Stream,
 	}, nil
+}
+
+func toProviderMessages(messages []Message) []provider.ChatMessage {
+	providerMessages := make([]provider.ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		providerMessages = append(providerMessages, provider.ChatMessage{
+			Role:    message.Role,
+			Content: message.Content,
+		})
+	}
+
+	return providerMessages
+}
+
+func toChoices(choices []provider.ChatChoice) []Choice {
+	serviceChoices := make([]Choice, 0, len(choices))
+	for _, choice := range choices {
+		serviceChoices = append(serviceChoices, Choice{
+			Index: choice.Index,
+			Message: Message{
+				Role:    choice.Message.Role,
+				Content: choice.Message.Content,
+			},
+			FinishReason: choice.FinishReason,
+		})
+	}
+
+	return serviceChoices
+}
+
+func toChunkChoices(choices []provider.ChatChoice) []ChunkChoice {
+	serviceChoices := make([]ChunkChoice, 0, len(choices))
+	for _, choice := range choices {
+		serviceChoice := ChunkChoice{
+			Index:        choice.Index,
+			FinishReason: choice.FinishReason,
+		}
+
+		if choice.Message.Role != "" {
+			serviceChoice.Delta.Role = choice.Message.Role
+		}
+
+		if choice.Message.Content != "" {
+			serviceChoice.Delta.Content = choice.Message.Content
+		}
+
+		serviceChoices = append(serviceChoices, serviceChoice)
+	}
+
+	return serviceChoices
 }

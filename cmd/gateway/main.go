@@ -9,8 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/api"
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
-	httpserver "github.com/MoChengqian/llm-access-gateway/internal/http"
+	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"go.uber.org/zap"
 )
@@ -32,11 +33,12 @@ func main() {
 		_ = logger.Sync()
 	}()
 
-	chatService := chat.NewMockService(cfg.Gateway.DefaultModel)
+	chatProvider := providermock.New()
+	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           httpserver.NewRouter(logger, chatService),
+		Handler:           api.NewRouter(logger, chatService),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
