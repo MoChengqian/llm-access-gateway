@@ -106,39 +106,42 @@ For local development, `go run ./cmd/devinit` seeds:
 The gateway stores and looks up the SHA-256 hash of the API key. It does not
 store raw API keys in MySQL.
 
-## Non-Streaming Example
+## API Quick Checks
 
-After `go run ./cmd/devinit` and `go run ./cmd/gateway`:
+After `go run ./cmd/devinit` and `go run ./cmd/gateway`, you can use this
+single-screen checklist directly:
 
 ```bash
+# missing key -> 401
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+
+# invalid key -> 401
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer invalid-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+
+# valid key, non-stream -> 200 JSON
 curl -i http://127.0.0.1:8080/v1/chat/completions \
   -H 'Authorization: Bearer lag-local-dev-key' \
   -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"hello"}]}'
-```
 
-Expected response characteristics:
-
-- status `200 OK`
-- `Content-Type: application/json`
-- response body contains `"object":"chat.completion"`
-- mock content contains `This is a mock response from LLM Access Gateway.`
-
-## Streaming Example
-
-```bash
+# valid key, stream -> text/event-stream + [DONE]
 curl -i -N http://127.0.0.1:8080/v1/chat/completions \
   -H 'Authorization: Bearer lag-local-dev-key' \
   -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
-Expected response characteristics:
+Expected results:
 
-- status `200 OK`
-- `Content-Type: text/event-stream`
-- multiple `data: {...}` chunks
-- final `data: [DONE]`
+- missing key -> `401` and `{"error":"missing api key"}`
+- invalid key -> `401` and `{"error":"invalid api key"}`
+- valid key -> `200` with `"object":"chat.completion"`
+- `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
 
 ## Local Development Entry
 
