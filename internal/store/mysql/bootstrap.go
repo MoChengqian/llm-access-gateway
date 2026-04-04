@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS tenants (
     name VARCHAR(255) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     rpm_limit INT NOT NULL DEFAULT 60,
+    tpm_limit INT NOT NULL DEFAULT 4000,
+    token_budget INT NOT NULL DEFAULT 1000000,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
@@ -83,6 +85,8 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 		createTenantsTableSQL,
 		createAPIKeysTableSQL,
 		createRequestUsagesTableSQL,
+		`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tpm_limit INT NOT NULL DEFAULT 4000 AFTER rpm_limit`,
+		`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS token_budget INT NOT NULL DEFAULT 1000000 AFTER tpm_limit`,
 	}
 
 	for _, statement := range statements {
@@ -101,8 +105,8 @@ func SeedDevelopmentData(ctx context.Context, db *sql.DB) (DevelopmentSeed, erro
 
 	if _, err := db.ExecContext(
 		ctx,
-		`INSERT INTO tenants (name, enabled, rpm_limit) VALUES (?, TRUE, 60)
-		 ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), rpm_limit = VALUES(rpm_limit), updated_at = CURRENT_TIMESTAMP`,
+		`INSERT INTO tenants (name, enabled, rpm_limit, tpm_limit, token_budget) VALUES (?, TRUE, 60, 4000, 1000000)
+		 ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), rpm_limit = VALUES(rpm_limit), tpm_limit = VALUES(tpm_limit), token_budget = VALUES(token_budget), updated_at = CURRENT_TIMESTAMP`,
 		developmentTenantName,
 	); err != nil {
 		return DevelopmentSeed{}, err

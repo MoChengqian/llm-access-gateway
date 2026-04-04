@@ -67,7 +67,7 @@ func TestAuthenticateRequestRejectsDisabledTenant(t *testing.T) {
 func TestAuthenticateRequestResolvesTenant(t *testing.T) {
 	service := NewService(stubStore{
 		record: APIKeyRecord{
-			Tenant:        Tenant{ID: 7, Name: "acme", RPMLimit: 60},
+			Tenant:        Tenant{ID: 7, Name: "acme", RPMLimit: 60, TPMLimit: 4000, TokenBudget: 1000000},
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 			APIKeyID:      3,
@@ -87,6 +87,10 @@ func TestAuthenticateRequestResolvesTenant(t *testing.T) {
 	if principal.APIKeyID != 3 || principal.APIKeyPrefix != "lag-live" {
 		t.Fatalf("expected principal api key metadata, got %#v", principal)
 	}
+
+	if principal.Tenant.TPMLimit != 4000 || principal.Tenant.TokenBudget != 1000000 {
+		t.Fatalf("expected tenant governance limits, got %#v", principal)
+	}
 }
 
 func TestTenantContextRoundTrip(t *testing.T) {
@@ -104,7 +108,7 @@ func TestTenantContextRoundTrip(t *testing.T) {
 
 func TestPrincipalContextRoundTrip(t *testing.T) {
 	ctx := WithPrincipal(context.Background(), Principal{
-		Tenant:       Tenant{ID: 9, Name: "demo", RPMLimit: 60},
+		Tenant:       Tenant{ID: 9, Name: "demo", RPMLimit: 60, TPMLimit: 4000, TokenBudget: 1000000},
 		APIKeyID:     11,
 		APIKeyPrefix: "lag-demo",
 	})

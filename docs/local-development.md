@@ -25,6 +25,8 @@ The expected API results are:
 - missing key -> `401`
 - invalid key -> `401`
 - rate limit exceeded -> `429`
+- token rate limit exceeded -> `429`
+- budget exceeded -> `403`
 - valid key -> `200`
 - `stream:true` -> `text/event-stream` and final `[DONE]`
 
@@ -113,6 +115,9 @@ Expected output:
 development auth seed ready
 tenant=local-dev
 api_key=lag-local-dev-key
+rpm_limit=60
+tpm_limit=4000
+token_budget=1000000
 ```
 
 What this command does:
@@ -123,6 +128,8 @@ What this command does:
 - creates or updates tenant `local-dev`
 - creates or updates one valid API key: `lag-local-dev-key`
 - sets tenant `local-dev` to `60 req/min`
+- sets tenant `local-dev` to `4000 tokens/min`
+- sets tenant `local-dev` to `1000000 token budget`
 
 ## 5. Start the Gateway
 

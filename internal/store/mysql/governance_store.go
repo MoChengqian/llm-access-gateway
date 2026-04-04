@@ -32,6 +32,37 @@ WHERE tenant_id = ?
 	return count, nil
 }
 
+func (s GovernanceStore) SumTotalTokensSince(ctx context.Context, tenantID uint64, since time.Time) (int, error) {
+	const query = `
+SELECT COALESCE(SUM(total_tokens), 0)
+FROM request_usages
+WHERE tenant_id = ?
+  AND created_at >= ?
+`
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, query, tenantID, since).Scan(&total); err != nil {
+		return 0, err
+	}
+
+	return total, nil
+}
+
+func (s GovernanceStore) SumTotalTokens(ctx context.Context, tenantID uint64) (int, error) {
+	const query = `
+SELECT COALESCE(SUM(total_tokens), 0)
+FROM request_usages
+WHERE tenant_id = ?
+`
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, query, tenantID).Scan(&total); err != nil {
+		return 0, err
+	}
+
+	return total, nil
+}
+
 func (s GovernanceStore) InsertUsageRecord(ctx context.Context, record governance.UsageRecord) (uint64, error) {
 	const statement = `
 INSERT INTO request_usages (

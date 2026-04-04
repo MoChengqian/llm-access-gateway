@@ -97,6 +97,8 @@ Current auth behavior:
 - invalid key -> `401` with `{"error":"invalid api key"}`
 - disabled key or disabled tenant -> `401`
 - tenant RPM limit exceeded -> `429` with `{"error":"rate limit exceeded"}`
+- tenant TPM limit exceeded -> `429` with `{"error":"token rate limit exceeded"}`
+- tenant token budget exceeded -> `403` with `{"error":"budget exceeded"}`
 - valid key -> request continues to chat service
 
 For local development, `go run ./cmd/devinit` seeds:
@@ -104,6 +106,8 @@ For local development, `go run ./cmd/devinit` seeds:
 - tenant: `local-dev`
 - API key: `lag-local-dev-key`
 - tenant RPM limit: `60 req/min`
+- tenant TPM limit: `4000 tokens/min`
+- tenant token budget: `1000000 tokens`
 
 The gateway stores and looks up the SHA-256 hash of the API key. It does not
 store raw API keys in MySQL.

@@ -42,4 +42,7 @@ func main() {
 	fmt.Println("development auth seed ready")
 	fmt.Printf("tenant=%s\n", seed.TenantName)
 	fmt.Printf("api_key=%s\n", seed.APIKey)
+	fmt.Println("rpm_limit=60")
+	fmt.Println("tpm_limit=4000")
+	fmt.Println("token_budget=1000000")
 }

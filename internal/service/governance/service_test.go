@@ -34,6 +34,41 @@ func TestBeginRequestRejectsWhenRPMLimitExceeded(t *testing.T) {
 	}
 }
 
+func TestBeginRequestRejectsWhenTPMLimitExceeded(t *testing.T) {
+	service := NewService(&stubStore{tokensSince: 10})
+	service.now = func() time.Time { return time.Unix(123, 0) }
+
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		Tenant:   auth.Tenant{ID: 9, Name: "acme", TPMLimit: 11},
+		APIKeyID: 7,
+	})
+
+	_, err := service.BeginRequest(ctx, RequestMetadata{
+		RequestID: "req-1",
+		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+	})
+	if !errors.Is(err, ErrTokenLimitExceeded) {
+		t.Fatalf("expected ErrTokenLimitExceeded, got %v", err)
+	}
+}
+
+func TestBeginRequestRejectsWhenBudgetExceeded(t *testing.T) {
+	service := NewService(&stubStore{tokensTotal: 10})
+
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
+		Tenant:   auth.Tenant{ID: 9, Name: "acme", TokenBudget: 11},
+		APIKeyID: 7,
+	})
+
+	_, err := service.BeginRequest(ctx, RequestMetadata{
+		RequestID: "req-1",
+		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+	})
+	if !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("expected ErrBudgetExceeded, got %v", err)
+	}
+}
+
 func TestBeginRequestInsertsStartedUsageRecord(t *testing.T) {
 	store := &stubStore{insertID: 11}
 	service := NewService(store)
@@ -49,6 +84,7 @@ func TestBeginRequestInsertsStartedUsageRecord(t *testing.T) {
 		RequestID: "req-1",
 		Model:     "gpt-4o-mini",
 		Stream:    true,
+		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
 	})
 	if err != nil {
 		t.Fatalf("begin request: %v", err)
@@ -69,6 +105,10 @@ func TestBeginRequestInsertsStartedUsageRecord(t *testing.T) {
 	if store.inserted.Status != "started" || !store.inserted.Stream {
 		t.Fatalf("expected started stream record, got %#v", store.inserted)
 	}
+
+	if store.inserted.PromptTokens == 0 || store.inserted.TotalTokens == 0 {
+		t.Fatalf("expected prompt token reservation in inserted record, got %#v", store.inserted)
+	}
 }
 
 func TestCompleteNonStreamUsesProviderUsageWhenPresent(t *testing.T) {
@@ -79,7 +119,10 @@ func TestCompleteNonStreamUsesProviderUsageWhenPresent(t *testing.T) {
 		APIKeyID: 2,
 	})
 
-	tracker, err := service.BeginRequest(ctx, RequestMetadata{RequestID: "req-1"})
+	tracker, err := service.BeginRequest(ctx, RequestMetadata{
+		RequestID: "req-1",
+		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+	})
 	if err != nil {
 		t.Fatalf("begin request: %v", err)
 	}
@@ -111,7 +154,11 @@ func TestCompleteStreamAggregatesChunkContent(t *testing.T) {
 		APIKeyID: 2,
 	})
 
-	tracker, err := service.BeginRequest(ctx, RequestMetadata{RequestID: "req-2", Stream: true})
+	tracker, err := service.BeginRequest(ctx, RequestMetadata{
+		RequestID: "req-2",
+		Stream:    true,
+		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+	})
 	if err != nil {
 		t.Fatalf("begin request: %v", err)
 	}
@@ -139,15 +186,25 @@ func TestCompleteStreamAggregatesChunkContent(t *testing.T) {
 }
 
 type stubStore struct {
-	count    int
-	insertID uint64
-	inserted UsageRecord
-	updated  UsageUpdate
-	err      error
+	count       int
+	tokensSince int
+	tokensTotal int
+	insertID    uint64
+	inserted    UsageRecord
+	updated     UsageUpdate
+	err         error
 }
 
 func (s *stubStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
 	return s.count, s.err
+}
+
+func (s *stubStore) SumTotalTokensSince(context.Context, uint64, time.Time) (int, error) {
+	return s.tokensSince, s.err
+}
+
+func (s *stubStore) SumTotalTokens(context.Context, uint64) (int, error) {
+	return s.tokensTotal, s.err
 }
 
 func (s *stubStore) InsertUsageRecord(_ context.Context, record UsageRecord) (uint64, error) {

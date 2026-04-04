@@ -24,9 +24,11 @@ const (
 )
 
 type Tenant struct {
-	ID       uint64
-	Name     string
-	RPMLimit int
+	ID          uint64
+	Name        string
+	RPMLimit    int
+	TPMLimit    int
+	TokenBudget int
 }
 
 type Principal struct {

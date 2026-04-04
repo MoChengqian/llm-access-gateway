@@ -34,6 +34,7 @@ func (h ChatHandler) CreateCompletion(w http.ResponseWriter, r *http.Request) {
 		RequestID: chimiddleware.GetReqID(r.Context()),
 		Model:     req.Model,
 		Stream:    req.Stream,
+		Messages:  req.Messages,
 	})
 	if err != nil {
 		writeGovernanceError(w, err)
@@ -119,6 +120,16 @@ func writeServiceError(w http.ResponseWriter, err error) {
 func writeGovernanceError(w http.ResponseWriter, err error) {
 	if errors.Is(err, governance.ErrRateLimitExceeded) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
+		return
+	}
+
+	if errors.Is(err, governance.ErrTokenLimitExceeded) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "token rate limit exceeded"})
+		return
+	}
+
+	if errors.Is(err, governance.ErrBudgetExceeded) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "budget exceeded"})
 		return
 	}
 

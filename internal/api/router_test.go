@@ -312,6 +312,80 @@ func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsRejectsTokenRateLimitExceeded(t *testing.T) {
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme", TPMLimit: 1},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, &stubGovernanceStore{tokensSince: 1, insertID: 10})
+
+	body, err := json.Marshal(map[string]any{
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": "hello world",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer live-key")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status %d, got %d", http.StatusTooManyRequests, rec.Code)
+	}
+
+	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"token rate limit exceeded\"") {
+		t.Fatalf("expected token rate limit exceeded error, got %s", bodyText)
+	}
+}
+
+func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme", TokenBudget: 1},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10})
+
+	body, err := json.Marshal(map[string]any{
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": "hello world",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer live-key")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+	}
+
+	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"budget exceeded\"") {
+		t.Fatalf("expected budget exceeded error, got %s", bodyText)
+	}
+}
+
 func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore) http.Handler {
 	if governanceStore == nil {
 		governanceStore = &stubGovernanceStore{insertID: 1}
@@ -337,15 +411,25 @@ func (s stubAuthStore) LookupAPIKey(_ context.Context, _ string) (auth.APIKeyRec
 }
 
 type stubGovernanceStore struct {
-	count    int
-	insertID uint64
-	inserted governance.UsageRecord
-	updated  governance.UsageUpdate
-	err      error
+	count       int
+	tokensSince int
+	tokensTotal int
+	insertID    uint64
+	inserted    governance.UsageRecord
+	updated     governance.UsageUpdate
+	err         error
 }
 
 func (s *stubGovernanceStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
 	return s.count, s.err
+}
+
+func (s *stubGovernanceStore) SumTotalTokensSince(context.Context, uint64, time.Time) (int, error) {
+	return s.tokensSince, s.err
+}
+
+func (s *stubGovernanceStore) SumTotalTokens(context.Context, uint64) (int, error) {
+	return s.tokensTotal, s.err
 }
 
 func (s *stubGovernanceStore) InsertUsageRecord(_ context.Context, record governance.UsageRecord) (uint64, error) {

@@ -11,12 +11,16 @@ import (
 )
 
 var (
-	ErrPrincipalNotFound = errors.New("principal not found")
-	ErrRateLimitExceeded = errors.New("rate limit exceeded")
+	ErrPrincipalNotFound  = errors.New("principal not found")
+	ErrRateLimitExceeded  = errors.New("rate limit exceeded")
+	ErrTokenLimitExceeded = errors.New("token rate limit exceeded")
+	ErrBudgetExceeded     = errors.New("budget exceeded")
 )
 
 type Store interface {
 	CountRequestsSince(ctx context.Context, tenantID uint64, since time.Time) (int, error)
+	SumTotalTokensSince(ctx context.Context, tenantID uint64, since time.Time) (int, error)
+	SumTotalTokens(ctx context.Context, tenantID uint64) (int, error)
 	InsertUsageRecord(ctx context.Context, record UsageRecord) (uint64, error)
 	UpdateUsageRecord(ctx context.Context, update UsageUpdate) error
 }
@@ -67,6 +71,7 @@ type RequestMetadata struct {
 	RequestID string
 	Model     string
 	Stream    bool
+	Messages  []chat.Message
 }
 
 func NewService(store Store) Service {
@@ -92,14 +97,37 @@ func (s Service) BeginRequest(ctx context.Context, metadata RequestMetadata) (Re
 		}
 	}
 
+	estimatedPromptTokens := estimatePromptTokens(metadata.Messages)
+	if principal.Tenant.TPMLimit > 0 {
+		tokensUsedThisMinute, err := s.store.SumTotalTokensSince(ctx, principal.Tenant.ID, s.now().Add(-time.Minute))
+		if err != nil {
+			return nil, err
+		}
+		if tokensUsedThisMinute+estimatedPromptTokens > principal.Tenant.TPMLimit {
+			return nil, ErrTokenLimitExceeded
+		}
+	}
+
+	if principal.Tenant.TokenBudget > 0 {
+		totalTokensUsed, err := s.store.SumTotalTokens(ctx, principal.Tenant.ID)
+		if err != nil {
+			return nil, err
+		}
+		if totalTokensUsed+estimatedPromptTokens > principal.Tenant.TokenBudget {
+			return nil, ErrBudgetExceeded
+		}
+	}
+
 	recordID, err := s.store.InsertUsageRecord(ctx, UsageRecord{
-		RequestID: metadata.RequestID,
-		TenantID:  principal.Tenant.ID,
-		APIKeyID:  principal.APIKeyID,
-		Model:     metadata.Model,
-		Stream:    metadata.Stream,
-		Status:    "started",
-		CreatedAt: s.now(),
+		RequestID:    metadata.RequestID,
+		TenantID:     principal.Tenant.ID,
+		APIKeyID:     principal.APIKeyID,
+		Model:        metadata.Model,
+		Stream:       metadata.Stream,
+		Status:       "started",
+		PromptTokens: estimatedPromptTokens,
+		TotalTokens:  estimatedPromptTokens,
+		CreatedAt:    s.now(),
 	})
 	if err != nil {
 		return nil, err
