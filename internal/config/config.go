@@ -10,6 +10,7 @@ type Config struct {
 	Server  ServerConfig  `mapstructure:"server" json:"server"`
 	Log     LogConfig     `mapstructure:"log" json:"log"`
 	MySQL   MySQLConfig   `mapstructure:"mysql" json:"mysql"`
+	Redis   RedisConfig   `mapstructure:"redis" json:"redis"`
 	Gateway GatewayConfig `mapstructure:"gateway" json:"gateway"`
 }
 
@@ -23,6 +24,12 @@ type LogConfig struct {
 
 type MySQLConfig struct {
 	DSN string `mapstructure:"dsn" json:"dsn"`
+}
+
+type RedisConfig struct {
+	Address string `mapstructure:"address" json:"address"`
+	Password string `mapstructure:"password" json:"password"`
+	DB int `mapstructure:"db" json:"db"`
 }
 
 type GatewayConfig struct {
@@ -58,5 +65,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.address", ":8080")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("mysql.dsn", "")
+	v.SetDefault("redis.address", "")
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.db", 0)
 	v.SetDefault("gateway.default_model", "gpt-4o-mini")
 }

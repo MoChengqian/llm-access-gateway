@@ -24,7 +24,7 @@ func TestHealthz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil)
+	}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -47,7 +47,7 @@ func TestReadyz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil)
+	}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestChatCompletions(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil)
+	}, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -116,7 +116,7 @@ func TestChatCompletionsStream(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil)
+	}, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -170,7 +170,7 @@ func TestChatCompletionsStream(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{}, nil)
+	router := newTestRouter(stubAuthStore{}, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -204,7 +204,7 @@ func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsInvalidAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil)
+	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -245,7 +245,7 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 			APIKeyEnabled: false,
 			TenantEnabled: true,
 		},
-	}, nil)
+	}, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -282,7 +282,7 @@ func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{count: 1, insertID: 10})
+	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrRateLimitExceeded})
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -319,7 +319,7 @@ func TestChatCompletionsRejectsTokenRateLimitExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{tokensSince: 1, insertID: 10})
+	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrTokenLimitExceeded})
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -356,7 +356,7 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10})
+	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10}, &stubLimiter{})
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -386,13 +386,16 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 	}
 }
 
-func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore) http.Handler {
+func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter) http.Handler {
 	if governanceStore == nil {
 		governanceStore = &stubGovernanceStore{insertID: 1}
 	}
+	if limiter == nil {
+		limiter = &stubLimiter{}
+	}
 
 	authService := auth.NewService(store)
-	governanceService := governance.NewService(governanceStore)
+	governanceService := governance.NewService(governanceStore, limiter)
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
 	return NewRouter(zap.NewNop(), chatService, authService, governanceService)
 }
@@ -411,21 +414,11 @@ func (s stubAuthStore) LookupAPIKey(_ context.Context, _ string) (auth.APIKeyRec
 }
 
 type stubGovernanceStore struct {
-	count       int
-	tokensSince int
 	tokensTotal int
 	insertID    uint64
 	inserted    governance.UsageRecord
 	updated     governance.UsageUpdate
 	err         error
-}
-
-func (s *stubGovernanceStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
-	return s.count, s.err
-}
-
-func (s *stubGovernanceStore) SumTotalTokensSince(context.Context, uint64, time.Time) (int, error) {
-	return s.tokensSince, s.err
 }
 
 func (s *stubGovernanceStore) SumTotalTokens(context.Context, uint64) (int, error) {
@@ -443,4 +436,16 @@ func (s *stubGovernanceStore) InsertUsageRecord(_ context.Context, record govern
 func (s *stubGovernanceStore) UpdateUsageRecord(_ context.Context, update governance.UsageUpdate) error {
 	s.updated = update
 	return s.err
+}
+
+type stubLimiter struct {
+	admitErr error
+}
+
+func (l *stubLimiter) Admit(context.Context, auth.Principal, int, time.Time) error {
+	return l.admitErr
+}
+
+func (l *stubLimiter) RecordCompletionTokens(context.Context, auth.Principal, int, time.Time) error {
+	return nil
 }

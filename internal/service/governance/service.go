@@ -18,16 +18,20 @@ var (
 )
 
 type Store interface {
-	CountRequestsSince(ctx context.Context, tenantID uint64, since time.Time) (int, error)
-	SumTotalTokensSince(ctx context.Context, tenantID uint64, since time.Time) (int, error)
 	SumTotalTokens(ctx context.Context, tenantID uint64) (int, error)
 	InsertUsageRecord(ctx context.Context, record UsageRecord) (uint64, error)
 	UpdateUsageRecord(ctx context.Context, update UsageUpdate) error
 }
 
+type Limiter interface {
+	Admit(ctx context.Context, principal auth.Principal, promptTokens int, now time.Time) error
+	RecordCompletionTokens(ctx context.Context, principal auth.Principal, completionTokens int, now time.Time) error
+}
+
 type Service struct {
-	store Store
-	now   func() time.Time
+	store   Store
+	limiter Limiter
+	now     func() time.Time
 }
 
 type RequestTracker interface {
@@ -52,6 +56,7 @@ type UsageRecord struct {
 
 type UsageUpdate struct {
 	ID               uint64
+	TenantID         uint64
 	Model            string
 	Status           string
 	PromptTokens     int
@@ -61,6 +66,8 @@ type UsageUpdate struct {
 
 type requestTracker struct {
 	store            Store
+	limiter          Limiter
+	principal        auth.Principal
 	recordID         uint64
 	model            string
 	stream           bool
@@ -74,10 +81,11 @@ type RequestMetadata struct {
 	Messages  []chat.Message
 }
 
-func NewService(store Store) Service {
+func NewService(store Store, limiter Limiter) Service {
 	return Service{
-		store: store,
-		now:   time.Now,
+		store:   store,
+		limiter: limiter,
+		now:     time.Now,
 	}
 }
 
@@ -87,26 +95,7 @@ func (s Service) BeginRequest(ctx context.Context, metadata RequestMetadata) (Re
 		return nil, ErrPrincipalNotFound
 	}
 
-	if principal.Tenant.RPMLimit > 0 {
-		count, err := s.store.CountRequestsSince(ctx, principal.Tenant.ID, s.now().Add(-time.Minute))
-		if err != nil {
-			return nil, err
-		}
-		if count >= principal.Tenant.RPMLimit {
-			return nil, ErrRateLimitExceeded
-		}
-	}
-
 	estimatedPromptTokens := estimatePromptTokens(metadata.Messages)
-	if principal.Tenant.TPMLimit > 0 {
-		tokensUsedThisMinute, err := s.store.SumTotalTokensSince(ctx, principal.Tenant.ID, s.now().Add(-time.Minute))
-		if err != nil {
-			return nil, err
-		}
-		if tokensUsedThisMinute+estimatedPromptTokens > principal.Tenant.TPMLimit {
-			return nil, ErrTokenLimitExceeded
-		}
-	}
 
 	if principal.Tenant.TokenBudget > 0 {
 		totalTokensUsed, err := s.store.SumTotalTokens(ctx, principal.Tenant.ID)
@@ -115,6 +104,12 @@ func (s Service) BeginRequest(ctx context.Context, metadata RequestMetadata) (Re
 		}
 		if totalTokensUsed+estimatedPromptTokens > principal.Tenant.TokenBudget {
 			return nil, ErrBudgetExceeded
+		}
+	}
+
+	if s.limiter != nil {
+		if err := s.limiter.Admit(ctx, principal, estimatedPromptTokens, s.now()); err != nil {
+			return nil, err
 		}
 	}
 
@@ -134,18 +129,21 @@ func (s Service) BeginRequest(ctx context.Context, metadata RequestMetadata) (Re
 	}
 
 	return &requestTracker{
-		store:    s.store,
-		recordID: recordID,
-		model:    metadata.Model,
-		stream:   metadata.Stream,
+		store:     s.store,
+		limiter:   s.limiter,
+		principal: principal,
+		recordID:  recordID,
+		model:     metadata.Model,
+		stream:    metadata.Stream,
 	}, nil
 }
 
 func (t *requestTracker) Fail(ctx context.Context) error {
 	return t.store.UpdateUsageRecord(ctx, UsageUpdate{
-		ID:     t.recordID,
-		Model:  t.model,
-		Status: "failed",
+		ID:       t.recordID,
+		TenantID: t.principal.Tenant.ID,
+		Model:    t.model,
+		Status:   "failed",
 	})
 }
 
@@ -162,8 +160,15 @@ func (t *requestTracker) CompleteNonStream(ctx context.Context, req chat.Complet
 		totalTokens = promptTokens + completionTokens
 	}
 
+	if t.limiter != nil && completionTokens > 0 {
+		if err := t.limiter.RecordCompletionTokens(ctx, t.principal, completionTokens, time.Now()); err != nil {
+			return err
+		}
+	}
+
 	return t.store.UpdateUsageRecord(ctx, UsageUpdate{
 		ID:               t.recordID,
+		TenantID:         t.principal.Tenant.ID,
 		Model:            resp.Model,
 		Status:           "succeeded",
 		PromptTokens:     promptTokens,
@@ -186,8 +191,15 @@ func (t *requestTracker) CompleteStream(ctx context.Context, req chat.Completion
 	promptTokens := estimatePromptTokens(req.Messages)
 	completionTokens := estimateTextTokens(t.streamCompletion.String())
 
+	if t.limiter != nil && completionTokens > 0 {
+		if err := t.limiter.RecordCompletionTokens(ctx, t.principal, completionTokens, time.Now()); err != nil {
+			return err
+		}
+	}
+
 	return t.store.UpdateUsageRecord(ctx, UsageUpdate{
 		ID:               t.recordID,
+		TenantID:         t.principal.Tenant.ID,
 		Model:            t.model,
 		Status:           "succeeded",
 		PromptTokens:     promptTokens,

@@ -4,6 +4,7 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 `POST /v1/chat/completions` API with:
 
 - API key authentication backed by MySQL
+- Redis-backed RPM / TPM limiting with MySQL fallback
 - tenant resolution from API key
 - mock non-streaming chat completions
 - SSE streaming chat completions
@@ -46,7 +47,8 @@ internal/
   config/      Config loading
   provider/    Provider interface and mock provider
   service/chat Chat request validation and response shaping
-  store/mysql/ MySQL auth lookup and local bootstrap helpers
+  store/mysql/ MySQL auth lookup, usage storage, and local bootstrap helpers
+  store/redis/ Minimal Redis client for limiter counters
 
 migrations/
   001_init.sql Initial tenants/api_keys schema
@@ -63,7 +65,12 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql
   sleep 1
 done
 
+until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-redis)" = "healthy" ]; do
+  sleep 1
+done
+
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
 
 go run ./cmd/devinit
 go run ./cmd/gateway
@@ -76,6 +83,9 @@ Expected output:
 development auth seed ready
 tenant=local-dev
 api_key=lag-local-dev-key
+rpm_limit=60
+tpm_limit=4000
+token_budget=1000000
 
 # go run ./cmd/gateway
 INFO gateway starting address=:8080
@@ -148,6 +158,7 @@ Expected results:
 - invalid key -> `401` and `{"error":"invalid api key"}`
 - valid key -> `200` with `"object":"chat.completion"`
 - `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
+- with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
 
 ## Local Development Entry
 
@@ -164,6 +175,7 @@ Environment variables currently used by the code:
 
 ```bash
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
 export APP_SERVER_ADDRESS=':8080'
 ```
 

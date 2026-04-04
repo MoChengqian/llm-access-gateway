@@ -1,11 +1,12 @@
 # Local Development
 
 This document is the shortest path to run the current repository locally with
-MySQL-backed auth enabled.
+MySQL-backed auth and Redis-backed limiter counters enabled.
 
 All commands below are based on the current code and current repo layout:
 
 - MySQL compose: `deployments/docker/docker-compose.yml`
+- Redis compose: `deployments/docker/docker-compose.yml`
 - local init command: `go run ./cmd/devinit`
 - gateway command: `go run ./cmd/gateway`
 
@@ -16,6 +17,7 @@ The current local verification path for this repo is:
 ```bash
 docker compose -f deployments/docker/docker-compose.yml up -d
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
 go run ./cmd/devinit
 go run ./cmd/gateway
 ```
@@ -59,6 +61,7 @@ The compose file creates:
 - user: `user`
 - password: `pass`
 - port: `3306`
+- redis port: `6379`
 
 ## 2. Wait for MySQL Ready
 
@@ -70,6 +73,12 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql
 done
 
 docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql
+
+until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-redis)" = "healthy" ]; do
+  sleep 1
+done
+
+docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-redis
 ```
 
 Expected output:
@@ -91,6 +100,7 @@ Run:
 
 ```bash
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
 ```
 
 Expected output:
@@ -137,6 +147,7 @@ In a separate terminal, still at repo root, run:
 
 ```bash
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
 go run ./cmd/gateway
 ```
 

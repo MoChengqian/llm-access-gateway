@@ -17,6 +17,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
+	redisstore "github.com/MoChengqian/llm-access-gateway/internal/store/redis"
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
 )
@@ -57,7 +58,21 @@ func main() {
 	authStore := mysqlstore.NewAuthStore(db)
 	authService := auth.NewService(authStore)
 	governanceStore := mysqlstore.NewGovernanceStore(db)
-	governanceService := governance.NewService(governanceStore)
+	limiter := governance.Limiter(governance.NewMySQLLimiter(governanceStore))
+	if cfg.Redis.Address != "" {
+		redisClient := redisstore.NewClient(redisstore.Config{
+			Address:  cfg.Redis.Address,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+		if err := redisClient.Ping(context.Background()); err != nil {
+			logger.Error("redis ping failed, falling back to mysql limiter", zap.Error(err))
+		} else {
+			limiter = governance.NewRedisLimiter(redisClient, limiter)
+			logger.Info("redis limiter enabled", zap.String("address", cfg.Redis.Address), zap.Int("db", cfg.Redis.DB))
+		}
+	}
+	governanceService := governance.NewService(governanceStore, limiter)
 	chatProvider := providermock.New()
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
 

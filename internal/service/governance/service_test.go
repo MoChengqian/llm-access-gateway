@@ -11,7 +11,7 @@ import (
 )
 
 func TestBeginRequestRejectsWhenPrincipalMissing(t *testing.T) {
-	service := NewService(&stubStore{})
+	service := NewService(&stubStore{}, &stubLimiter{})
 
 	_, err := service.BeginRequest(context.Background(), RequestMetadata{})
 	if !errors.Is(err, ErrPrincipalNotFound) {
@@ -20,7 +20,7 @@ func TestBeginRequestRejectsWhenPrincipalMissing(t *testing.T) {
 }
 
 func TestBeginRequestRejectsWhenRPMLimitExceeded(t *testing.T) {
-	service := NewService(&stubStore{count: 2})
+	service := NewService(&stubStore{}, &stubLimiter{admitErr: ErrRateLimitExceeded})
 	service.now = func() time.Time { return time.Unix(123, 0) }
 
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
@@ -35,7 +35,7 @@ func TestBeginRequestRejectsWhenRPMLimitExceeded(t *testing.T) {
 }
 
 func TestBeginRequestRejectsWhenTPMLimitExceeded(t *testing.T) {
-	service := NewService(&stubStore{tokensSince: 10})
+	service := NewService(&stubStore{}, &stubLimiter{admitErr: ErrTokenLimitExceeded})
 	service.now = func() time.Time { return time.Unix(123, 0) }
 
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
@@ -53,7 +53,7 @@ func TestBeginRequestRejectsWhenTPMLimitExceeded(t *testing.T) {
 }
 
 func TestBeginRequestRejectsWhenBudgetExceeded(t *testing.T) {
-	service := NewService(&stubStore{tokensTotal: 10})
+	service := NewService(&stubStore{tokensTotal: 10}, &stubLimiter{})
 
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
 		Tenant:   auth.Tenant{ID: 9, Name: "acme", TokenBudget: 11},
@@ -71,7 +71,7 @@ func TestBeginRequestRejectsWhenBudgetExceeded(t *testing.T) {
 
 func TestBeginRequestInsertsStartedUsageRecord(t *testing.T) {
 	store := &stubStore{insertID: 11}
-	service := NewService(store)
+	service := NewService(store, &stubLimiter{})
 	service.now = func() time.Time { return time.Unix(123, 0) }
 
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
@@ -113,7 +113,8 @@ func TestBeginRequestInsertsStartedUsageRecord(t *testing.T) {
 
 func TestCompleteNonStreamUsesProviderUsageWhenPresent(t *testing.T) {
 	store := &stubStore{insertID: 21}
-	service := NewService(store)
+	limiter := stubLimiter{}
+	service := NewService(store, &limiter)
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
 		Tenant:   auth.Tenant{ID: 1, Name: "acme", RPMLimit: 10},
 		APIKeyID: 2,
@@ -144,11 +145,16 @@ func TestCompleteNonStreamUsesProviderUsageWhenPresent(t *testing.T) {
 	if store.updated.TotalTokens != 12 || store.updated.CompletionTokens != 7 {
 		t.Fatalf("expected provider usage to be kept, got %#v", store.updated)
 	}
+
+	if limiter.recordedCompletionTokens != 7 {
+		t.Fatalf("expected limiter completion tokens 7, got %#v", limiter)
+	}
 }
 
 func TestCompleteStreamAggregatesChunkContent(t *testing.T) {
 	store := &stubStore{insertID: 22}
-	service := NewService(store)
+	limiter := stubLimiter{}
+	service := NewService(store, &limiter)
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{
 		Tenant:   auth.Tenant{ID: 1, Name: "acme", RPMLimit: 10},
 		APIKeyID: 2,
@@ -183,24 +189,18 @@ func TestCompleteStreamAggregatesChunkContent(t *testing.T) {
 	if store.updated.TotalTokens == 0 {
 		t.Fatalf("expected non-zero token usage, got %#v", store.updated)
 	}
+
+	if limiter.recordedCompletionTokens == 0 {
+		t.Fatalf("expected limiter to record completion tokens, got %#v", limiter)
+	}
 }
 
 type stubStore struct {
-	count       int
-	tokensSince int
 	tokensTotal int
 	insertID    uint64
 	inserted    UsageRecord
 	updated     UsageUpdate
 	err         error
-}
-
-func (s *stubStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
-	return s.count, s.err
-}
-
-func (s *stubStore) SumTotalTokensSince(context.Context, uint64, time.Time) (int, error) {
-	return s.tokensSince, s.err
 }
 
 func (s *stubStore) SumTotalTokens(context.Context, uint64) (int, error) {
@@ -218,4 +218,22 @@ func (s *stubStore) InsertUsageRecord(_ context.Context, record UsageRecord) (ui
 func (s *stubStore) UpdateUsageRecord(_ context.Context, update UsageUpdate) error {
 	s.updated = update
 	return s.err
+}
+
+type stubLimiter struct {
+	admitErr                error
+	recordErr               error
+	recordedCompletionTokens int
+}
+
+func (l stubLimiter) Admit(context.Context, auth.Principal, int, time.Time) error {
+	return l.admitErr
+}
+
+func (l *stubLimiter) RecordCompletionTokens(_ context.Context, _ auth.Principal, completionTokens int, _ time.Time) error {
+	if l.recordErr != nil {
+		return l.recordErr
+	}
+	l.recordedCompletionTokens += completionTokens
+	return nil
 }

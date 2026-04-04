@@ -19,5 +19,19 @@ services:
       retries: 20
       start_period: 10s
 
+  redis:
+    container_name: llm-access-gateway-redis
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
 volumes:
   llm-access-gateway-mysql-data:
