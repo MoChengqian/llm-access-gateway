@@ -24,6 +24,7 @@ The expected API results are:
 
 - missing key -> `401`
 - invalid key -> `401`
+- rate limit exceeded -> `429`
 - valid key -> `200`
 - `stream:true` -> `text/event-stream` and final `[DONE]`
 
@@ -118,8 +119,10 @@ What this command does:
 
 - ensures the `tenants` table exists
 - ensures the `api_keys` table exists
+- ensures the `request_usages` table exists
 - creates or updates tenant `local-dev`
 - creates or updates one valid API key: `lag-local-dev-key`
+- sets tenant `local-dev` to `60 req/min`
 
 ## 5. Start the Gateway
 

@@ -15,6 +15,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
+	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
@@ -55,12 +56,14 @@ func main() {
 
 	authStore := mysqlstore.NewAuthStore(db)
 	authService := auth.NewService(authStore)
+	governanceStore := mysqlstore.NewGovernanceStore(db)
+	governanceService := governance.NewService(governanceStore)
 	chatProvider := providermock.New()
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService, authService),
+		Handler:           api.NewRouter(logger, chatService, authService, governanceService),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

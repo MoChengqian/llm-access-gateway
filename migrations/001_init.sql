@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     name VARCHAR(255) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    rpm_limit INT NOT NULL DEFAULT 60,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
@@ -21,6 +22,32 @@ CREATE TABLE IF NOT EXISTS api_keys (
     KEY idx_api_keys_tenant_id (tenant_id),
     CONSTRAINT fk_api_keys_tenant_id
         FOREIGN KEY (tenant_id) REFERENCES tenants (id)
+        ON DELETE RESTRICT
+        ON UPDATE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS request_usages (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    request_id VARCHAR(255) NOT NULL,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    api_key_id BIGINT UNSIGNED NOT NULL,
+    model VARCHAR(255) NOT NULL DEFAULT '',
+    stream BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(16) NOT NULL,
+    prompt_tokens INT NOT NULL DEFAULT 0,
+    completion_tokens INT NOT NULL DEFAULT 0,
+    total_tokens INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_request_usages_tenant_created_at (tenant_id, created_at),
+    KEY idx_request_usages_request_id (request_id),
+    CONSTRAINT fk_request_usages_tenant_id
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id)
+        ON DELETE RESTRICT
+        ON UPDATE RESTRICT,
+    CONSTRAINT fk_request_usages_api_key_id
+        FOREIGN KEY (api_key_id) REFERENCES api_keys (id)
         ON DELETE RESTRICT
         ON UPDATE RESTRICT
 );

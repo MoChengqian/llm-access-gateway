@@ -25,7 +25,8 @@ SELECT
     ak.enabled,
     t.id,
     t.name,
-    t.enabled
+    t.enabled,
+    t.rpm_limit
 FROM api_keys ak
 JOIN tenants t ON t.id = ak.tenant_id
 WHERE ak.key_hash = ?
@@ -41,6 +42,7 @@ LIMIT 1
 		&record.Tenant.ID,
 		&record.Tenant.Name,
 		&record.TenantEnabled,
+		&record.Tenant.RPMLimit,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return auth.APIKeyRecord{}, auth.ErrAPIKeyNotFound

@@ -18,11 +18,21 @@ var (
 
 type contextKey string
 
-const tenantContextKey contextKey = "tenant"
+const (
+	tenantContextKey    contextKey = "tenant"
+	principalContextKey contextKey = "principal"
+)
 
 type Tenant struct {
-	ID   uint64
-	Name string
+	ID       uint64
+	Name     string
+	RPMLimit int
+}
+
+type Principal struct {
+	Tenant       Tenant
+	APIKeyID     uint64
+	APIKeyPrefix string
 }
 
 type APIKeyRecord struct {
@@ -39,7 +49,7 @@ type APIKeyStore interface {
 }
 
 type Authenticator interface {
-	AuthenticateRequest(ctx context.Context, authorization string) (Tenant, error)
+	AuthenticateRequest(ctx context.Context, authorization string) (Principal, error)
 }
 
 type Service struct {
@@ -50,26 +60,40 @@ func NewService(store APIKeyStore) Service {
 	return Service{store: store}
 }
 
-func (s Service) AuthenticateRequest(ctx context.Context, authorization string) (Tenant, error) {
+func (s Service) AuthenticateRequest(ctx context.Context, authorization string) (Principal, error) {
 	rawKey, err := bearerToken(authorization)
 	if err != nil {
-		return Tenant{}, err
+		return Principal{}, err
 	}
 
 	record, err := s.store.LookupAPIKey(ctx, hashAPIKey(rawKey))
 	if err != nil {
 		if errors.Is(err, ErrAPIKeyNotFound) || errors.Is(err, sql.ErrNoRows) {
-			return Tenant{}, ErrInvalidAPIKey
+			return Principal{}, ErrInvalidAPIKey
 		}
 
-		return Tenant{}, err
+		return Principal{}, err
 	}
 
 	if !record.APIKeyEnabled || !record.TenantEnabled {
-		return Tenant{}, ErrDisabledAPIKey
+		return Principal{}, ErrDisabledAPIKey
 	}
 
-	return record.Tenant, nil
+	return Principal{
+		Tenant:       record.Tenant,
+		APIKeyID:     record.APIKeyID,
+		APIKeyPrefix: record.APIKeyPrefix,
+	}, nil
+}
+
+func WithPrincipal(ctx context.Context, principal Principal) context.Context {
+	ctx = context.WithValue(ctx, principalContextKey, principal)
+	return context.WithValue(ctx, tenantContextKey, principal.Tenant)
+}
+
+func PrincipalFromContext(ctx context.Context) (Principal, bool) {
+	principal, ok := ctx.Value(principalContextKey).(Principal)
+	return principal, ok
 }
 
 func WithTenant(ctx context.Context, tenant Tenant) context.Context {

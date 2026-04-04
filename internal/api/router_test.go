@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
+	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	"go.uber.org/zap"
 )
 
@@ -22,7 +24,7 @@ func TestHealthz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	})
+	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -45,7 +47,7 @@ func TestReadyz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	})
+	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -64,7 +66,7 @@ func TestChatCompletions(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	})
+	}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -114,7 +116,7 @@ func TestChatCompletionsStream(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	})
+	}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -168,7 +170,7 @@ func TestChatCompletionsStream(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{})
+	router := newTestRouter(stubAuthStore{}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -202,7 +204,7 @@ func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsInvalidAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound})
+	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -243,7 +245,7 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 			APIKeyEnabled: false,
 			TenantEnabled: true,
 		},
-	})
+	}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -273,10 +275,52 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 	}
 }
 
-func newTestRouter(store stubAuthStore) http.Handler {
+func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme", RPMLimit: 1},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, &stubGovernanceStore{count: 1, insertID: 10})
+
+	body, err := json.Marshal(map[string]any{
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": "hello",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer live-key")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status %d, got %d", http.StatusTooManyRequests, rec.Code)
+	}
+
+	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"rate limit exceeded\"") {
+		t.Fatalf("expected rate limit exceeded error, got %s", bodyText)
+	}
+}
+
+func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore) http.Handler {
+	if governanceStore == nil {
+		governanceStore = &stubGovernanceStore{insertID: 1}
+	}
+
 	authService := auth.NewService(store)
+	governanceService := governance.NewService(governanceStore)
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
-	return NewRouter(zap.NewNop(), chatService, authService)
+	return NewRouter(zap.NewNop(), chatService, authService, governanceService)
 }
 
 type stubAuthStore struct {
@@ -290,4 +334,29 @@ func (s stubAuthStore) LookupAPIKey(_ context.Context, _ string) (auth.APIKeyRec
 	}
 
 	return s.record, nil
+}
+
+type stubGovernanceStore struct {
+	count    int
+	insertID uint64
+	inserted governance.UsageRecord
+	updated  governance.UsageUpdate
+	err      error
+}
+
+func (s *stubGovernanceStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
+	return s.count, s.err
+}
+
+func (s *stubGovernanceStore) InsertUsageRecord(_ context.Context, record governance.UsageRecord) (uint64, error) {
+	s.inserted = record
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.insertID, nil
+}
+
+func (s *stubGovernanceStore) UpdateUsageRecord(_ context.Context, update governance.UsageUpdate) error {
+	s.updated = update
+	return s.err
 }

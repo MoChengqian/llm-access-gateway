@@ -8,12 +8,13 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
+	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 )
 
-func NewRouter(logger *zap.Logger, chatService chat.Service, authenticator auth.Authenticator) http.Handler {
+func NewRouter(logger *zap.Logger, chatService chat.Service, authenticator auth.Authenticator, governanceService governance.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
@@ -22,7 +23,7 @@ func NewRouter(logger *zap.Logger, chatService chat.Service, authenticator auth.
 	r.Use(requestLogger(logger))
 
 	healthHandler := handlers.NewHealthHandler()
-	chatHandler := handlers.NewChatHandler(chatService)
+	chatHandler := handlers.NewChatHandler(chatService, governanceService)
 
 	r.Get("/healthz", healthHandler.Healthz)
 	r.Get("/readyz", healthHandler.Readyz)
@@ -33,13 +34,13 @@ func NewRouter(logger *zap.Logger, chatService chat.Service, authenticator auth.
 
 func requireAPIKey(authenticator auth.Authenticator, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenant, err := authenticator.AuthenticateRequest(r.Context(), r.Header.Get("Authorization"))
+		principal, err := authenticator.AuthenticateRequest(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
 			writeAuthError(w, err)
 			return
 		}
 
-		next.ServeHTTP(w, r.WithContext(auth.WithTenant(r.Context(), tenant)))
+		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 	}
 }
 

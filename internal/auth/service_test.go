@@ -67,19 +67,25 @@ func TestAuthenticateRequestRejectsDisabledTenant(t *testing.T) {
 func TestAuthenticateRequestResolvesTenant(t *testing.T) {
 	service := NewService(stubStore{
 		record: APIKeyRecord{
-			Tenant:        Tenant{ID: 7, Name: "acme"},
+			Tenant:        Tenant{ID: 7, Name: "acme", RPMLimit: 60},
 			APIKeyEnabled: true,
 			TenantEnabled: true,
+			APIKeyID:      3,
+			APIKeyPrefix:  "lag-live",
 		},
 	})
 
-	tenant, err := service.AuthenticateRequest(context.Background(), "Bearer live-key")
+	principal, err := service.AuthenticateRequest(context.Background(), "Bearer live-key")
 	if err != nil {
 		t.Fatalf("authenticate request: %v", err)
 	}
 
-	if tenant.ID != 7 || tenant.Name != "acme" {
-		t.Fatalf("expected tenant acme/7, got %#v", tenant)
+	if principal.Tenant.ID != 7 || principal.Tenant.Name != "acme" {
+		t.Fatalf("expected tenant acme/7, got %#v", principal)
+	}
+
+	if principal.APIKeyID != 3 || principal.APIKeyPrefix != "lag-live" {
+		t.Fatalf("expected principal api key metadata, got %#v", principal)
 	}
 }
 
@@ -93,6 +99,23 @@ func TestTenantContextRoundTrip(t *testing.T) {
 
 	if tenant.ID != 9 || tenant.Name != "demo" {
 		t.Fatalf("expected tenant demo/9, got %#v", tenant)
+	}
+}
+
+func TestPrincipalContextRoundTrip(t *testing.T) {
+	ctx := WithPrincipal(context.Background(), Principal{
+		Tenant:       Tenant{ID: 9, Name: "demo", RPMLimit: 60},
+		APIKeyID:     11,
+		APIKeyPrefix: "lag-demo",
+	})
+
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok {
+		t.Fatal("expected principal in context")
+	}
+
+	if principal.Tenant.ID != 9 || principal.APIKeyID != 11 {
+		t.Fatalf("expected principal round trip, got %#v", principal)
 	}
 }
 
