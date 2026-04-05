@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
@@ -38,10 +39,12 @@ func NewService(sources []Source) Service {
 
 func (s service) ListModels(ctx context.Context) (ListResponse, error) {
 	merged := make(map[string]provider.Model)
+	var errs []error
 	for _, source := range s.sources {
 		models, err := source.ListModels(ctx)
 		if err != nil {
-			return ListResponse{}, err
+			errs = append(errs, err)
+			continue
 		}
 		for _, model := range models {
 			if model.ID == "" {
@@ -61,6 +64,10 @@ func (s service) ListModels(ctx context.Context) (ListResponse, error) {
 	sort.Slice(data, func(i, j int) bool {
 		return data[i].ID < data[j].ID
 	})
+
+	if len(data) == 0 && len(errs) > 0 {
+		return ListResponse{}, errors.Join(errs...)
+	}
 
 	return ListResponse{
 		Object: "list",

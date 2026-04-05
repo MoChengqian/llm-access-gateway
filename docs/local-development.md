@@ -35,7 +35,7 @@ The expected API results are:
 - token rate limit exceeded -> `429`
 - budget exceeded -> `403`
 - valid key -> `200`
-- models list -> `200`
+- models list -> `200`, and the gateway still returns aggregated models if at least one provider source is healthy
 - `stream:true` -> `text/event-stream` and final `[DONE]`
 - forced primary provider failure still falls back to `200`
 - provider health can be inspected from `/debug/providers`

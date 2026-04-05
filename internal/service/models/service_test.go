@@ -37,7 +37,7 @@ func TestListModelsDeduplicatesAndFormatsResponse(t *testing.T) {
 	}
 }
 
-func TestListModelsReturnsSourceError(t *testing.T) {
+func TestListModelsReturnsSourceErrorWhenAllSourcesFail(t *testing.T) {
 	service := NewService([]Source{
 		stubSource{err: errors.New("boom")},
 	})
@@ -45,6 +45,23 @@ func TestListModelsReturnsSourceError(t *testing.T) {
 	_, err := service.ListModels(context.Background())
 	if err == nil {
 		t.Fatal("expected source error")
+	}
+}
+
+func TestListModelsReturnsPartialResultsWhenOneSourceFails(t *testing.T) {
+	service := NewService([]Source{
+		stubSource{err: errors.New("primary unavailable")},
+		stubSource{models: []provider.Model{
+			{ID: "gpt-4o-mini", OwnedBy: "secondary"},
+		}},
+	})
+
+	resp, err := service.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("expected partial success, got %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].ID != "gpt-4o-mini" {
+		t.Fatalf("unexpected response %#v", resp)
 	}
 }
 
