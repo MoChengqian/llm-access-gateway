@@ -19,6 +19,7 @@ import (
 	providerrouter "github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
+	modelsservice "github.com/MoChengqian/llm-access-gateway/internal/service/models"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
 	redisstore "github.com/MoChengqian/llm-access-gateway/internal/store/redis"
 	_ "github.com/go-sql-driver/mysql"
@@ -100,10 +101,11 @@ func main() {
 		},
 	})
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
+	modelsService := modelsservice.NewService([]string{cfg.Gateway.DefaultModel})
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry),
+		Handler:           api.NewRouter(logger, chatService, modelsService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

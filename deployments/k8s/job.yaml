@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-access-gateway-devinit
+  namespace: llm-access-gateway
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: llm-access-gateway-devinit
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: devinit
+          image: llm-access-gateway:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/app/devinit"]
+          envFrom:
+            - configMapRef:
+                name: llm-access-gateway-config
+            - secretRef:
+                name: llm-access-gateway-secrets

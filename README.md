@@ -1,7 +1,7 @@
 # LLM Access Gateway
 
 LLM Access Gateway is a Go service that exposes an OpenAI-compatible
-`POST /v1/chat/completions` API with:
+`POST /v1/chat/completions` and `GET /v1/models` APIs with:
 
 - API key authentication backed by MySQL
 - Redis-backed RPM / TPM limiting with MySQL fallback
@@ -19,6 +19,7 @@ real provider adapters, richer routing, or production observability.
 ## Core Capabilities
 
 - `POST /v1/chat/completions`
+- `GET /v1/models`
 - `Authorization: Bearer <key>` authentication
 - MySQL-backed tenant and API key lookup
 - `stream=false` JSON response
@@ -125,6 +126,7 @@ The repo now includes baseline Kubernetes manifests in [deployments/k8s](deploym
 - `namespace.yaml`
 - `configmap.yaml`
 - `secret.example.yaml`
+- `job.yaml`
 - `deployment.yaml`
 - `service.yaml`
 
@@ -134,6 +136,8 @@ Apply them in this order after replacing the MySQL DSN in `secret.example.yaml`:
 kubectl apply -f deployments/k8s/namespace.yaml
 kubectl apply -f deployments/k8s/configmap.yaml
 kubectl apply -f deployments/k8s/secret.example.yaml
+kubectl apply -f deployments/k8s/job.yaml
+kubectl -n llm-access-gateway wait --for=condition=complete job/llm-access-gateway-devinit --timeout=120s
 kubectl apply -f deployments/k8s/deployment.yaml
 kubectl apply -f deployments/k8s/service.yaml
 kubectl -n llm-access-gateway get pods,svc
@@ -198,6 +202,10 @@ curl -i http://127.0.0.1:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"hello"}]}'
 
+# valid key, models -> 200 JSON list
+curl -i http://127.0.0.1:8080/v1/models \
+  -H 'Authorization: Bearer lag-local-dev-key'
+
 # valid key, stream -> text/event-stream + [DONE]
 curl -i -N http://127.0.0.1:8080/v1/chat/completions \
   -H 'Authorization: Bearer lag-local-dev-key' \
@@ -210,6 +218,7 @@ Expected results:
 - missing key -> `401` and `{"error":"missing api key"}`
 - invalid key -> `401` and `{"error":"invalid api key"}`
 - valid key -> `200` with `"object":"chat.completion"`
+- models -> `200` with `"object":"list"`
 - `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
 - with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
 - if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically

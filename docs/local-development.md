@@ -9,6 +9,7 @@ All commands below are based on the current code and current repo layout:
 - Redis compose: `deployments/docker/docker-compose.yml`
 - local init command: `go run ./cmd/devinit`
 - gateway command: `go run ./cmd/gateway`
+- models endpoint: `GET /v1/models`
 
 ## Verified Local Path
 
@@ -32,6 +33,7 @@ The expected API results are:
 - token rate limit exceeded -> `429`
 - budget exceeded -> `403`
 - valid key -> `200`
+- models list -> `200`
 - `stream:true` -> `text/event-stream` and final `[DONE]`
 - forced primary provider failure still falls back to `200`
 - provider health can be inspected from `/debug/providers`

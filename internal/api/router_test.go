@@ -16,6 +16,7 @@ import (
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
+	modelsservice "github.com/MoChengqian/llm-access-gateway/internal/service/models"
 	"go.uber.org/zap"
 )
 
@@ -170,6 +171,44 @@ func TestMetricsCountsReadyzFailure(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), "lag_readyz_failures_total 1") {
 		t.Fatalf("expected readyz failure metric, got %s", rec.Body.String())
+	}
+}
+
+func TestModelsList(t *testing.T) {
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer live-key")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	bodyText := rec.Body.String()
+	if !strings.Contains(bodyText, `"object":"list"`) || !strings.Contains(bodyText, `"id":"gpt-4o-mini"`) {
+		t.Fatalf("expected models payload, got %s", bodyText)
+	}
+}
+
+func TestModelsListRejectsMissingAPIKey(t *testing.T) {
+	router := newTestRouter(stubAuthStore{}, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
 	}
 }
 
@@ -539,7 +578,8 @@ func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, li
 	authService := auth.NewService(store)
 	governanceService := governance.NewService(governanceStore, limiter)
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
-	return NewRouter(zap.NewNop(), chatService, authService, governanceService, providers, registry, registry)
+	modelsService := modelsservice.NewService([]string{"gpt-4o-mini"})
+	return NewRouter(zap.NewNop(), chatService, modelsService, authService, governanceService, providers, registry, registry)
 }
 
 type stubAuthStore struct {
