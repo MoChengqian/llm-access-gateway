@@ -5,56 +5,81 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/obs/tracing"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"go.uber.org/zap"
 )
 
 type ChatHandler struct {
 	service    chat.Service
 	governance governance.Service
+	metrics    MetricsRecorder
 }
 
-func NewChatHandler(service chat.Service, governanceService governance.Service) ChatHandler {
+type MetricsRecorder interface {
+	RecordGovernanceRejection(reason string)
+	RecordStreamRequest(ttft time.Duration)
+	RecordStreamChunk()
+}
+
+func NewChatHandler(service chat.Service, governanceService governance.Service, metricsRecorder MetricsRecorder) ChatHandler {
 	return ChatHandler{
 		service:    service,
 		governance: governanceService,
+		metrics:    metricsRecorder,
 	}
 }
 
 func (h ChatHandler) CreateCompletion(w http.ResponseWriter, r *http.Request) {
+	ctx, span := tracing.StartSpan(r.Context(), "chat.handler.create_completion")
 	var req chat.CompletionRequest
+	var traceErr error
+	defer func() {
+		span.End(traceErr,
+			zap.String("model", req.Model),
+			zap.String("stream", strconv.FormatBool(req.Stream)),
+		)
+	}()
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		traceErr = err
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	tracker, err := h.governance.BeginRequest(r.Context(), governance.RequestMetadata{
-		RequestID: chimiddleware.GetReqID(r.Context()),
+	tracker, err := h.governance.BeginRequest(ctx, governance.RequestMetadata{
+		RequestID: chimiddleware.GetReqID(ctx),
 		Model:     req.Model,
 		Stream:    req.Stream,
 		Messages:  req.Messages,
 	})
 	if err != nil {
-		writeGovernanceError(w, err)
+		traceErr = err
+		writeGovernanceErrorWithMetrics(w, err, h.metrics)
 		return
 	}
 
 	if req.Stream {
-		h.streamCompletion(w, r, req, tracker)
+		h.streamCompletion(w, r.WithContext(ctx), req, tracker)
 		return
 	}
 
-	resp, err := h.service.CreateCompletion(r.Context(), req)
+	resp, err := h.service.CreateCompletion(ctx, req)
 	if err != nil {
-		_ = tracker.Fail(r.Context())
+		traceErr = err
+		_ = tracker.Fail(ctx)
 		writeServiceError(w, err)
 		return
 	}
 
-	if err := tracker.CompleteNonStream(r.Context(), req, resp); err != nil {
-		writeGovernanceError(w, err)
+	if err := tracker.CompleteNonStream(ctx, req, resp); err != nil {
+		traceErr = err
+		writeGovernanceErrorWithMetrics(w, err, h.metrics)
 		return
 	}
 
@@ -62,16 +87,29 @@ func (h ChatHandler) CreateCompletion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, req chat.CompletionRequest, tracker governance.RequestTracker) {
+	ctx, span := tracing.StartSpan(r.Context(), "chat.handler.stream_completion",
+		zap.String("model", req.Model),
+		zap.String("stream", "true"),
+	)
+	var traceErr error
+	startedAt := time.Now()
+	firstChunkWritten := false
+	defer func() {
+		span.End(traceErr)
+	}()
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		_ = tracker.Fail(r.Context())
+		traceErr = errors.New("streaming unsupported")
+		_ = tracker.Fail(ctx)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
 		return
 	}
 
-	chunks, err := h.service.StreamCompletion(r.Context(), req)
+	chunks, err := h.service.StreamCompletion(ctx, req)
 	if err != nil {
-		_ = tracker.Fail(r.Context())
+		traceErr = err
+		_ = tracker.Fail(ctx)
 		writeServiceError(w, err)
 		return
 	}
@@ -86,24 +124,35 @@ func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, re
 
 		payload, err := json.Marshal(chunk)
 		if err != nil {
-			_ = tracker.Fail(r.Context())
+			traceErr = err
+			_ = tracker.Fail(ctx)
 			return
 		}
 
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
-			_ = tracker.Fail(r.Context())
+			traceErr = err
+			_ = tracker.Fail(ctx)
 			return
+		}
+		if h.metrics != nil {
+			if !firstChunkWritten {
+				h.metrics.RecordStreamRequest(time.Since(startedAt))
+				firstChunkWritten = true
+			}
+			h.metrics.RecordStreamChunk()
 		}
 		flusher.Flush()
 	}
 
 	if _, err := fmt.Fprint(w, "data: [DONE]\n\n"); err != nil {
-		_ = tracker.Fail(r.Context())
+		traceErr = err
+		_ = tracker.Fail(ctx)
 		return
 	}
 	flusher.Flush()
 
-	if err := tracker.CompleteStream(r.Context(), req); err != nil {
+	if err := tracker.CompleteStream(ctx, req); err != nil {
+		traceErr = err
 		return
 	}
 }
@@ -118,20 +167,34 @@ func writeServiceError(w http.ResponseWriter, err error) {
 }
 
 func writeGovernanceError(w http.ResponseWriter, err error) {
+	writeGovernanceErrorWithMetrics(w, err, nil)
+}
+
+func writeGovernanceErrorWithMetrics(w http.ResponseWriter, err error, metrics MetricsRecorder) {
 	if errors.Is(err, governance.ErrRateLimitExceeded) {
+		recordGovernanceRejection(metrics, "rate_limit_exceeded")
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 		return
 	}
 
 	if errors.Is(err, governance.ErrTokenLimitExceeded) {
+		recordGovernanceRejection(metrics, "token_limit_exceeded")
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "token rate limit exceeded"})
 		return
 	}
 
 	if errors.Is(err, governance.ErrBudgetExceeded) {
+		recordGovernanceRejection(metrics, "budget_exceeded")
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "budget exceeded"})
 		return
 	}
 
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+}
+
+func recordGovernanceRejection(metrics MetricsRecorder, reason string) {
+	if metrics == nil {
+		return
+	}
+	metrics.RecordGovernanceRejection(reason)
 }

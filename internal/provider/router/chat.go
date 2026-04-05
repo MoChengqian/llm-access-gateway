@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/obs/tracing"
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
+	"go.uber.org/zap"
 )
 
 type Backend struct {
@@ -79,15 +81,30 @@ func New(backends []Backend, cfg Config) *Provider {
 }
 
 func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
+	ctx, span := tracing.StartSpan(ctx, "provider.router.create",
+		zap.String("model", req.Model),
+		zap.Int("configured_backends", len(p.backends)),
+	)
+	var traceErr error
+	defer func() {
+		span.End(traceErr)
+	}()
+
 	candidates, skipped := p.candidates()
 	if len(candidates) == 0 {
-		return provider.ChatCompletionResponse{}, errors.New("no provider backends configured")
+		traceErr = errors.New("no provider backends configured")
+		return provider.ChatCompletionResponse{}, traceErr
 	}
 	p.observeSkipped("create", skipped)
 
 	var lastErr error
 	for index, backend := range candidates {
-		resp, err := backend.Provider.CreateChatCompletion(ctx, req)
+		attemptCtx, attemptSpan := tracing.StartSpan(ctx, "provider.backend.create",
+			zap.String("backend", backend.Name),
+			zap.Int("attempt", index+1),
+		)
+		resp, err := backend.Provider.CreateChatCompletion(attemptCtx, req)
+		attemptSpan.End(err)
 		if err == nil {
 			recovered := p.markSuccess(backend.Name)
 			if index > 0 {
@@ -106,6 +123,7 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 					Attempt:   index + 1,
 				})
 			}
+			traceErr = nil
 			return resp, nil
 		}
 
@@ -122,19 +140,30 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 		})
 	}
 
+	traceErr = lastErr
 	return provider.ChatCompletionResponse{}, lastErr
 }
 
 func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionChunk, error) {
+	ctx, span := tracing.StartSpan(ctx, "provider.router.stream",
+		zap.String("model", req.Model),
+		zap.Int("configured_backends", len(p.backends)),
+	)
 	candidates, skipped := p.candidates()
 	if len(candidates) == 0 {
-		return nil, errors.New("no provider backends configured")
+		err := errors.New("no provider backends configured")
+		span.End(err)
+		return nil, err
 	}
 	p.observeSkipped("stream", skipped)
 
 	var lastErr error
 	for index, backend := range candidates {
-		chunks, err := backend.Provider.StreamChatCompletion(ctx, req)
+		attemptCtx, attemptSpan := tracing.StartSpan(ctx, "provider.backend.stream",
+			zap.String("backend", backend.Name),
+			zap.Int("attempt", index+1),
+		)
+		chunks, err := backend.Provider.StreamChatCompletion(attemptCtx, req)
 		if err == nil {
 			recovered := p.markSuccess(backend.Name)
 			if index > 0 {
@@ -153,8 +182,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 					Attempt:   index + 1,
 				})
 			}
-			return chunks, nil
+			return p.wrapStream(ctx, chunks, span, attemptSpan, backend.Name, index+1), nil
 		}
+		attemptSpan.End(err)
 
 		lastErr = err
 		failures, unhealthyUntil := p.markFailure(backend.Name)
@@ -169,7 +199,44 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 		})
 	}
 
+	span.End(lastErr)
 	return nil, lastErr
+}
+
+func (p *Provider) wrapStream(ctx context.Context, chunks <-chan provider.ChatCompletionChunk, routerSpan *tracing.Span, backendSpan *tracing.Span, backend string, attempt int) <-chan provider.ChatCompletionChunk {
+	wrapped := make(chan provider.ChatCompletionChunk)
+
+	go func() {
+		var traceErr error
+		chunkCount := 0
+		defer close(wrapped)
+		defer func() {
+			backendSpan.End(traceErr, zap.Int("chunk_count", chunkCount))
+			routerSpan.End(traceErr, zap.String("backend", backend), zap.Int("attempt", attempt), zap.Int("chunk_count", chunkCount))
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				traceErr = ctx.Err()
+				return
+			case chunk, ok := <-chunks:
+				if !ok {
+					return
+				}
+
+				select {
+				case <-ctx.Done():
+					traceErr = ctx.Err()
+					return
+				case wrapped <- chunk:
+					chunkCount++
+				}
+			}
+		}
+	}()
+
+	return wrapped
 }
 
 func (p *Provider) candidates() ([]Backend, []Backend) {

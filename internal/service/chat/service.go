@@ -3,8 +3,11 @@ package chat
 import (
 	"context"
 	"errors"
+	"strconv"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/obs/tracing"
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
+	"go.uber.org/zap"
 )
 
 var ErrInvalidRequest = errors.New("messages are required")
@@ -78,13 +81,24 @@ func NewService(defaultModel string, chatProvider provider.ChatCompletionProvide
 }
 
 func (s service) CreateCompletion(ctx context.Context, req CompletionRequest) (CompletionResponse, error) {
+	ctx, span := tracing.StartSpan(ctx, "chat.service.create_completion",
+		zap.String("model", req.Model),
+		zap.String("stream", strconv.FormatBool(false)),
+	)
+	var traceErr error
+	defer func() {
+		span.End(traceErr)
+	}()
+
 	providerReq, err := s.prepareProviderRequest(req)
 	if err != nil {
+		traceErr = err
 		return CompletionResponse{}, err
 	}
 
 	providerResp, err := s.provider.CreateChatCompletion(ctx, providerReq)
 	if err != nil {
+		traceErr = err
 		return CompletionResponse{}, err
 	}
 
@@ -103,22 +117,35 @@ func (s service) CreateCompletion(ctx context.Context, req CompletionRequest) (C
 }
 
 func (s service) StreamCompletion(ctx context.Context, req CompletionRequest) (<-chan CompletionChunk, error) {
+	ctx, span := tracing.StartSpan(ctx, "chat.service.stream_completion",
+		zap.String("model", req.Model),
+		zap.String("stream", strconv.FormatBool(true)),
+	)
+
 	providerReq, err := s.prepareProviderRequest(req)
 	if err != nil {
+		span.End(err)
 		return nil, err
 	}
 
 	providerChunks, err := s.provider.StreamChatCompletion(ctx, providerReq)
 	if err != nil {
+		span.End(err)
 		return nil, err
 	}
 
 	serviceChunks := make(chan CompletionChunk)
 	go func() {
+		var traceErr error
+		chunkCount := 0
+		defer func() {
+			span.End(traceErr, zap.Int("chunk_count", chunkCount))
+		}()
 		defer close(serviceChunks)
 		for chunk := range providerChunks {
 			select {
 			case <-ctx.Done():
+				traceErr = ctx.Err()
 				return
 			case serviceChunks <- CompletionChunk{
 				ID:      chunk.ID,
@@ -127,6 +154,7 @@ func (s service) StreamCompletion(ctx context.Context, req CompletionRequest) (<
 				Model:   chunk.Model,
 				Choices: toChunkChoices(chunk.Choices),
 			}:
+				chunkCount++
 			}
 		}
 	}()

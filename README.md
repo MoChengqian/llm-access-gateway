@@ -26,6 +26,8 @@ real provider adapters, richer routing, or production observability.
 - final streaming marker `data: [DONE]`
 - health endpoints: `GET /healthz` and `GET /readyz`
 - provider status endpoint: `GET /debug/providers`
+- metrics endpoint: `GET /metrics`
+- tracing header: `X-Trace-Id` on every HTTP response
 
 ## Project Structure
 
@@ -39,7 +41,9 @@ configs/
 
 deployments/
   docker/
-    docker-compose.yml  Local MySQL for development
+    docker-compose.yml  Local MySQL, Redis, devinit, and gateway stack
+  k8s/
+    *.yaml      Namespace, ConfigMap, Secret example, Deployment, Service
 
 docs/
   local-development.md  Step-by-step local setup and troubleshooting
@@ -96,6 +100,51 @@ INFO gateway starting address=:8080
 ```
 
 For a full walkthrough, see [docs/local-development.md](docs/local-development.md).
+
+## Container Quick Start
+
+To start the full local stack in containers:
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml up -d --build
+docker compose -f deployments/docker/docker-compose.yml ps
+docker compose -f deployments/docker/docker-compose.yml logs devinit
+curl -i http://127.0.0.1:8080/healthz
+```
+
+Expected result:
+
+- `mysql`, `redis`, and `gateway` become healthy
+- `devinit` exits with code `0`
+- `curl` returns `200` plus `X-Request-Id` and `X-Trace-Id`
+
+## K8s Basics
+
+The repo now includes baseline Kubernetes manifests in [deployments/k8s](deployments/k8s):
+
+- `namespace.yaml`
+- `configmap.yaml`
+- `secret.example.yaml`
+- `deployment.yaml`
+- `service.yaml`
+
+Apply them in this order after replacing the MySQL DSN in `secret.example.yaml`:
+
+```bash
+kubectl apply -f deployments/k8s/namespace.yaml
+kubectl apply -f deployments/k8s/configmap.yaml
+kubectl apply -f deployments/k8s/secret.example.yaml
+kubectl apply -f deployments/k8s/deployment.yaml
+kubectl apply -f deployments/k8s/service.yaml
+kubectl -n llm-access-gateway get pods,svc
+```
+
+The deployment uses:
+
+- `/healthz` as liveness probe
+- `/readyz` as readiness probe
+- `APP_*` environment variables from ConfigMap and Secret
+- port `8080` for both API and `/metrics`
 
 ## Auth
 
@@ -165,6 +214,9 @@ Expected results:
 - with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
 - if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
 - `GET /debug/providers` shows backend health, failure count, and cooldown state
+- `GET /metrics` exposes request count, provider failures, fallback count, and readyz failures
+- `/metrics` also exposes governance rejection counts plus stream request, chunk, and TTFT counters
+- every request returns `X-Trace-Id`, and logs now include `trace_id`, `span_id`, and provider span events for request -> handler -> provider correlation
 
 ## Local Development Entry
 

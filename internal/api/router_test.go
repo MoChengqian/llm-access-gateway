@@ -12,6 +12,7 @@ import (
 
 	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
+	"github.com/MoChengqian/llm-access-gateway/internal/obs/metrics"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
@@ -25,7 +26,7 @@ func TestHealthz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -39,6 +40,12 @@ func TestHealthz(t *testing.T) {
 	if got := rec.Header().Get("X-Request-Id"); got == "" {
 		t.Fatal("expected X-Request-Id header to be set")
 	}
+	if got := rec.Header().Get("X-Trace-Id"); got == "" {
+		t.Fatal("expected X-Trace-Id header to be set")
+	}
+	if rec.Header().Get("X-Trace-Id") != rec.Header().Get("X-Request-Id") {
+		t.Fatalf("expected X-Trace-Id to match X-Request-Id, got trace=%s request=%s", rec.Header().Get("X-Trace-Id"), rec.Header().Get("X-Request-Id"))
+	}
 }
 
 func TestReadyz(t *testing.T) {
@@ -48,7 +55,7 @@ func TestReadyz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -73,7 +80,7 @@ func TestReadyzReturnsServiceUnavailableWhenProvidersUnready(t *testing.T) {
 			{Name: "mock-primary", Healthy: false, ConsecutiveFailures: 1},
 			{Name: "mock-secondary", Healthy: false, ConsecutiveFailures: 1},
 		},
-	})
+	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -98,7 +105,7 @@ func TestDebugProviders(t *testing.T) {
 			{Name: "mock-primary", Healthy: false, ConsecutiveFailures: 1},
 			{Name: "mock-secondary", Healthy: true, ConsecutiveFailures: 0},
 		},
-	})
+	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/providers", nil)
 	rec := httptest.NewRecorder()
@@ -115,6 +122,57 @@ func TestDebugProviders(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpoint(t *testing.T) {
+	registry := metrics.NewRegistry()
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, nil, nil, providerHealthStub{ready: true}, registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	bodyText := rec.Body.String()
+	if !strings.Contains(bodyText, `lag_http_requests_total{method="GET",path="/healthz",status="200"} 1`) {
+		t.Fatalf("expected healthz metric, got %s", bodyText)
+	}
+}
+
+func TestMetricsCountsReadyzFailure(t *testing.T) {
+	registry := metrics.NewRegistry()
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, nil, nil, providerHealthStub{ready: false}, registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), "lag_readyz_failures_total 1") {
+		t.Fatalf("expected readyz failure metric, got %s", rec.Body.String())
+	}
+}
+
 func TestChatCompletions(t *testing.T) {
 	router := newTestRouter(stubAuthStore{
 		record: auth.APIKeyRecord{
@@ -122,7 +180,7 @@ func TestChatCompletions(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -166,13 +224,14 @@ func TestChatCompletions(t *testing.T) {
 }
 
 func TestChatCompletionsStream(t *testing.T) {
+	registry := metrics.NewRegistry()
 	router := newTestRouter(stubAuthStore{
 		record: auth.APIKeyRecord{
 			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil, nil)
+	}, nil, nil, nil, registry)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -223,10 +282,25 @@ func TestChatCompletionsStream(t *testing.T) {
 	if !strings.Contains(bodyText, "data: [DONE]") {
 		t.Fatalf("expected final DONE marker, got %s", bodyText)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	bodyText = rec.Body.String()
+	if !strings.Contains(bodyText, "lag_stream_requests_total 1") {
+		t.Fatalf("expected stream request metric, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "lag_stream_chunks_total 4") {
+		t.Fatalf("expected stream chunk metric, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "lag_stream_ttft_milliseconds_count 1") {
+		t.Fatalf("expected stream ttft metric, got %s", bodyText)
+	}
 }
 
 func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{}, nil, nil, nil)
+	router := newTestRouter(stubAuthStore{}, nil, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -260,7 +334,7 @@ func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsInvalidAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil, nil, nil)
+	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -301,7 +375,7 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 			APIKeyEnabled: false,
 			TenantEnabled: true,
 		},
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -332,13 +406,14 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
+	registry := metrics.NewRegistry()
 	router := newTestRouter(stubAuthStore{
 		record: auth.APIKeyRecord{
 			Tenant:        auth.Tenant{ID: 1, Name: "acme", RPMLimit: 1},
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrRateLimitExceeded}, nil)
+	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrRateLimitExceeded}, nil, registry)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -366,6 +441,14 @@ func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"rate limit exceeded\"") {
 		t.Fatalf("expected rate limit exceeded error, got %s", bodyText)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), `lag_governance_rejections_total{reason="rate_limit_exceeded"} 1`) {
+		t.Fatalf("expected governance rejection metric, got %s", rec.Body.String())
+	}
 }
 
 func TestChatCompletionsRejectsTokenRateLimitExceeded(t *testing.T) {
@@ -375,7 +458,7 @@ func TestChatCompletionsRejectsTokenRateLimitExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrTokenLimitExceeded}, nil)
+	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrTokenLimitExceeded}, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -412,7 +495,7 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10}, &stubLimiter{}, nil)
+	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10}, &stubLimiter{}, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -442,18 +525,21 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 	}
 }
 
-func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter, providers handlers.ProviderHealthReader) http.Handler {
+func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter, providers handlers.ProviderHealthReader, registry *metrics.Registry) http.Handler {
 	if governanceStore == nil {
 		governanceStore = &stubGovernanceStore{insertID: 1}
 	}
 	if limiter == nil {
 		limiter = &stubLimiter{}
 	}
+	if registry == nil {
+		registry = metrics.NewRegistry()
+	}
 
 	authService := auth.NewService(store)
 	governanceService := governance.NewService(governanceStore, limiter)
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
-	return NewRouter(zap.NewNop(), chatService, authService, governanceService, providers)
+	return NewRouter(zap.NewNop(), chatService, authService, governanceService, providers, registry, registry)
 }
 
 type stubAuthStore struct {

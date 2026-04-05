@@ -35,6 +35,8 @@ The expected API results are:
 - `stream:true` -> `text/event-stream` and final `[DONE]`
 - forced primary provider failure still falls back to `200`
 - provider health can be inspected from `/debug/providers`
+- metrics can be inspected from `/metrics`
+- every response includes `X-Trace-Id` for log correlation
 
 ## Prerequisites
 
@@ -43,6 +45,29 @@ The expected API results are:
 - Go is installed
 - current working directory is the repo root:
   `/Users/luan/Desktop/llm-access-gateway`
+
+## Optional: Full Container Stack
+
+If you want the whole stack in containers instead of running the gateway from your shell:
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml up -d --build
+docker compose -f deployments/docker/docker-compose.yml ps
+docker compose -f deployments/docker/docker-compose.yml logs devinit
+curl -i http://127.0.0.1:8080/healthz
+```
+
+Expected response:
+
+```text
+NAME                           IMAGE                      STATUS
+llm-access-gateway-mysql       mysql:8.4                  healthy
+llm-access-gateway-redis       redis:7.4-alpine           healthy
+llm-access-gateway-devinit     llm-access-gateway:latest  exited (0)
+llm-access-gateway             llm-access-gateway:latest  healthy
+```
+
+For the health check request, you should see `HTTP/1.1 200 OK` plus `X-Request-Id` and `X-Trace-Id`.
 
 ## 1. Start Docker MySQL
 
@@ -292,6 +317,8 @@ Then inspect provider health:
 ```bash
 curl -i http://127.0.0.1:8080/debug/providers
 curl -i http://127.0.0.1:8080/readyz
+curl -i http://127.0.0.1:8080/metrics
+curl -i http://127.0.0.1:8080/healthz
 ```
 
 Expected response:
@@ -301,6 +328,22 @@ HTTP/1.1 200 OK
 Content-Type: application/json
 ...
 {"ready":true,"providers":[{"name":"mock-primary","healthy":false,...
+```
+
+For `curl -i http://127.0.0.1:8080/healthz`, you should also see:
+
+```text
+X-Request-Id: ...
+X-Trace-Id: ...
+```
+
+For `curl -i http://127.0.0.1:8080/metrics`, you should see gateway counters including:
+
+```text
+lag_governance_rejections_total{reason="rate_limit_exceeded"} ...
+lag_stream_requests_total ...
+lag_stream_chunks_total ...
+lag_stream_ttft_milliseconds_count ...
 ```
 
 You can also use the helper script:

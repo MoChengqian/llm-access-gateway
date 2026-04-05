@@ -14,6 +14,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
+	"github.com/MoChengqian/llm-access-gateway/internal/obs/metrics"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	providerrouter "github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
@@ -75,6 +76,7 @@ func main() {
 		}
 	}
 	governanceService := governance.NewService(governanceStore, limiter)
+	metricsRegistry := metrics.NewRegistry()
 	chatProvider := providerrouter.New([]providerrouter.Backend{
 		{
 			Name: "mock-primary",
@@ -90,13 +92,18 @@ func main() {
 	}, providerrouter.Config{
 		FailureThreshold: cfg.Gateway.ProviderFailureThreshold,
 		Cooldown:         time.Duration(cfg.Gateway.ProviderCooldownSeconds) * time.Second,
-		Observer:         providerEventLogger{logger: logger},
+		Observer: multiProviderObserver{
+			observers: []providerrouter.Observer{
+				providerEventLogger{logger: logger},
+				metricsRegistry,
+			},
+		},
 	})
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService, authService, governanceService, providerHealthAdapter{provider: chatProvider}),
+		Handler:           api.NewRouter(logger, chatService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -130,6 +137,19 @@ type providerHealthAdapter struct {
 
 type providerEventLogger struct {
 	logger *zap.Logger
+}
+
+type multiProviderObserver struct {
+	observers []providerrouter.Observer
+}
+
+func (o multiProviderObserver) OnEvent(event providerrouter.Event) {
+	for _, observer := range o.observers {
+		if observer == nil {
+			continue
+		}
+		observer.OnEvent(event)
+	}
 }
 
 func (l providerEventLogger) OnEvent(event providerrouter.Event) {

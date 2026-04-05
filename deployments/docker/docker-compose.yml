@@ -33,5 +33,43 @@ services:
       retries: 20
       start_period: 5s
 
+  devinit:
+    container_name: llm-access-gateway-devinit
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      APP_MYSQL_DSN: user:pass@tcp(mysql:3306)/llm_access_gateway?parseTime=true
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["/app/devinit"]
+    restart: "no"
+
+  gateway:
+    container_name: llm-access-gateway
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      APP_SERVER_ADDRESS: ":8080"
+      APP_MYSQL_DSN: user:pass@tcp(mysql:3306)/llm_access_gateway?parseTime=true
+      APP_REDIS_ADDRESS: redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      devinit:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
 volumes:
   llm-access-gateway-mysql-data:

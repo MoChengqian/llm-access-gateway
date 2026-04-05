@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-access-gateway-config
+  namespace: llm-access-gateway
+data:
+  APP_SERVER_ADDRESS: ":8080"
+  APP_LOG_LEVEL: "info"
+  APP_REDIS_ADDRESS: "redis.default.svc.cluster.local:6379"
+  APP_GATEWAY_DEFAULT_MODEL: "gpt-4o-mini"
+  APP_GATEWAY_PROVIDER_FAILURE_THRESHOLD: "1"
+  APP_GATEWAY_PROVIDER_COOLDOWN_SECONDS: "30"
+  APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE: "false"
+  APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM: "false"
