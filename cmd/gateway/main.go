@@ -14,6 +14,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
+	providerrouter "github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
@@ -73,7 +74,22 @@ func main() {
 		}
 	}
 	governanceService := governance.NewService(governanceStore, limiter)
-	chatProvider := providermock.New()
+	chatProvider := providerrouter.New([]providerrouter.Backend{
+		{
+			Name: "mock-primary",
+			Provider: providermock.NewWithConfig(providermock.Config{
+				FailCreate: cfg.Gateway.PrimaryMockFailCreate,
+				FailStream: cfg.Gateway.PrimaryMockFailStream,
+			}),
+		},
+		{
+			Name:     "mock-secondary",
+			Provider: providermock.New(),
+		},
+	}, providerrouter.Config{
+		FailureThreshold: cfg.Gateway.ProviderFailureThreshold,
+		Cooldown:         time.Duration(cfg.Gateway.ProviderCooldownSeconds) * time.Second,
+	})
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
 
 	server := &http.Server{

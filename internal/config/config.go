@@ -33,7 +33,11 @@ type RedisConfig struct {
 }
 
 type GatewayConfig struct {
-	DefaultModel string `mapstructure:"default_model" json:"default_model"`
+	DefaultModel              string `mapstructure:"default_model" json:"default_model"`
+	ProviderFailureThreshold  int    `mapstructure:"provider_failure_threshold" json:"provider_failure_threshold"`
+	ProviderCooldownSeconds   int    `mapstructure:"provider_cooldown_seconds" json:"provider_cooldown_seconds"`
+	PrimaryMockFailCreate     bool   `mapstructure:"primary_mock_fail_create" json:"primary_mock_fail_create"`
+	PrimaryMockFailStream     bool   `mapstructure:"primary_mock_fail_stream" json:"primary_mock_fail_stream"`
 }
 
 func Load() (Config, error) {
@@ -69,4 +73,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.password", "")
 	v.SetDefault("redis.db", 0)
 	v.SetDefault("gateway.default_model", "gpt-4o-mini")
+	v.SetDefault("gateway.provider_failure_threshold", 1)
+	v.SetDefault("gateway.provider_cooldown_seconds", 30)
+	v.SetDefault("gateway.primary_mock_fail_create", false)
+	v.SetDefault("gateway.primary_mock_fail_stream", false)
 }

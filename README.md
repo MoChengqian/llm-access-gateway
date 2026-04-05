@@ -6,13 +6,14 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 - API key authentication backed by MySQL
 - Redis-backed RPM / TPM limiting with MySQL fallback
 - tenant resolution from API key
+- provider routing with primary/secondary mock fallback
 - mock non-streaming chat completions
 - SSE streaming chat completions
 - request ID propagation in responses and logs
 
 The current codebase is intentionally small. It is suitable for local
 development, auth validation, and API contract verification before adding
-quota, routing, or a real model provider.
+real provider adapters, richer routing, or production observability.
 
 ## Core Capabilities
 
@@ -46,6 +47,7 @@ internal/
   auth/        Bearer auth and tenant resolution
   config/      Config loading
   provider/    Provider interface and mock provider
+  provider/router Failover router with passive backend health
   service/chat Chat request validation and response shaping
   store/mysql/ MySQL auth lookup, usage storage, and local bootstrap helpers
   store/redis/ Minimal Redis client for limiter counters
@@ -159,6 +161,7 @@ Expected results:
 - valid key -> `200` with `"object":"chat.completion"`
 - `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
 - with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
+- if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
 
 ## Local Development Entry
 
@@ -177,7 +180,25 @@ Environment variables currently used by the code:
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
 export APP_REDIS_ADDRESS='127.0.0.1:6379'
 export APP_SERVER_ADDRESS=':8080'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
 ```
+
+For local fallback verification you can temporarily force the primary mock
+provider to fail before a response starts:
+
+```bash
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='true'
+go run ./cmd/gateway
+
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='true'
+go run ./cmd/gateway
+```
+
+Expected result:
+
+- non-stream requests still return `200`
+- stream requests still return `text/event-stream` and final `data: [DONE]`
 
 Default config file: [`configs/config.yaml`](configs/config.yaml)
 

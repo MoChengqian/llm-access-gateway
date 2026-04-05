@@ -1,7 +1,7 @@
 # Local Development
 
 This document is the shortest path to run the current repository locally with
-MySQL-backed auth and Redis-backed limiter counters enabled.
+MySQL-backed auth, Redis-backed limiter counters, and provider fallback enabled.
 
 All commands below are based on the current code and current repo layout:
 
@@ -18,6 +18,8 @@ The current local verification path for this repo is:
 docker compose -f deployments/docker/docker-compose.yml up -d
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
 export APP_REDIS_ADDRESS='127.0.0.1:6379'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
 go run ./cmd/devinit
 go run ./cmd/gateway
 ```
@@ -31,6 +33,7 @@ The expected API results are:
 - budget exceeded -> `403`
 - valid key -> `200`
 - `stream:true` -> `text/event-stream` and final `[DONE]`
+- forced primary provider failure still falls back to `200`
 
 ## Prerequisites
 
@@ -148,6 +151,8 @@ In a separate terminal, still at repo root, run:
 ```bash
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
 export APP_REDIS_ADDRESS='127.0.0.1:6379'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
 go run ./cmd/gateway
 ```
 
@@ -253,7 +258,63 @@ The key checks for streaming are:
 - response contains multiple `data:` events
 - response ends with `data: [DONE]`
 
-## 10. Optional Cleanup
+## 10. Verify Provider Fallback
+
+To force the primary mock provider to fail for non-stream requests:
+
+```bash
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='true'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
+go run ./cmd/gateway
+```
+
+Then call:
+
+```bash
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Expected response:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+...
+{"id":"chatcmpl-mock","object":"chat.completion",...}
+```
+
+To force the primary mock provider to fail before streaming starts:
+
+```bash
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
+export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='true'
+go run ./cmd/gateway
+```
+
+Then call:
+
+```bash
+curl -i -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+Expected response:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+...
+data: {"id":"chatcmpl-mock","object":"chat.completion.chunk",...}
+
+data: [DONE]
+```
+
+## 11. Optional Cleanup
 
 Stop the gateway with `Ctrl+C`.
 
