@@ -1,4 +1,4 @@
-.PHONY: run test fmt docker-build compose-up compose-down
+.PHONY: run test fmt docker-build compose-up compose-down loadtest
 
 run:
 	go run ./cmd/gateway
@@ -17,3 +17,6 @@ compose-up:
 
 compose-down:
 	docker compose -f deployments/docker/docker-compose.yml down
+
+loadtest:
+	go run ./cmd/loadtest -auth-key lag-local-dev-key

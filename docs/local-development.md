@@ -1,7 +1,8 @@
 # Local Development
 
 This document is the shortest path to run the current repository locally with
-MySQL-backed auth, Redis-backed limiter counters, and provider fallback enabled.
+MySQL-backed auth, Redis-backed limiter counters, configurable provider adapters,
+and provider fallback enabled.
 
 All commands below are based on the current code and current repo layout:
 
@@ -9,6 +10,7 @@ All commands below are based on the current code and current repo layout:
 - Redis compose: `deployments/docker/docker-compose.yml`
 - local init command: `go run ./cmd/devinit`
 - gateway command: `go run ./cmd/gateway`
+- load test command: `go run ./cmd/loadtest`
 - models endpoint: `GET /v1/models`
 
 ## Verified Local Path
@@ -39,6 +41,7 @@ The expected API results are:
 - provider health can be inspected from `/debug/providers`
 - metrics can be inspected from `/metrics`
 - every response includes `X-Trace-Id` for log correlation
+- primary / secondary providers can be configured as `mock` or `openai`
 
 ## Prerequisites
 
@@ -141,6 +144,39 @@ Expected output:
 ```
 
 This DSN matches the compose file exactly.
+
+## 3.1 Optional: Configure a Real OpenAI-Compatible Upstream
+
+If you want the gateway to proxy to a real OpenAI-compatible provider instead of the built-in mock primary backend, export:
+
+```bash
+export APP_PROVIDER_PRIMARY_TYPE='openai'
+export APP_PROVIDER_PRIMARY_BASE_URL='https://api.openai.com/v1'
+export APP_PROVIDER_PRIMARY_API_KEY='sk-...'
+export APP_PROVIDER_PRIMARY_MODEL='gpt-4.1-mini'
+```
+
+Notes:
+
+- `APP_PROVIDER_PRIMARY_BASE_URL` should point to an upstream base path that already includes `/v1`
+- the secondary backend can stay on the default `mock` type for local fallback verification
+- if you do not set these variables, the repo keeps the current mock-first behavior
+
+## 3.2 Optional: Run the Built-In Load Test
+
+After the gateway is up and `lag-local-dev-key` is seeded, you can run:
+
+```bash
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream
+```
+
+Expected output includes:
+
+- `success=` and `failure=` counts
+- `status_counts=200=...`
+- `latency_p50=... latency_p95=...`
+- for stream mode: `stream_chunks_total=` and `ttft_p50=...`
 
 ## 4. Initialize Local Tenant and API Key
 

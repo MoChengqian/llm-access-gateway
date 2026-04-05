@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	"github.com/MoChengqian/llm-access-gateway/internal/obs/metrics"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
+	provideropenai "github.com/MoChengqian/llm-access-gateway/internal/provider/openai"
 	providerrouter "github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
@@ -78,19 +81,11 @@ func main() {
 	}
 	governanceService := governance.NewService(governanceStore, limiter)
 	metricsRegistry := metrics.NewRegistry()
-	chatProvider := providerrouter.New([]providerrouter.Backend{
-		{
-			Name: "mock-primary",
-			Provider: providermock.NewWithConfig(providermock.Config{
-				FailCreate: cfg.Gateway.PrimaryMockFailCreate,
-				FailStream: cfg.Gateway.PrimaryMockFailStream,
-			}),
-		},
-		{
-			Name:     "mock-secondary",
-			Provider: providermock.New(),
-		},
-	}, providerrouter.Config{
+	backends, models, err := buildProviderBackends(cfg)
+	if err != nil {
+		logger.Fatal("provider setup failed", zap.Error(err))
+	}
+	chatProvider := providerrouter.New(backends, providerrouter.Config{
 		FailureThreshold: cfg.Gateway.ProviderFailureThreshold,
 		Cooldown:         time.Duration(cfg.Gateway.ProviderCooldownSeconds) * time.Second,
 		Observer: multiProviderObserver{
@@ -101,7 +96,7 @@ func main() {
 		},
 	})
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
-	modelsService := modelsservice.NewService([]string{cfg.Gateway.DefaultModel})
+	modelsService := modelsservice.NewService(models)
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
@@ -128,6 +123,81 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", zap.Error(err))
 	}
+}
+
+func buildProviderBackends(cfg config.Config) ([]providerrouter.Backend, []string, error) {
+	primary, primaryModel, err := buildProviderBackend("primary", cfg.Provider.Primary, cfg.Gateway.DefaultModel, providermock.Config{
+		FailCreate: cfg.Gateway.PrimaryMockFailCreate,
+		FailStream: cfg.Gateway.PrimaryMockFailStream,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	secondary, secondaryModel, err := buildProviderBackend("secondary", cfg.Provider.Secondary, cfg.Gateway.DefaultModel, providermock.Config{})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	models := collectModels(cfg.Gateway.DefaultModel, primaryModel, secondaryModel)
+	return []providerrouter.Backend{primary, secondary}, models, nil
+}
+
+func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaultModel string, mockCfg providermock.Config) (providerrouter.Backend, string, error) {
+	providerType := strings.ToLower(strings.TrimSpace(cfg.Type))
+	if providerType == "" {
+		providerType = "mock"
+	}
+
+	name := strings.TrimSpace(cfg.Name)
+	if name == "" {
+		name = fmt.Sprintf("%s-%s", providerType, role)
+	}
+
+	model := strings.TrimSpace(cfg.Model)
+	if model == "" {
+		model = defaultModel
+	}
+
+	switch providerType {
+	case "mock":
+		return providerrouter.Backend{
+			Name:     name,
+			Provider: providermock.NewWithConfig(mockCfg),
+		}, model, nil
+	case "openai":
+		if strings.TrimSpace(cfg.BaseURL) == "" {
+			return providerrouter.Backend{}, "", fmt.Errorf("%s provider base_url is required for type openai", role)
+		}
+
+		return providerrouter.Backend{
+			Name: name,
+			Provider: provideropenai.New(provideropenai.Config{
+				BaseURL:      cfg.BaseURL,
+				APIKey:       cfg.APIKey,
+				DefaultModel: model,
+			}),
+		}, model, nil
+	default:
+		return providerrouter.Backend{}, "", fmt.Errorf("%s provider type %q is not supported", role, cfg.Type)
+	}
+}
+
+func collectModels(values ...string) []string {
+	models := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		models = append(models, value)
+	}
+	return models
 }
 
 type providerHealthAdapter struct {

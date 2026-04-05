@@ -6,7 +6,7 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 - API key authentication backed by MySQL
 - Redis-backed RPM / TPM limiting with MySQL fallback
 - tenant resolution from API key
-- provider routing with primary/secondary mock fallback
+- provider routing with configurable OpenAI-compatible or mock backends
 - mock non-streaming chat completions
 - SSE streaming chat completions
 - provider health and debug status endpoints
@@ -29,6 +29,7 @@ real provider adapters, richer routing, or production observability.
 - provider status endpoint: `GET /debug/providers`
 - metrics endpoint: `GET /metrics`
 - tracing header: `X-Trace-Id` on every HTTP response
+- configurable OpenAI-compatible upstream provider adapter
 
 ## Project Structure
 
@@ -36,6 +37,7 @@ real provider adapters, richer routing, or production observability.
 cmd/
   devinit/     Initialize local MySQL schema and seed one development tenant/key
   gateway/     Start the HTTP gateway
+  loadtest/    Run a built-in load test against chat completions
 
 configs/
   config.yaml  Default app configuration
@@ -236,6 +238,7 @@ go run ./cmd/devinit
 go run ./cmd/gateway
 make test
 make fmt
+make loadtest
 ```
 
 Environment variables currently used by the code:
@@ -246,7 +249,43 @@ export APP_REDIS_ADDRESS='127.0.0.1:6379'
 export APP_SERVER_ADDRESS=':8080'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
+export APP_PROVIDER_PRIMARY_TYPE='mock'
+export APP_PROVIDER_PRIMARY_BASE_URL=''
+export APP_PROVIDER_PRIMARY_API_KEY=''
+export APP_PROVIDER_PRIMARY_MODEL=''
+export APP_PROVIDER_SECONDARY_TYPE='mock'
+export APP_PROVIDER_SECONDARY_BASE_URL=''
+export APP_PROVIDER_SECONDARY_API_KEY=''
+export APP_PROVIDER_SECONDARY_MODEL=''
 ```
+
+To use a real OpenAI-compatible upstream as the primary backend:
+
+```bash
+export APP_PROVIDER_PRIMARY_TYPE='openai'
+export APP_PROVIDER_PRIMARY_BASE_URL='https://api.openai.com/v1'
+export APP_PROVIDER_PRIMARY_API_KEY='sk-...'
+export APP_PROVIDER_PRIMARY_MODEL='gpt-4.1-mini'
+```
+
+The gateway will keep the configured secondary backend for fallback, and streaming fallback still only happens before the first chunk is emitted.
+
+## Load Testing
+
+The repo includes a built-in load test command so you can get a quick baseline without external tools:
+
+```bash
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream
+```
+
+Expected output includes:
+
+- total request count and concurrency
+- success / failure counts
+- status code distribution
+- latency p50 / p95 / max
+- for streaming: TTFT p50 / p95 / max and total streamed chunk count
 
 For local fallback verification you can temporarily force the primary mock
 provider to fail before a response starts:

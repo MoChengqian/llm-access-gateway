@@ -18,3 +18,17 @@ gateway:
   provider_cooldown_seconds: 30
   primary_mock_fail_create: false
   primary_mock_fail_stream: false
+
+provider:
+  primary:
+    type: mock
+    name: primary
+    base_url: ""
+    api_key: ""
+    model: ""
+  secondary:
+    type: mock
+    name: secondary
+    base_url: ""
+    api_key: ""
+    model: ""
