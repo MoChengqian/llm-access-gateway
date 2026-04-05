@@ -9,6 +9,7 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 - provider routing with primary/secondary mock fallback
 - mock non-streaming chat completions
 - SSE streaming chat completions
+- provider health and debug status endpoints
 - request ID propagation in responses and logs
 
 The current codebase is intentionally small. It is suitable for local
@@ -24,6 +25,7 @@ real provider adapters, richer routing, or production observability.
 - `stream=true` SSE response with `Content-Type: text/event-stream`
 - final streaming marker `data: [DONE]`
 - health endpoints: `GET /healthz` and `GET /readyz`
+- provider status endpoint: `GET /debug/providers`
 
 ## Project Structure
 
@@ -162,6 +164,7 @@ Expected results:
 - `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
 - with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
 - if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
+- `GET /debug/providers` shows backend health, failure count, and cooldown state
 
 ## Local Development Entry
 
@@ -199,6 +202,8 @@ Expected result:
 
 - non-stream requests still return `200`
 - stream requests still return `text/event-stream` and final `data: [DONE]`
+- `curl -i http://127.0.0.1:8080/readyz` returns `503` when all providers are in cooldown
+- `curl -i http://127.0.0.1:8080/debug/providers` shows which backend is unhealthy
 
 Default config file: [`configs/config.yaml`](configs/config.yaml)
 

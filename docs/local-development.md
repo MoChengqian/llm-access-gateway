@@ -34,6 +34,7 @@ The expected API results are:
 - valid key -> `200`
 - `stream:true` -> `text/event-stream` and final `[DONE]`
 - forced primary provider failure still falls back to `200`
+- provider health can be inspected from `/debug/providers`
 
 ## Prerequisites
 
@@ -286,6 +287,22 @@ Content-Type: application/json
 {"id":"chatcmpl-mock","object":"chat.completion",...}
 ```
 
+Then inspect provider health:
+
+```bash
+curl -i http://127.0.0.1:8080/debug/providers
+curl -i http://127.0.0.1:8080/readyz
+```
+
+Expected response:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+...
+{"ready":true,"providers":[{"name":"mock-primary","healthy":false,...
+```
+
 To force the primary mock provider to fail before streaming starts:
 
 ```bash
@@ -312,6 +329,15 @@ Content-Type: text/event-stream
 data: {"id":"chatcmpl-mock","object":"chat.completion.chunk",...}
 
 data: [DONE]
+```
+
+If both providers are forced into failure and still in cooldown, `readyz`
+returns:
+
+```text
+HTTP/1.1 503 Service Unavailable
+...
+{"status":"not ready"}
 ```
 
 ## 11. Optional Cleanup

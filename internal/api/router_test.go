@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
@@ -24,7 +25,7 @@ func TestHealthz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -47,7 +48,7 @@ func TestReadyz(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -59,6 +60,61 @@ func TestReadyz(t *testing.T) {
 	}
 }
 
+func TestReadyzReturnsServiceUnavailableWhenProvidersUnready(t *testing.T) {
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, nil, nil, providerHealthStub{
+		ready: false,
+		statuses: []handlers.ProviderBackendStatus{
+			{Name: "mock-primary", Healthy: false, ConsecutiveFailures: 1},
+			{Name: "mock-secondary", Healthy: false, ConsecutiveFailures: 1},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+	}
+}
+
+func TestDebugProviders(t *testing.T) {
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, nil, nil, providerHealthStub{
+		ready: true,
+		statuses: []handlers.ProviderBackendStatus{
+			{Name: "mock-primary", Healthy: false, ConsecutiveFailures: 1},
+			{Name: "mock-secondary", Healthy: true, ConsecutiveFailures: 0},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/providers", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	bodyText := rec.Body.String()
+	if !strings.Contains(bodyText, "\"ready\":true") || !strings.Contains(bodyText, "\"mock-primary\"") {
+		t.Fatalf("expected provider status payload, got %s", bodyText)
+	}
+}
+
 func TestChatCompletions(t *testing.T) {
 	router := newTestRouter(stubAuthStore{
 		record: auth.APIKeyRecord{
@@ -66,7 +122,7 @@ func TestChatCompletions(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -116,7 +172,7 @@ func TestChatCompletionsStream(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -170,7 +226,7 @@ func TestChatCompletionsStream(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{}, nil, nil)
+	router := newTestRouter(stubAuthStore{}, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -204,7 +260,7 @@ func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
 }
 
 func TestChatCompletionsRejectsInvalidAPIKey(t *testing.T) {
-	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil, nil)
+	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -245,7 +301,7 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 			APIKeyEnabled: false,
 			TenantEnabled: true,
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -282,7 +338,7 @@ func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrRateLimitExceeded})
+	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrRateLimitExceeded}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -319,7 +375,7 @@ func TestChatCompletionsRejectsTokenRateLimitExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrTokenLimitExceeded})
+	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrTokenLimitExceeded}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -356,7 +412,7 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10}, &stubLimiter{})
+	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10}, &stubLimiter{}, nil)
 
 	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{
@@ -386,7 +442,7 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 	}
 }
 
-func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter) http.Handler {
+func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter, providers handlers.ProviderHealthReader) http.Handler {
 	if governanceStore == nil {
 		governanceStore = &stubGovernanceStore{insertID: 1}
 	}
@@ -397,7 +453,7 @@ func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, li
 	authService := auth.NewService(store)
 	governanceService := governance.NewService(governanceStore, limiter)
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
-	return NewRouter(zap.NewNop(), chatService, authService, governanceService)
+	return NewRouter(zap.NewNop(), chatService, authService, governanceService, providers)
 }
 
 type stubAuthStore struct {
@@ -448,4 +504,17 @@ func (l *stubLimiter) Admit(context.Context, auth.Principal, int, time.Time) err
 
 func (l *stubLimiter) RecordCompletionTokens(context.Context, auth.Principal, int, time.Time) error {
 	return nil
+}
+
+type providerHealthStub struct {
+	ready    bool
+	statuses []handlers.ProviderBackendStatus
+}
+
+func (s providerHealthStub) Ready() bool {
+	return s.ready
+}
+
+func (s providerHealthStub) BackendStatuses() []handlers.ProviderBackendStatus {
+	return s.statuses
 }

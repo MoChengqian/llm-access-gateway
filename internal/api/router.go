@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewRouter(logger *zap.Logger, chatService chat.Service, authenticator auth.Authenticator, governanceService governance.Service) http.Handler {
+func NewRouter(logger *zap.Logger, chatService chat.Service, authenticator auth.Authenticator, governanceService governance.Service, providers handlers.ProviderHealthReader) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
@@ -22,11 +22,12 @@ func NewRouter(logger *zap.Logger, chatService chat.Service, authenticator auth.
 	r.Use(requestIDHeader)
 	r.Use(requestLogger(logger))
 
-	healthHandler := handlers.NewHealthHandler()
+	healthHandler := handlers.NewHealthHandler(providers)
 	chatHandler := handlers.NewChatHandler(chatService, governanceService)
 
 	r.Get("/healthz", healthHandler.Healthz)
 	r.Get("/readyz", healthHandler.Readyz)
+	r.Get("/debug/providers", healthHandler.Providers)
 	r.Post("/v1/chat/completions", requireAPIKey(authenticator, chatHandler.CreateCompletion))
 
 	return r

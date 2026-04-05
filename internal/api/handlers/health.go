@@ -3,12 +3,27 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
-type HealthHandler struct{}
+type ProviderHealthReader interface {
+	Ready() bool
+	BackendStatuses() []ProviderBackendStatus
+}
 
-func NewHealthHandler() HealthHandler {
-	return HealthHandler{}
+type ProviderBackendStatus struct {
+	Name                string    `json:"name"`
+	Healthy             bool      `json:"healthy"`
+	ConsecutiveFailures int       `json:"consecutive_failures"`
+	UnhealthyUntil      time.Time `json:"unhealthy_until,omitempty"`
+}
+
+type HealthHandler struct {
+	providers ProviderHealthReader
+}
+
+func NewHealthHandler(providers ProviderHealthReader) HealthHandler {
+	return HealthHandler{providers: providers}
 }
 
 func (h HealthHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
@@ -16,7 +31,27 @@ func (h HealthHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h HealthHandler) Readyz(w http.ResponseWriter, _ *http.Request) {
+	if h.providers != nil && !h.providers.Ready() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready"})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (h HealthHandler) Providers(w http.ResponseWriter, _ *http.Request) {
+	if h.providers == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ready":     true,
+			"providers": []ProviderBackendStatus{},
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ready":     h.providers.Ready(),
+		"providers": h.providers.BackendStatuses(),
+	})
 }
 
 func WriteErrorJSON(w http.ResponseWriter, status int, message string) {

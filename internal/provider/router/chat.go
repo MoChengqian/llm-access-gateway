@@ -14,6 +14,13 @@ type Backend struct {
 	Provider provider.ChatCompletionProvider
 }
 
+type BackendStatus struct {
+	Name                string    `json:"name"`
+	Healthy             bool      `json:"healthy"`
+	ConsecutiveFailures int       `json:"consecutive_failures"`
+	UnhealthyUntil      time.Time `json:"unhealthy_until,omitempty"`
+}
+
 type Config struct {
 	FailureThreshold int
 	Cooldown         time.Duration
@@ -137,4 +144,35 @@ func (p *Provider) markFailure(name string) {
 		state.unhealthyUntil = p.now().Add(p.cooldown)
 	}
 	p.states[name] = state
+}
+
+func (p *Provider) Ready() bool {
+	statuses := p.BackendStatuses()
+	for _, status := range statuses {
+		if status.Healthy {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Provider) BackendStatuses() []BackendStatus {
+	now := p.now()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	statuses := make([]BackendStatus, 0, len(p.backends))
+	for _, backend := range p.backends {
+		state := p.states[backend.Name]
+		healthy := state.unhealthyUntil.IsZero() || !state.unhealthyUntil.After(now)
+		statuses = append(statuses, BackendStatus{
+			Name:                backend.Name,
+			Healthy:             healthy,
+			ConsecutiveFailures: state.consecutiveFailures,
+			UnhealthyUntil:      state.unhealthyUntil,
+		})
+	}
+
+	return statuses
 }

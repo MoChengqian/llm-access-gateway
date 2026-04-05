@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/api"
+	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
@@ -94,7 +95,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService, authService, governanceService),
+		Handler:           api.NewRouter(logger, chatService, authService, governanceService, providerHealthAdapter{provider: chatProvider}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -117,4 +118,36 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", zap.Error(err))
 	}
+}
+
+type providerHealthAdapter struct {
+	provider interface {
+		Ready() bool
+		BackendStatuses() []providerrouter.BackendStatus
+	}
+}
+
+func (a providerHealthAdapter) Ready() bool {
+	if a.provider == nil {
+		return true
+	}
+	return a.provider.Ready()
+}
+
+func (a providerHealthAdapter) BackendStatuses() []handlers.ProviderBackendStatus {
+	if a.provider == nil {
+		return nil
+	}
+
+	statuses := a.provider.BackendStatuses()
+	result := make([]handlers.ProviderBackendStatus, 0, len(statuses))
+	for _, status := range statuses {
+		result = append(result, handlers.ProviderBackendStatus{
+			Name:                status.Name,
+			Healthy:             status.Healthy,
+			ConsecutiveFailures: status.ConsecutiveFailures,
+			UnhealthyUntil:      status.UnhealthyUntil,
+		})
+	}
+	return result
 }

@@ -89,6 +89,40 @@ func TestUnhealthyPrimaryIsSkippedDuringCooldown(t *testing.T) {
 	}
 }
 
+func TestReadyAndBackendStatusesReflectCooldown(t *testing.T) {
+	now := time.Unix(123, 0)
+	primary := &stubProvider{createErr: errors.New("primary failed")}
+	secondary := &stubProvider{createErr: errors.New("secondary failed")}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+	routed.now = func() time.Time { return now }
+
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err == nil {
+		t.Fatal("expected create completion to fail")
+	}
+
+	if routed.Ready() {
+		t.Fatal("expected router to be unready while all backends are in cooldown")
+	}
+
+	statuses := routed.BackendStatuses()
+	if len(statuses) != 2 {
+		t.Fatalf("expected 2 statuses, got %#v", statuses)
+	}
+
+	for _, status := range statuses {
+		if status.Healthy {
+			t.Fatalf("expected backend to be unhealthy, got %#v", statuses)
+		}
+		if status.ConsecutiveFailures != 1 {
+			t.Fatalf("expected one failure recorded, got %#v", statuses)
+		}
+	}
+}
+
 type stubProvider struct {
 	createCalled bool
 	streamCalled bool
