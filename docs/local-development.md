@@ -388,6 +388,7 @@ You can also use the helper script:
 
 ```bash
 ./scripts/provider-fallback-drill.sh create-fail
+./scripts/gateway-smoke-check.sh
 ```
 
 To force the primary mock provider to fail before streaming starts:

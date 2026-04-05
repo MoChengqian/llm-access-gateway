@@ -311,6 +311,7 @@ There is also a small drill helper:
 ./scripts/provider-fallback-drill.sh status
 ./scripts/provider-fallback-drill.sh create-fail
 ./scripts/provider-fallback-drill.sh stream-fail
+./scripts/gateway-smoke-check.sh
 ```
 
 Default config file: [`configs/config.yaml`](configs/config.yaml)

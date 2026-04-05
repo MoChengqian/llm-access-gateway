@@ -1,4 +1,4 @@
-.PHONY: run test fmt docker-build compose-up compose-down loadtest
+.PHONY: run test fmt docker-build compose-up compose-down loadtest smoke
 
 run:
 	go run ./cmd/gateway
@@ -20,3 +20,6 @@ compose-down:
 
 loadtest:
 	go run ./cmd/loadtest -auth-key lag-local-dev-key
+
+smoke:
+	./scripts/gateway-smoke-check.sh
