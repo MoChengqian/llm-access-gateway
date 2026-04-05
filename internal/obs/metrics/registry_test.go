@@ -23,11 +23,19 @@ func TestRegistryServeHTTP(t *testing.T) {
 		Type:      "provider_request_failed",
 		Operation: "create",
 		Backend:   "mock-primary",
+		Duration:  15 * time.Millisecond,
 	})
 	registry.OnEvent(router.Event{
 		Type:      "provider_fallback_succeeded",
 		Operation: "create",
 		Backend:   "mock-secondary",
+		Duration:  5 * time.Millisecond,
+	})
+	registry.OnEvent(router.Event{
+		Type:      "provider_probe_succeeded",
+		Operation: "probe",
+		Backend:   "mock-secondary",
+		Duration:  2 * time.Millisecond,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -45,6 +53,12 @@ func TestRegistryServeHTTP(t *testing.T) {
 	}
 	if !strings.Contains(body, `lag_provider_events_total{type="provider_fallback_succeeded",operation="create",backend="mock-secondary"} 1`) {
 		t.Fatalf("expected fallback metric, got %s", body)
+	}
+	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="create",backend="mock-primary",result="error"} 1`) {
+		t.Fatalf("expected provider duration count, got %s", body)
+	}
+	if !strings.Contains(body, `lag_provider_probe_results_total{backend="mock-secondary",result="success"} 1`) {
+		t.Fatalf("expected provider probe result metric, got %s", body)
 	}
 	if !strings.Contains(body, "lag_readyz_failures_total 1") {
 		t.Fatalf("expected readyz failure metric, got %s", body)

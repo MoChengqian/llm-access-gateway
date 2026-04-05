@@ -27,9 +27,15 @@ provider:
     base_url: ""
     api_key: ""
     model: ""
+    timeout_seconds: 15
+    max_retries: 1
+    retry_backoff_milliseconds: 200
   secondary:
     type: mock
     name: secondary
     base_url: ""
     api_key: ""
     model: ""
+    timeout_seconds: 15
+    max_retries: 1
+    retry_backoff_milliseconds: 200

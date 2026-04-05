@@ -31,6 +31,7 @@ real provider adapters, richer routing, or production observability.
 - metrics endpoint: `GET /metrics`
 - tracing header: `X-Trace-Id` on every HTTP response
 - configurable OpenAI-compatible upstream provider adapter
+- provider-level timeout and pre-stream retry policy for OpenAI-compatible upstreams
 
 ## Project Structure
 
@@ -227,7 +228,7 @@ Expected results:
 - if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
 - `GET /debug/providers` shows backend health, failure count, and cooldown state
 - `GET /metrics` exposes request count, provider failures, fallback count, and readyz failures
-- `/metrics` also exposes governance rejection counts plus stream request, chunk, and TTFT counters
+- `/metrics` also exposes governance rejection counts, stream request/chunk/TTFT counters, provider operation latency, and probe success/failure totals
 - every request returns `X-Trace-Id`, and logs now include `trace_id`, `span_id`, and provider span events for request -> handler -> provider correlation
 
 ## Local Development Entry
@@ -255,10 +256,16 @@ export APP_PROVIDER_PRIMARY_TYPE='mock'
 export APP_PROVIDER_PRIMARY_BASE_URL=''
 export APP_PROVIDER_PRIMARY_API_KEY=''
 export APP_PROVIDER_PRIMARY_MODEL=''
+export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
+export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
 export APP_PROVIDER_SECONDARY_TYPE='mock'
 export APP_PROVIDER_SECONDARY_BASE_URL=''
 export APP_PROVIDER_SECONDARY_API_KEY=''
 export APP_PROVIDER_SECONDARY_MODEL=''
+export APP_PROVIDER_SECONDARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_SECONDARY_MAX_RETRIES='1'
+export APP_PROVIDER_SECONDARY_RETRY_BACKOFF_MILLISECONDS='200'
 ```
 
 To use a real OpenAI-compatible upstream as the primary backend:
@@ -268,10 +275,14 @@ export APP_PROVIDER_PRIMARY_TYPE='openai'
 export APP_PROVIDER_PRIMARY_BASE_URL='https://api.openai.com/v1'
 export APP_PROVIDER_PRIMARY_API_KEY='sk-...'
 export APP_PROVIDER_PRIMARY_MODEL='gpt-4.1-mini'
+export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
+export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
 ```
 
 The gateway will keep the configured secondary backend for fallback, and streaming fallback still only happens before the first chunk is emitted.
 Provider readiness is also refreshed by a background probe loop that uses the configured provider model listing path.
+For OpenAI-compatible upstreams, timeout applies to non-stream requests and model probing, while retries only happen before a stream is opened.
 
 ## Load Testing
 

@@ -40,6 +40,7 @@ type Event struct {
 	Operation           string
 	Backend             string
 	Attempt             int
+	Duration            time.Duration
 	ConsecutiveFailures int
 	UnhealthyUntil      time.Time
 	Error               string
@@ -103,20 +104,30 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 
 	var lastErr error
 	for index, backend := range candidates {
+		startedAt := time.Now()
 		attemptCtx, attemptSpan := tracing.StartSpan(ctx, "provider.backend.create",
 			zap.String("backend", backend.Name),
 			zap.Int("attempt", index+1),
 		)
 		resp, err := backend.Provider.CreateChatCompletion(attemptCtx, req)
+		duration := time.Since(startedAt)
 		attemptSpan.End(err)
 		if err == nil {
 			recovered := p.markSuccess(backend.Name)
+			p.observe(Event{
+				Type:      "provider_request_succeeded",
+				Operation: "create",
+				Backend:   backend.Name,
+				Attempt:   index + 1,
+				Duration:  duration,
+			})
 			if index > 0 {
 				p.observe(Event{
 					Type:      "provider_fallback_succeeded",
 					Operation: "create",
 					Backend:   backend.Name,
 					Attempt:   index + 1,
+					Duration:  duration,
 				})
 			}
 			if recovered {
@@ -138,6 +149,7 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 			Operation:           "create",
 			Backend:             backend.Name,
 			Attempt:             index + 1,
+			Duration:            duration,
 			ConsecutiveFailures: failures,
 			UnhealthyUntil:      unhealthyUntil,
 			Error:               err.Error(),
@@ -163,19 +175,29 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 
 	var lastErr error
 	for index, backend := range candidates {
+		startedAt := time.Now()
 		attemptCtx, attemptSpan := tracing.StartSpan(ctx, "provider.backend.stream",
 			zap.String("backend", backend.Name),
 			zap.Int("attempt", index+1),
 		)
 		chunks, err := backend.Provider.StreamChatCompletion(attemptCtx, req)
+		duration := time.Since(startedAt)
 		if err == nil {
 			recovered := p.markSuccess(backend.Name)
+			p.observe(Event{
+				Type:      "provider_request_succeeded",
+				Operation: "stream",
+				Backend:   backend.Name,
+				Attempt:   index + 1,
+				Duration:  duration,
+			})
 			if index > 0 {
 				p.observe(Event{
 					Type:      "provider_fallback_succeeded",
 					Operation: "stream",
 					Backend:   backend.Name,
 					Attempt:   index + 1,
+					Duration:  duration,
 				})
 			}
 			if recovered {
@@ -197,6 +219,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 			Operation:           "stream",
 			Backend:             backend.Name,
 			Attempt:             index + 1,
+			Duration:            duration,
 			ConsecutiveFailures: failures,
 			UnhealthyUntil:      unhealthyUntil,
 			Error:               err.Error(),
@@ -220,13 +243,16 @@ func (p *Provider) Probe(ctx context.Context) {
 		}
 
 		probedAt := p.now()
+		startedAt := time.Now()
 		_, err := modelProvider.ListModels(ctx)
+		duration := time.Since(startedAt)
 		if err != nil {
 			failures, unhealthyUntil := p.markProbeFailure(backend.Name, err.Error(), probedAt)
 			p.observe(Event{
 				Type:                "provider_probe_failed",
 				Operation:           "probe",
 				Backend:             backend.Name,
+				Duration:            duration,
 				ConsecutiveFailures: failures,
 				UnhealthyUntil:      unhealthyUntil,
 				Error:               err.Error(),
@@ -239,6 +265,7 @@ func (p *Provider) Probe(ctx context.Context) {
 			Type:      "provider_probe_succeeded",
 			Operation: "probe",
 			Backend:   backend.Name,
+			Duration:  duration,
 		})
 		if recovered {
 			p.observe(Event{

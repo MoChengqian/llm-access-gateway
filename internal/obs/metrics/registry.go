@@ -15,6 +15,8 @@ type Registry struct {
 	mu                   sync.Mutex
 	httpRequests         map[string]uint64
 	providerEvents       map[string]uint64
+	providerDurations    map[string]durationSample
+	probeResults         map[string]uint64
 	governanceRejections map[string]uint64
 	readyzFailures       uint64
 	streamRequests       uint64
@@ -23,10 +25,17 @@ type Registry struct {
 	streamTTFTMillisSum  uint64
 }
 
+type durationSample struct {
+	count uint64
+	sumMS uint64
+}
+
 func NewRegistry() *Registry {
 	return &Registry{
 		httpRequests:         make(map[string]uint64),
 		providerEvents:       make(map[string]uint64),
+		providerDurations:    make(map[string]durationSample),
+		probeResults:         make(map[string]uint64),
 		governanceRejections: make(map[string]uint64),
 	}
 }
@@ -75,6 +84,27 @@ func (r *Registry) OnEvent(event router.Event) {
 
 	key := fmt.Sprintf(`type="%s",operation="%s",backend="%s"`, sanitize(event.Type), sanitize(event.Operation), sanitize(event.Backend))
 	r.providerEvents[key]++
+	if event.Duration > 0 && recordsProviderDuration(event.Type) {
+		result := "success"
+		if strings.Contains(event.Type, "failed") {
+			result = "error"
+		}
+		durationKey := fmt.Sprintf(`operation="%s",backend="%s",result="%s"`, sanitize(event.Operation), sanitize(event.Backend), result)
+		sample := r.providerDurations[durationKey]
+		sample.count++
+		sample.sumMS += uint64(event.Duration.Milliseconds())
+		r.providerDurations[durationKey] = sample
+	}
+	if event.Operation == "probe" {
+		result := "success"
+		if event.Type == "provider_probe_failed" {
+			result = "error"
+		}
+		if event.Type == "provider_probe_succeeded" || event.Type == "provider_probe_failed" {
+			probeKey := fmt.Sprintf(`backend="%s",result="%s"`, sanitize(event.Backend), result)
+			r.probeResults[probeKey]++
+		}
+	}
 }
 
 func (r *Registry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
@@ -100,6 +130,33 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 		builder.WriteString(key)
 		builder.WriteString("} ")
 		builder.WriteString(fmt.Sprintf("%d\n", r.providerEvents[key]))
+	}
+
+	builder.WriteString("# HELP lag_provider_operation_duration_milliseconds_sum Aggregate provider operation duration in milliseconds.\n")
+	builder.WriteString("# TYPE lag_provider_operation_duration_milliseconds_sum counter\n")
+	for _, key := range sortedKeys(r.providerDurations) {
+		builder.WriteString("lag_provider_operation_duration_milliseconds_sum{")
+		builder.WriteString(key)
+		builder.WriteString("} ")
+		builder.WriteString(fmt.Sprintf("%d\n", r.providerDurations[key].sumMS))
+	}
+
+	builder.WriteString("# HELP lag_provider_operation_duration_milliseconds_count Count of provider operations with latency recorded.\n")
+	builder.WriteString("# TYPE lag_provider_operation_duration_milliseconds_count counter\n")
+	for _, key := range sortedKeys(r.providerDurations) {
+		builder.WriteString("lag_provider_operation_duration_milliseconds_count{")
+		builder.WriteString(key)
+		builder.WriteString("} ")
+		builder.WriteString(fmt.Sprintf("%d\n", r.providerDurations[key].count))
+	}
+
+	builder.WriteString("# HELP lag_provider_probe_results_total Total provider probe results by backend and result.\n")
+	builder.WriteString("# TYPE lag_provider_probe_results_total counter\n")
+	for _, key := range sortedKeys(r.probeResults) {
+		builder.WriteString("lag_provider_probe_results_total{")
+		builder.WriteString(key)
+		builder.WriteString("} ")
+		builder.WriteString(fmt.Sprintf("%d\n", r.probeResults[key]))
 	}
 
 	builder.WriteString("# HELP lag_governance_rejections_total Total governance rejections by reason.\n")
@@ -145,4 +202,13 @@ func sortedKeys[V any](m map[string]V) []string {
 
 func sanitize(value string) string {
 	return strings.ReplaceAll(value, `"`, `\"`)
+}
+
+func recordsProviderDuration(eventType string) bool {
+	switch eventType {
+	case "provider_request_succeeded", "provider_request_failed", "provider_probe_succeeded", "provider_probe_failed":
+		return true
+	default:
+		return false
+	}
 }

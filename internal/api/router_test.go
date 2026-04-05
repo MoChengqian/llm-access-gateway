@@ -578,7 +578,7 @@ func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, li
 	authService := auth.NewService(store)
 	governanceService := governance.NewService(governanceStore, limiter)
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
-	modelsService := modelsservice.NewService([]string{"gpt-4o-mini"})
+	modelsService := modelsservice.NewService([]modelsservice.Source{providermock.New()})
 	return NewRouter(zap.NewNop(), chatService, modelsService, authService, governanceService, providers, registry, registry)
 }
 

@@ -219,6 +219,9 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 				BaseURL:      cfg.BaseURL,
 				APIKey:       cfg.APIKey,
 				DefaultModel: model,
+				Timeout:      time.Duration(cfg.TimeoutSeconds) * time.Second,
+				MaxRetries:   cfg.MaxRetries,
+				RetryBackoff: time.Duration(cfg.RetryBackoffMilliseconds) * time.Millisecond,
 			}),
 		}, nil
 	default:
@@ -261,6 +264,9 @@ func (l providerEventLogger) OnEvent(event providerrouter.Event) {
 		zap.String("backend", event.Backend),
 		zap.Int("attempt", event.Attempt),
 		zap.Int("consecutive_failures", event.ConsecutiveFailures),
+	}
+	if event.Duration > 0 {
+		fields = append(fields, zap.Duration("duration", event.Duration))
 	}
 	if !event.UnhealthyUntil.IsZero() {
 		fields = append(fields, zap.String("unhealthy_until", event.UnhealthyUntil.Format(time.RFC3339)))

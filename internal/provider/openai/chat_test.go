@@ -3,10 +3,12 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
@@ -117,5 +119,111 @@ func TestListModels(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].ID != "gpt-4.1-mini" {
 		t.Fatalf("unexpected models %#v", models)
+	}
+}
+
+func TestCreateChatCompletionRetriesRetryableStatus(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"temporary failure"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+	}))
+	defer server.Close()
+
+	p := New(Config{
+		BaseURL:      server.URL,
+		DefaultModel: "gpt-4.1-mini",
+		MaxRetries:   1,
+		RetryBackoff: time.Millisecond,
+	})
+
+	resp, err := p.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{
+		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("expected retry to succeed, got %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if resp.Choices[0].Message.Content != "hello" {
+		t.Fatalf("unexpected response %#v", resp)
+	}
+}
+
+func TestStreamChatCompletionRetriesBeforeOpen(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"temporary failure"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4.1-mini\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	p := New(Config{
+		BaseURL:      server.URL,
+		DefaultModel: "gpt-4.1-mini",
+		MaxRetries:   1,
+		RetryBackoff: time.Millisecond,
+	})
+
+	chunks, err := p.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{
+		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("expected retry to succeed, got %v", err)
+	}
+
+	var content strings.Builder
+	for chunk := range chunks {
+		content.WriteString(chunk.Choices[0].Message.Content)
+	}
+
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if content.String() != "ok" {
+		t.Fatalf("expected ok, got %s", content.String())
+	}
+}
+
+func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+	}))
+	defer server.Close()
+
+	p := New(Config{
+		BaseURL:      server.URL,
+		DefaultModel: "gpt-4.1-mini",
+		Timeout:      20 * time.Millisecond,
+		MaxRetries:   0,
+	})
+
+	_, err := p.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{
+		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("expected deadline exceeded error, got %v", err)
 	}
 }

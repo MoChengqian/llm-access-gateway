@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
@@ -19,6 +21,9 @@ type Config struct {
 	APIKey       string
 	DefaultModel string
 	HTTPClient   *http.Client
+	Timeout      time.Duration
+	MaxRetries   int
+	RetryBackoff time.Duration
 }
 
 type Provider struct {
@@ -26,6 +31,9 @@ type Provider struct {
 	apiKey       string
 	defaultModel string
 	httpClient   *http.Client
+	timeout      time.Duration
+	maxRetries   int
+	retryBackoff time.Duration
 }
 
 type requestPayload struct {
@@ -67,16 +75,34 @@ func New(cfg Config) Provider {
 		client = http.DefaultClient
 	}
 
+	timeout := cfg.Timeout
+	if timeout < 0 {
+		timeout = 0
+	}
+
+	maxRetries := cfg.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+
+	retryBackoff := cfg.RetryBackoff
+	if retryBackoff <= 0 {
+		retryBackoff = 200 * time.Millisecond
+	}
+
 	return Provider{
 		baseURL:      strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 		apiKey:       strings.TrimSpace(cfg.APIKey),
 		defaultModel: strings.TrimSpace(cfg.DefaultModel),
 		httpClient:   client,
+		timeout:      timeout,
+		maxRetries:   maxRetries,
+		retryBackoff: retryBackoff,
 	}
 }
 
 func (p Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
-	payload, err := p.doRequest(ctx, requestPayload{
+	payload, err := p.doJSONRequest(ctx, requestPayload{
 		Model:    p.resolveModel(req.Model),
 		Messages: req.Messages,
 		Stream:   false,
@@ -154,25 +180,16 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.modelsEndpointURL(), nil)
-	if err != nil {
-		return nil, err
-	}
-	if p.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
+	ctx, cancel := p.withTimeout(ctx)
+	defer cancel()
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequest(ctx, http.MethodGet, p.modelsEndpointURL(), nil, "")
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
-
-	if resp.StatusCode >= 400 {
-		return nil, readHTTPError(resp)
-	}
 
 	var payload modelsResponsePayload
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
@@ -181,35 +198,27 @@ func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
 	return payload.Data, nil
 }
 
-func (p Provider) doRequest(ctx context.Context, payload requestPayload, stream bool) (responsePayload, error) {
+func (p Provider) doJSONRequest(ctx context.Context, payload requestPayload, stream bool) (responsePayload, error) {
+	ctx, cancel := p.withTimeout(ctx)
+	defer cancel()
+
 	reqBody, err := json.Marshal(payload)
 	if err != nil {
 		return responsePayload{}, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpointURL(), bytes.NewReader(reqBody))
-	if err != nil {
-		return responsePayload{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
+	accept := ""
 	if stream {
-		req.Header.Set("Accept", "text/event-stream")
-	}
-	if p.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+		accept = "text/event-stream"
 	}
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequest(ctx, http.MethodPost, p.endpointURL(), reqBody, accept)
 	if err != nil {
 		return responsePayload{}, err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
-
-	if resp.StatusCode >= 400 {
-		return responsePayload{}, readHTTPError(resp)
-	}
 
 	var result responsePayload
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -224,29 +233,7 @@ func (p Provider) openStream(ctx context.Context, payload requestPayload) (*http
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpointURL(), bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	if p.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode >= 400 {
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-		return nil, readHTTPError(resp)
-	}
-
-	return resp, nil
+	return p.doRequest(ctx, http.MethodPost, p.endpointURL(), reqBody, "text/event-stream")
 }
 
 func (p Provider) endpointURL() string {
@@ -311,4 +298,111 @@ func readHTTPError(resp *http.Response) error {
 	}
 
 	return fmt.Errorf("upstream status %d: %s", resp.StatusCode, text)
+}
+
+func (p Provider) doRequest(ctx context.Context, method string, url string, body []byte, accept string) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= p.maxRetries; attempt++ {
+		resp, err := p.doRequestOnce(ctx, method, url, body, accept)
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+		if attempt == p.maxRetries || !shouldRetryRequest(ctx, err) {
+			return nil, err
+		}
+		if err := p.waitRetry(ctx, attempt); err != nil {
+			return nil, lastErr
+		}
+	}
+
+	return nil, lastErr
+}
+
+func (p Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if p.timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, p.timeout)
+}
+
+func (p Provider) doRequestOnce(ctx context.Context, method string, url string, body []byte, accept string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 400 {
+		return resp, nil
+	}
+
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	upstreamErr := readHTTPError(resp)
+	if shouldRetryHTTPStatus(resp.StatusCode) {
+		return nil, retryableError{cause: upstreamErr}
+	}
+	return nil, upstreamErr
+}
+
+func (p Provider) waitRetry(ctx context.Context, attempt int) error {
+	delay := p.retryBackoff * time.Duration(attempt+1)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+type retryableError struct {
+	cause error
+}
+
+func (e retryableError) Error() string {
+	return e.cause.Error()
+}
+
+func (e retryableError) Unwrap() error {
+	return e.cause
+}
+
+func shouldRetryRequest(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var retryable retryableError
+	if errors.As(err, &retryable) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+func shouldRetryHTTPStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }

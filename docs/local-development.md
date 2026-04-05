@@ -43,6 +43,7 @@ The expected API results are:
 - every response includes `X-Trace-Id` for log correlation
 - primary / secondary providers can be configured as `mock` or `openai`
 - provider readiness is refreshed by an active background probe loop
+- OpenAI-compatible providers support timeout plus pre-stream retries before fallback
 
 ## Prerequisites
 
@@ -155,6 +156,9 @@ export APP_PROVIDER_PRIMARY_TYPE='openai'
 export APP_PROVIDER_PRIMARY_BASE_URL='https://api.openai.com/v1'
 export APP_PROVIDER_PRIMARY_API_KEY='sk-...'
 export APP_PROVIDER_PRIMARY_MODEL='gpt-4.1-mini'
+export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
+export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
 ```
 
 Notes:
@@ -162,6 +166,7 @@ Notes:
 - `APP_PROVIDER_PRIMARY_BASE_URL` should point to an upstream base path that already includes `/v1`
 - the secondary backend can stay on the default `mock` type for local fallback verification
 - if you do not set these variables, the repo keeps the current mock-first behavior
+- timeout applies to non-stream requests and provider probes; stream retries only happen before the upstream stream opens
 
 ## 3.2 Optional: Run the Built-In Load Test
 
@@ -383,6 +388,8 @@ lag_governance_rejections_total{reason="rate_limit_exceeded"} ...
 lag_stream_requests_total ...
 lag_stream_chunks_total ...
 lag_stream_ttft_milliseconds_count ...
+lag_provider_operation_duration_milliseconds_count{operation="create",backend="primary",result="success"} ...
+lag_provider_probe_results_total{backend="primary",result="success"} ...
 ```
 
 You can also use the helper script:
