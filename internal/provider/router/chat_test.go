@@ -186,13 +186,69 @@ func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
 	}
 }
 
+func TestProbeMarksBackendHealthyAndUnhealthy(t *testing.T) {
+	now := time.Unix(123, 0)
+	primary := &stubProvider{modelsErr: errors.New("probe failed")}
+	secondary := &stubProvider{models: []provider.Model{{ID: "gpt-4o-mini"}}}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+	routed.now = func() time.Time { return now }
+
+	routed.Probe(context.Background())
+
+	statuses := routed.BackendStatuses()
+	if len(statuses) != 2 {
+		t.Fatalf("expected 2 statuses, got %#v", statuses)
+	}
+
+	if statuses[0].Healthy {
+		t.Fatalf("expected primary unhealthy after failed probe, got %#v", statuses[0])
+	}
+	if statuses[0].LastProbeError == "" || statuses[0].LastProbeAt.IsZero() {
+		t.Fatalf("expected probe metadata, got %#v", statuses[0])
+	}
+	if !statuses[1].Healthy || statuses[1].LastProbeAt.IsZero() {
+		t.Fatalf("expected secondary healthy after successful probe, got %#v", statuses[1])
+	}
+}
+
+func TestProbeObserverSeesProbeEvents(t *testing.T) {
+	observer := &stubObserver{}
+	primary := &stubProvider{modelsErr: errors.New("probe failed")}
+	secondary := &stubProvider{models: []provider.Model{{ID: "gpt-4o-mini"}}}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{
+		FailureThreshold: 1,
+		Cooldown:         time.Minute,
+		Observer:         observer,
+	})
+
+	routed.Probe(context.Background())
+
+	if !observer.contains("provider_probe_failed") {
+		t.Fatalf("expected provider_probe_failed event, got %#v", observer.events)
+	}
+	if !observer.contains("provider_probe_succeeded") {
+		t.Fatalf("expected provider_probe_succeeded event, got %#v", observer.events)
+	}
+}
+
 type stubProvider struct {
 	createCalled bool
 	streamCalled bool
+	modelsCalled bool
 	createErr    error
 	streamErr    error
+	modelsErr    error
 	response     provider.ChatCompletionResponse
 	streamChunks []provider.ChatCompletionChunk
+	models       []provider.Model
 }
 
 func (s *stubProvider) CreateChatCompletion(context.Context, provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
@@ -215,6 +271,14 @@ func (s *stubProvider) StreamChatCompletion(context.Context, provider.ChatComple
 	}
 	close(chunks)
 	return chunks, nil
+}
+
+func (s *stubProvider) ListModels(context.Context) ([]provider.Model, error) {
+	s.modelsCalled = true
+	if s.modelsErr != nil {
+		return nil, s.modelsErr
+	}
+	return s.models, nil
 }
 
 type stubObserver struct {

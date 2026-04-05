@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
+	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 )
 
 func TestBuildProviderBackendSupportsMock(t *testing.T) {
-	backend, model, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
+	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type: "mock",
 		Name: "mock-primary",
 	}, "gpt-4o-mini", providermock.Config{})
@@ -19,13 +22,14 @@ func TestBuildProviderBackendSupportsMock(t *testing.T) {
 	if backend.Name != "mock-primary" {
 		t.Fatalf("expected mock-primary, got %s", backend.Name)
 	}
-	if model != "gpt-4o-mini" {
-		t.Fatalf("expected model gpt-4o-mini, got %s", model)
+	_, ok := backend.Provider.(provider.ModelProvider)
+	if !ok {
+		t.Fatal("expected mock backend to implement model listing")
 	}
 }
 
 func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
-	backend, model, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
+	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type:    "openai",
 		Name:    "openai-primary",
 		BaseURL: "https://example.com/v1",
@@ -39,13 +43,13 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 	if backend.Name != "openai-primary" {
 		t.Fatalf("expected openai-primary, got %s", backend.Name)
 	}
-	if model != "gpt-4.1-mini" {
-		t.Fatalf("expected model gpt-4.1-mini, got %s", model)
+	if backend.Provider == nil {
+		t.Fatal("expected provider implementation")
 	}
 }
 
 func TestBuildProviderBackendRejectsMissingOpenAIBaseURL(t *testing.T) {
-	_, _, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
+	_, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type: "openai",
 	}, "gpt-4o-mini", providermock.Config{})
 	if err == nil {
@@ -53,9 +57,27 @@ func TestBuildProviderBackendRejectsMissingOpenAIBaseURL(t *testing.T) {
 	}
 }
 
-func TestCollectModelsDeduplicates(t *testing.T) {
-	models := collectModels("gpt-4o-mini", "", "gpt-4.1", "gpt-4o-mini")
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models, got %#v", models)
+func TestStartProviderProbeLoopRunsImmediateProbe(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	prober := &stubProber{done: make(chan struct{}, 1)}
+	startProviderProbeLoop(ctx, nil, prober, time.Hour)
+
+	select {
+	case <-prober.done:
+	case <-time.After(time.Second):
+		t.Fatal("expected immediate probe call")
+	}
+}
+
+type stubProber struct {
+	done chan struct{}
+}
+
+func (s *stubProber) Probe(context.Context) {
+	select {
+	case s.done <- struct{}{}:
+	default:
 	}
 }

@@ -15,5 +15,11 @@ func NewModelsHandler(service models.Service) ModelsHandler {
 }
 
 func (h ModelsHandler) List(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, h.service.ListModels(r.Context()))
+	resp, err := h.service.ListModels(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

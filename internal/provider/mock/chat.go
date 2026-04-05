@@ -18,6 +18,7 @@ type Config struct {
 	StreamParts  []string
 	FailCreate   bool
 	FailStream   bool
+	Model        string
 }
 
 type Provider struct {
@@ -25,6 +26,7 @@ type Provider struct {
 	streamParts  []string
 	failCreate   bool
 	failStream   bool
+	model        string
 }
 
 func New() Provider {
@@ -51,6 +53,7 @@ func NewWithConfig(cfg Config) Provider {
 		streamParts:  streamParts,
 		failCreate:   cfg.FailCreate,
 		failStream:   cfg.FailStream,
+		model:        cfg.Model,
 	}
 }
 
@@ -133,4 +136,19 @@ func (p Provider) StreamChatCompletion(_ context.Context, req provider.ChatCompl
 	}()
 
 	return chunks, nil
+}
+
+func (p Provider) ListModels(context.Context) ([]provider.Model, error) {
+	model := p.model
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	return []provider.Model{
+		{
+			ID:      model,
+			Object:  "model",
+			Created: time.Now().Unix(),
+			OwnedBy: "llm-access-gateway-mock",
+		},
+	}, nil
 }

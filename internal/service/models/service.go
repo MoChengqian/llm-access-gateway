@@ -2,60 +2,68 @@ package models
 
 import (
 	"context"
-	"time"
+	"sort"
+
+	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
 
 type Service interface {
-	ListModels(ctx context.Context) ListResponse
+	ListModels(ctx context.Context) (ListResponse, error)
+}
+
+type Source interface {
+	ListModels(ctx context.Context) ([]provider.Model, error)
 }
 
 type service struct {
-	models []string
+	sources []Source
 }
 
 type ListResponse struct {
-	Object string      `json:"object"`
-	Data   []ModelInfo `json:"data"`
+	Object string           `json:"object"`
+	Data   []provider.Model `json:"data"`
 }
 
-type ModelInfo struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
-}
-
-func NewService(models []string) Service {
-	unique := make([]string, 0, len(models))
-	seen := make(map[string]struct{}, len(models))
-	for _, model := range models {
-		if model == "" {
+func NewService(sources []Source) Service {
+	copied := make([]Source, 0, len(sources))
+	for _, source := range sources {
+		if source == nil {
 			continue
 		}
-		if _, ok := seen[model]; ok {
-			continue
-		}
-		seen[model] = struct{}{}
-		unique = append(unique, model)
+		copied = append(copied, source)
 	}
 
-	return service{models: unique}
+	return service{sources: copied}
 }
 
-func (s service) ListModels(context.Context) ListResponse {
-	items := make([]ModelInfo, 0, len(s.models))
-	now := time.Now().Unix()
-	for _, model := range s.models {
-		items = append(items, ModelInfo{
-			ID:      model,
-			Object:  "model",
-			Created: now,
-			OwnedBy: "llm-access-gateway",
-		})
+func (s service) ListModels(ctx context.Context) (ListResponse, error) {
+	merged := make(map[string]provider.Model)
+	for _, source := range s.sources {
+		models, err := source.ListModels(ctx)
+		if err != nil {
+			return ListResponse{}, err
+		}
+		for _, model := range models {
+			if model.ID == "" {
+				continue
+			}
+			if model.Object == "" {
+				model.Object = "model"
+			}
+			merged[model.ID] = model
+		}
 	}
+
+	data := make([]provider.Model, 0, len(merged))
+	for _, model := range merged {
+		data = append(data, model)
+	}
+	sort.Slice(data, func(i, j int) bool {
+		return data[i].ID < data[j].ID
+	})
 
 	return ListResponse{
 		Object: "list",
-		Data:   items,
-	}
+		Data:   data,
+	}, nil
 }

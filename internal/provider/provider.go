@@ -7,6 +7,10 @@ type ChatCompletionProvider interface {
 	StreamChatCompletion(ctx context.Context, req ChatCompletionRequest) (<-chan ChatCompletionChunk, error)
 }
 
+type ModelProvider interface {
+	ListModels(ctx context.Context) ([]Model, error)
+}
+
 type ChatCompletionRequest struct {
 	Model    string        `json:"model"`
 	Messages []ChatMessage `json:"messages"`
@@ -37,6 +41,13 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+}
+
+type Model struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
 }
 
 type ChatCompletionChunk struct {

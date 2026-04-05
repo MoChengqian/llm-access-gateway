@@ -21,6 +21,8 @@ type BackendStatus struct {
 	Healthy             bool      `json:"healthy"`
 	ConsecutiveFailures int       `json:"consecutive_failures"`
 	UnhealthyUntil      time.Time `json:"unhealthy_until,omitempty"`
+	LastProbeAt         time.Time `json:"last_probe_at,omitempty"`
+	LastProbeError      string    `json:"last_probe_error,omitempty"`
 }
 
 type Config struct {
@@ -57,6 +59,8 @@ type Provider struct {
 type backendState struct {
 	consecutiveFailures int
 	unhealthyUntil      time.Time
+	lastProbeAt         time.Time
+	lastProbeError      string
 }
 
 func New(backends []Backend, cfg Config) *Provider {
@@ -203,6 +207,49 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 	return nil, lastErr
 }
 
+func (p *Provider) Probe(ctx context.Context) {
+	for _, backend := range p.backends {
+		modelProvider, ok := backend.Provider.(provider.ModelProvider)
+		if !ok {
+			p.observe(Event{
+				Type:      "provider_probe_skipped",
+				Operation: "probe",
+				Backend:   backend.Name,
+			})
+			continue
+		}
+
+		probedAt := p.now()
+		_, err := modelProvider.ListModels(ctx)
+		if err != nil {
+			failures, unhealthyUntil := p.markProbeFailure(backend.Name, err.Error(), probedAt)
+			p.observe(Event{
+				Type:                "provider_probe_failed",
+				Operation:           "probe",
+				Backend:             backend.Name,
+				ConsecutiveFailures: failures,
+				UnhealthyUntil:      unhealthyUntil,
+				Error:               err.Error(),
+			})
+			continue
+		}
+
+		recovered := p.markProbeSuccess(backend.Name, probedAt)
+		p.observe(Event{
+			Type:      "provider_probe_succeeded",
+			Operation: "probe",
+			Backend:   backend.Name,
+		})
+		if recovered {
+			p.observe(Event{
+				Type:      "provider_recovered",
+				Operation: "probe",
+				Backend:   backend.Name,
+			})
+		}
+	}
+}
+
 func (p *Provider) wrapStream(ctx context.Context, chunks <-chan provider.ChatCompletionChunk, routerSpan *tracing.Span, backendSpan *tracing.Span, backend string, attempt int) <-chan provider.ChatCompletionChunk {
 	wrapped := make(chan provider.ChatCompletionChunk)
 
@@ -268,7 +315,9 @@ func (p *Provider) markSuccess(name string) bool {
 	defer p.mu.Unlock()
 
 	previous := p.states[name]
-	p.states[name] = backendState{}
+	p.states[name] = backendState{
+		lastProbeAt: previous.lastProbeAt,
+	}
 	return previous.consecutiveFailures > 0 || !previous.unhealthyUntil.IsZero()
 }
 
@@ -278,6 +327,33 @@ func (p *Provider) markFailure(name string) (int, time.Time) {
 
 	state := p.states[name]
 	state.consecutiveFailures++
+	if state.consecutiveFailures >= p.failureThreshold {
+		state.unhealthyUntil = p.now().Add(p.cooldown)
+	}
+	p.states[name] = state
+	return state.consecutiveFailures, state.unhealthyUntil
+}
+
+func (p *Provider) markProbeSuccess(name string, probedAt time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	previous := p.states[name]
+	p.states[name] = backendState{
+		lastProbeAt:    probedAt,
+		lastProbeError: "",
+	}
+	return previous.consecutiveFailures > 0 || !previous.unhealthyUntil.IsZero()
+}
+
+func (p *Provider) markProbeFailure(name string, probeError string, probedAt time.Time) (int, time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	state := p.states[name]
+	state.consecutiveFailures++
+	state.lastProbeAt = probedAt
+	state.lastProbeError = probeError
 	if state.consecutiveFailures >= p.failureThreshold {
 		state.unhealthyUntil = p.now().Add(p.cooldown)
 	}
@@ -310,6 +386,8 @@ func (p *Provider) BackendStatuses() []BackendStatus {
 			Healthy:             healthy,
 			ConsecutiveFailures: state.consecutiveFailures,
 			UnhealthyUntil:      state.unhealthyUntil,
+			LastProbeAt:         state.lastProbeAt,
+			LastProbeError:      state.lastProbeError,
 		})
 	}
 

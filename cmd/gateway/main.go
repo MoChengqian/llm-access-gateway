@@ -81,7 +81,7 @@ func main() {
 	}
 	governanceService := governance.NewService(governanceStore, limiter)
 	metricsRegistry := metrics.NewRegistry()
-	backends, models, err := buildProviderBackends(cfg)
+	backends, modelSources, err := buildProviderBackends(cfg)
 	if err != nil {
 		logger.Fatal("provider setup failed", zap.Error(err))
 	}
@@ -96,7 +96,13 @@ func main() {
 		},
 	})
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
-	modelsService := modelsservice.NewService(models)
+	modelsService := modelsservice.NewService(modelSources)
+
+	probeCtx, stopProbe := context.WithCancel(context.Background())
+	defer stopProbe()
+	if cfg.Gateway.ProviderProbeIntervalSeconds > 0 {
+		startProviderProbeLoop(probeCtx, logger, chatProvider, time.Duration(cfg.Gateway.ProviderProbeIntervalSeconds)*time.Second)
+	}
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
@@ -116,6 +122,7 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("gateway shutting down")
+	stopProbe()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -125,8 +132,33 @@ func main() {
 	}
 }
 
-func buildProviderBackends(cfg config.Config) ([]providerrouter.Backend, []string, error) {
-	primary, primaryModel, err := buildProviderBackend("primary", cfg.Provider.Primary, cfg.Gateway.DefaultModel, providermock.Config{
+func startProviderProbeLoop(ctx context.Context, logger *zap.Logger, prober interface{ Probe(context.Context) }, interval time.Duration) {
+	if prober == nil || interval <= 0 {
+		return
+	}
+
+	if logger != nil {
+		logger.Info("provider probe loop enabled", zap.Duration("interval", interval))
+	}
+
+	go func() {
+		prober.Probe(ctx)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				prober.Probe(ctx)
+			}
+		}
+	}()
+}
+
+func buildProviderBackends(cfg config.Config) ([]providerrouter.Backend, []modelsservice.Source, error) {
+	primary, err := buildProviderBackend("primary", cfg.Provider.Primary, cfg.Gateway.DefaultModel, providermock.Config{
 		FailCreate: cfg.Gateway.PrimaryMockFailCreate,
 		FailStream: cfg.Gateway.PrimaryMockFailStream,
 	})
@@ -134,16 +166,21 @@ func buildProviderBackends(cfg config.Config) ([]providerrouter.Backend, []strin
 		return nil, nil, err
 	}
 
-	secondary, secondaryModel, err := buildProviderBackend("secondary", cfg.Provider.Secondary, cfg.Gateway.DefaultModel, providermock.Config{})
+	secondary, err := buildProviderBackend("secondary", cfg.Provider.Secondary, cfg.Gateway.DefaultModel, providermock.Config{})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	models := collectModels(cfg.Gateway.DefaultModel, primaryModel, secondaryModel)
-	return []providerrouter.Backend{primary, secondary}, models, nil
+	sources := make([]modelsservice.Source, 0, 2)
+	for _, backend := range []providerrouter.Backend{primary, secondary} {
+		if source, ok := backend.Provider.(modelsservice.Source); ok {
+			sources = append(sources, source)
+		}
+	}
+	return []providerrouter.Backend{primary, secondary}, sources, nil
 }
 
-func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaultModel string, mockCfg providermock.Config) (providerrouter.Backend, string, error) {
+func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaultModel string, mockCfg providermock.Config) (providerrouter.Backend, error) {
 	providerType := strings.ToLower(strings.TrimSpace(cfg.Type))
 	if providerType == "" {
 		providerType = "mock"
@@ -162,12 +199,18 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 	switch providerType {
 	case "mock":
 		return providerrouter.Backend{
-			Name:     name,
-			Provider: providermock.NewWithConfig(mockCfg),
-		}, model, nil
+			Name: name,
+			Provider: providermock.NewWithConfig(providermock.Config{
+				ResponseText: mockCfg.ResponseText,
+				StreamParts:  mockCfg.StreamParts,
+				FailCreate:   mockCfg.FailCreate,
+				FailStream:   mockCfg.FailStream,
+				Model:        model,
+			}),
+		}, nil
 	case "openai":
 		if strings.TrimSpace(cfg.BaseURL) == "" {
-			return providerrouter.Backend{}, "", fmt.Errorf("%s provider base_url is required for type openai", role)
+			return providerrouter.Backend{}, fmt.Errorf("%s provider base_url is required for type openai", role)
 		}
 
 		return providerrouter.Backend{
@@ -177,27 +220,10 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 				APIKey:       cfg.APIKey,
 				DefaultModel: model,
 			}),
-		}, model, nil
+		}, nil
 	default:
-		return providerrouter.Backend{}, "", fmt.Errorf("%s provider type %q is not supported", role, cfg.Type)
+		return providerrouter.Backend{}, fmt.Errorf("%s provider type %q is not supported", role, cfg.Type)
 	}
-}
-
-func collectModels(values ...string) []string {
-	models := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		models = append(models, value)
-	}
-	return models
 }
 
 type providerHealthAdapter struct {
@@ -266,6 +292,8 @@ func (a providerHealthAdapter) BackendStatuses() []handlers.ProviderBackendStatu
 			Healthy:             status.Healthy,
 			ConsecutiveFailures: status.ConsecutiveFailures,
 			UnhealthyUntil:      status.UnhealthyUntil,
+			LastProbeAt:         status.LastProbeAt,
+			LastProbeError:      status.LastProbeError,
 		})
 	}
 	return result

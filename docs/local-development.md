@@ -42,6 +42,7 @@ The expected API results are:
 - metrics can be inspected from `/metrics`
 - every response includes `X-Trace-Id` for log correlation
 - primary / secondary providers can be configured as `mock` or `openai`
+- provider readiness is refreshed by an active background probe loop
 
 ## Prerequisites
 

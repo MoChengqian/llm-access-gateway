@@ -34,11 +34,12 @@ type RedisConfig struct {
 }
 
 type GatewayConfig struct {
-	DefaultModel             string `mapstructure:"default_model" json:"default_model"`
-	ProviderFailureThreshold int    `mapstructure:"provider_failure_threshold" json:"provider_failure_threshold"`
-	ProviderCooldownSeconds  int    `mapstructure:"provider_cooldown_seconds" json:"provider_cooldown_seconds"`
-	PrimaryMockFailCreate    bool   `mapstructure:"primary_mock_fail_create" json:"primary_mock_fail_create"`
-	PrimaryMockFailStream    bool   `mapstructure:"primary_mock_fail_stream" json:"primary_mock_fail_stream"`
+	DefaultModel                 string `mapstructure:"default_model" json:"default_model"`
+	ProviderFailureThreshold     int    `mapstructure:"provider_failure_threshold" json:"provider_failure_threshold"`
+	ProviderCooldownSeconds      int    `mapstructure:"provider_cooldown_seconds" json:"provider_cooldown_seconds"`
+	ProviderProbeIntervalSeconds int    `mapstructure:"provider_probe_interval_seconds" json:"provider_probe_interval_seconds"`
+	PrimaryMockFailCreate        bool   `mapstructure:"primary_mock_fail_create" json:"primary_mock_fail_create"`
+	PrimaryMockFailStream        bool   `mapstructure:"primary_mock_fail_stream" json:"primary_mock_fail_stream"`
 }
 
 type ProviderConfig struct {
@@ -89,6 +90,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("gateway.default_model", "gpt-4o-mini")
 	v.SetDefault("gateway.provider_failure_threshold", 1)
 	v.SetDefault("gateway.provider_cooldown_seconds", 30)
+	v.SetDefault("gateway.provider_probe_interval_seconds", 30)
 	v.SetDefault("gateway.primary_mock_fail_create", false)
 	v.SetDefault("gateway.primary_mock_fail_stream", false)
 	v.SetDefault("provider.primary.type", "mock")

@@ -56,6 +56,11 @@ type responseErrorPayload struct {
 	Type    string `json:"type"`
 }
 
+type modelsResponsePayload struct {
+	Object string           `json:"object"`
+	Data   []provider.Model `json:"data"`
+}
+
 func New(cfg Config) Provider {
 	client := cfg.HTTPClient
 	if client == nil {
@@ -148,6 +153,34 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 	return chunks, nil
 }
 
+func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.modelsEndpointURL(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode >= 400 {
+		return nil, readHTTPError(resp)
+	}
+
+	var payload modelsResponsePayload
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload.Data, nil
+}
+
 func (p Provider) doRequest(ctx context.Context, payload requestPayload, stream bool) (responsePayload, error) {
 	reqBody, err := json.Marshal(payload)
 	if err != nil {
@@ -218,6 +251,10 @@ func (p Provider) openStream(ctx context.Context, payload requestPayload) (*http
 
 func (p Provider) endpointURL() string {
 	return p.baseURL + "/chat/completions"
+}
+
+func (p Provider) modelsEndpointURL() string {
+	return p.baseURL + "/models"
 }
 
 func (p Provider) resolveModel(model string) string {

@@ -98,3 +98,24 @@ func TestCreateChatCompletionReturnsUpstreamError(t *testing.T) {
 		t.Fatalf("expected upstream error, got %v", err)
 	}
 }
+
+func TestListModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("expected /models, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4.1-mini","object":"model","created":123,"owned_by":"openai"}]}`))
+	}))
+	defer server.Close()
+
+	p := New(Config{BaseURL: server.URL, APIKey: "test-key"})
+
+	models, err := p.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("list models: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "gpt-4.1-mini" {
+		t.Fatalf("unexpected models %#v", models)
+	}
+}

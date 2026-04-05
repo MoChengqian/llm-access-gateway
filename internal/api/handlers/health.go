@@ -16,6 +16,8 @@ type ProviderBackendStatus struct {
 	Healthy             bool      `json:"healthy"`
 	ConsecutiveFailures int       `json:"consecutive_failures"`
 	UnhealthyUntil      time.Time `json:"unhealthy_until,omitempty"`
+	LastProbeAt         time.Time `json:"last_probe_at,omitempty"`
+	LastProbeError      string    `json:"last_probe_error,omitempty"`
 }
 
 type HealthHandler struct {
