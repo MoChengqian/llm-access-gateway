@@ -303,6 +303,12 @@ Content-Type: application/json
 {"ready":true,"providers":[{"name":"mock-primary","healthy":false,...
 ```
 
+You can also use the helper script:
+
+```bash
+./scripts/provider-fallback-drill.sh create-fail
+```
+
 To force the primary mock provider to fail before streaming starts:
 
 ```bash
@@ -338,6 +344,12 @@ returns:
 HTTP/1.1 503 Service Unavailable
 ...
 {"status":"not ready"}
+```
+
+You can also use:
+
+```bash
+./scripts/provider-fallback-drill.sh stream-fail
 ```
 
 ## 11. Optional Cleanup

@@ -123,6 +123,69 @@ func TestReadyAndBackendStatusesReflectCooldown(t *testing.T) {
 	}
 }
 
+func TestObserverSeesFallbackAndFailureEvents(t *testing.T) {
+	observer := &stubObserver{}
+	primary := &stubProvider{createErr: errors.New("primary failed")}
+	secondary := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "secondary"},
+	}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{
+		FailureThreshold: 1,
+		Cooldown:         time.Minute,
+		Observer:         observer,
+	})
+
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+		t.Fatalf("create completion: %v", err)
+	}
+
+	if !observer.contains("provider_request_failed") {
+		t.Fatalf("expected provider_request_failed event, got %#v", observer.events)
+	}
+	if !observer.contains("provider_fallback_succeeded") {
+		t.Fatalf("expected provider_fallback_succeeded event, got %#v", observer.events)
+	}
+}
+
+func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
+	now := time.Unix(123, 0)
+	observer := &stubObserver{}
+	primary := &stubProvider{createErr: errors.New("primary failed")}
+	secondary := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "secondary"},
+	}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{
+		FailureThreshold: 1,
+		Cooldown:         time.Minute,
+		Observer:         observer,
+	})
+	routed.now = func() time.Time { return now }
+
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+		t.Fatalf("first create completion: %v", err)
+	}
+
+	observer.events = nil
+	primary.createCalled = false
+	secondary.createCalled = false
+
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+		t.Fatalf("second create completion: %v", err)
+	}
+
+	if !observer.contains("provider_skipped_unhealthy") {
+		t.Fatalf("expected provider_skipped_unhealthy event, got %#v", observer.events)
+	}
+}
+
 type stubProvider struct {
 	createCalled bool
 	streamCalled bool
@@ -152,4 +215,21 @@ func (s *stubProvider) StreamChatCompletion(context.Context, provider.ChatComple
 	}
 	close(chunks)
 	return chunks, nil
+}
+
+type stubObserver struct {
+	events []Event
+}
+
+func (o *stubObserver) OnEvent(event Event) {
+	o.events = append(o.events, event)
+}
+
+func (o *stubObserver) contains(eventType string) bool {
+	for _, event := range o.events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
 }

@@ -205,6 +205,14 @@ Expected result:
 - `curl -i http://127.0.0.1:8080/readyz` returns `503` when all providers are in cooldown
 - `curl -i http://127.0.0.1:8080/debug/providers` shows which backend is unhealthy
 
+There is also a small drill helper:
+
+```bash
+./scripts/provider-fallback-drill.sh status
+./scripts/provider-fallback-drill.sh create-fail
+./scripts/provider-fallback-drill.sh stream-fail
+```
+
 Default config file: [`configs/config.yaml`](configs/config.yaml)
 
 ## Common Questions

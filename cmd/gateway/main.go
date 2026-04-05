@@ -90,6 +90,7 @@ func main() {
 	}, providerrouter.Config{
 		FailureThreshold: cfg.Gateway.ProviderFailureThreshold,
 		Cooldown:         time.Duration(cfg.Gateway.ProviderCooldownSeconds) * time.Second,
+		Observer:         providerEventLogger{logger: logger},
 	})
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
 
@@ -125,6 +126,32 @@ type providerHealthAdapter struct {
 		Ready() bool
 		BackendStatuses() []providerrouter.BackendStatus
 	}
+}
+
+type providerEventLogger struct {
+	logger *zap.Logger
+}
+
+func (l providerEventLogger) OnEvent(event providerrouter.Event) {
+	if l.logger == nil {
+		return
+	}
+
+	fields := []zap.Field{
+		zap.String("type", event.Type),
+		zap.String("operation", event.Operation),
+		zap.String("backend", event.Backend),
+		zap.Int("attempt", event.Attempt),
+		zap.Int("consecutive_failures", event.ConsecutiveFailures),
+	}
+	if !event.UnhealthyUntil.IsZero() {
+		fields = append(fields, zap.String("unhealthy_until", event.UnhealthyUntil.Format(time.RFC3339)))
+	}
+	if event.Error != "" {
+		fields = append(fields, zap.String("reason", event.Error))
+	}
+
+	l.logger.Info("provider event", fields...)
 }
 
 func (a providerHealthAdapter) Ready() bool {
