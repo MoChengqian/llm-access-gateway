@@ -93,6 +93,12 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	if err := ensureColumnExists(ctx, db, "tenants", "enabled", `ALTER TABLE tenants ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE AFTER name`); err != nil {
+		return err
+	}
+	if err := ensureColumnExists(ctx, db, "tenants", "rpm_limit", `ALTER TABLE tenants ADD COLUMN rpm_limit INT NOT NULL DEFAULT 60 AFTER enabled`); err != nil {
+		return err
+	}
 	if err := ensureColumnExists(ctx, db, "tenants", "tpm_limit", `ALTER TABLE tenants ADD COLUMN tpm_limit INT NOT NULL DEFAULT 4000 AFTER rpm_limit`); err != nil {
 		return err
 	}
