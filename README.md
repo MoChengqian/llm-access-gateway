@@ -257,6 +257,11 @@ Environment variables currently used by the code:
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
 export APP_REDIS_ADDRESS='127.0.0.1:6379'
 export APP_SERVER_ADDRESS=':8080'
+export APP_SERVER_READ_HEADER_TIMEOUT_SECONDS='5'
+export APP_SERVER_READ_TIMEOUT_SECONDS='15'
+export APP_SERVER_WRITE_TIMEOUT_SECONDS='60'
+export APP_SERVER_IDLE_TIMEOUT_SECONDS='60'
+export APP_SERVER_MAX_REQUEST_BODY_BYTES='1048576'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
 export APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS='30'
@@ -275,6 +280,14 @@ export APP_PROVIDER_SECONDARY_TIMEOUT_SECONDS='15'
 export APP_PROVIDER_SECONDARY_MAX_RETRIES='1'
 export APP_PROVIDER_SECONDARY_RETRY_BACKOFF_MILLISECONDS='200'
 ```
+
+Server hardening defaults:
+
+- request header timeout: `5s`
+- request read timeout: `15s`
+- response write timeout: `60s`
+- idle timeout: `60s`
+- max request body size: `1048576` bytes
 
 To use a real OpenAI-compatible upstream as the primary backend:
 

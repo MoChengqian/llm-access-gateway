@@ -21,6 +21,11 @@ The current local verification path for this repo is:
 docker compose -f deployments/docker/docker-compose.yml up -d
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
 export APP_REDIS_ADDRESS='127.0.0.1:6379'
+export APP_SERVER_READ_HEADER_TIMEOUT_SECONDS='5'
+export APP_SERVER_READ_TIMEOUT_SECONDS='15'
+export APP_SERVER_WRITE_TIMEOUT_SECONDS='60'
+export APP_SERVER_IDLE_TIMEOUT_SECONDS='60'
+export APP_SERVER_MAX_REQUEST_BODY_BYTES='1048576'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
 go run ./cmd/devinit
@@ -148,6 +153,14 @@ Expected output:
 ```
 
 This DSN matches the compose file exactly.
+
+You can also override current server safety defaults:
+
+- `APP_SERVER_READ_HEADER_TIMEOUT_SECONDS`
+- `APP_SERVER_READ_TIMEOUT_SECONDS`
+- `APP_SERVER_WRITE_TIMEOUT_SECONDS`
+- `APP_SERVER_IDLE_TIMEOUT_SECONDS`
+- `APP_SERVER_MAX_REQUEST_BODY_BYTES`
 
 ## 3.1 Optional: Configure a Real OpenAI-Compatible Upstream
 
@@ -569,6 +582,29 @@ Fix:
 - wait until MySQL is `healthy`
 - rerun `go run ./cmd/devinit`
 - restart `go run ./cmd/gateway`
+
+### request body too large
+
+Symptom:
+
+```text
+HTTP/1.1 413 Request Entity Too Large
+...
+{"error":"request body too large"}
+```
+
+Cause:
+
+- request payload exceeded `APP_SERVER_MAX_REQUEST_BODY_BYTES`
+
+Fix:
+
+- reduce the request body size
+- or increase:
+
+```bash
+export APP_SERVER_MAX_REQUEST_BODY_BYTES='2097152'
+```
 
 ### access denied
 

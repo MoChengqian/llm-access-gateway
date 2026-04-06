@@ -71,6 +71,29 @@ func TestStartProviderProbeLoopRunsImmediateProbe(t *testing.T) {
 	}
 }
 
+func TestGatewayServerTimeoutConfigDefaultsArePositive(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Server.ReadHeaderTimeoutSeconds <= 0 {
+		t.Fatalf("expected positive read header timeout, got %d", cfg.Server.ReadHeaderTimeoutSeconds)
+	}
+	if cfg.Server.ReadTimeoutSeconds <= 0 {
+		t.Fatalf("expected positive read timeout, got %d", cfg.Server.ReadTimeoutSeconds)
+	}
+	if cfg.Server.WriteTimeoutSeconds <= 0 {
+		t.Fatalf("expected positive write timeout, got %d", cfg.Server.WriteTimeoutSeconds)
+	}
+	if cfg.Server.IdleTimeoutSeconds <= 0 {
+		t.Fatalf("expected positive idle timeout, got %d", cfg.Server.IdleTimeoutSeconds)
+	}
+	if cfg.Server.MaxRequestBodyBytes <= 0 {
+		t.Fatalf("expected positive max request body bytes, got %d", cfg.Server.MaxRequestBodyBytes)
+	}
+}
+
 type stubProber struct {
 	done chan struct{}
 }

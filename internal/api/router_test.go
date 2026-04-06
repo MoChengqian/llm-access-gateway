@@ -462,6 +462,31 @@ func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsRejectsOversizedRequestBody(t *testing.T) {
+	router := newTestRouterWithMaxBodyBytes(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, nil, nil, nil, nil, 64)
+
+	body := `{"messages":[{"role":"user","content":"` + strings.Repeat("x", 128) + `"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer live-key")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status %d, got %d", http.StatusRequestEntityTooLarge, rec.Code)
+	}
+	if bodyText := rec.Body.String(); !strings.Contains(bodyText, `"error":"request body too large"`) {
+		t.Fatalf("expected request body too large error, got %s", bodyText)
+	}
+}
+
 func TestChatCompletionsRejectsInvalidAPIKey(t *testing.T) {
 	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil, nil, nil, nil)
 
@@ -655,6 +680,10 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 }
 
 func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter, providers handlers.ProviderHealthReader, registry *metrics.Registry) http.Handler {
+	return newTestRouterWithMaxBodyBytes(store, governanceStore, limiter, providers, registry, 1<<20)
+}
+
+func newTestRouterWithMaxBodyBytes(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter, providers handlers.ProviderHealthReader, registry *metrics.Registry, maxRequestBodyBytes int64) http.Handler {
 	if governanceStore == nil {
 		governanceStore = &stubGovernanceStore{insertID: 1}
 	}
@@ -670,7 +699,7 @@ func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, li
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
 	modelsService := modelsservice.NewService([]modelsservice.Source{providermock.New()})
 	usageService := usageservice.NewService(governanceStore)
-	return NewRouter(zap.NewNop(), chatService, modelsService, usageService, authService, governanceService, providers, registry, registry)
+	return NewRouter(zap.NewNop(), chatService, modelsService, usageService, authService, governanceService, providers, registry, registry, maxRequestBodyBytes)
 }
 
 type stubAuthStore struct {

@@ -16,7 +16,12 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Address string `mapstructure:"address" json:"address"`
+	Address                  string `mapstructure:"address" json:"address"`
+	ReadHeaderTimeoutSeconds int    `mapstructure:"read_header_timeout_seconds" json:"read_header_timeout_seconds"`
+	ReadTimeoutSeconds       int    `mapstructure:"read_timeout_seconds" json:"read_timeout_seconds"`
+	WriteTimeoutSeconds      int    `mapstructure:"write_timeout_seconds" json:"write_timeout_seconds"`
+	IdleTimeoutSeconds       int    `mapstructure:"idle_timeout_seconds" json:"idle_timeout_seconds"`
+	MaxRequestBodyBytes      int64  `mapstructure:"max_request_body_bytes" json:"max_request_body_bytes"`
 }
 
 type LogConfig struct {
@@ -85,6 +90,11 @@ func Load() (Config, error) {
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.address", ":8080")
+	v.SetDefault("server.read_header_timeout_seconds", 5)
+	v.SetDefault("server.read_timeout_seconds", 15)
+	v.SetDefault("server.write_timeout_seconds", 60)
+	v.SetDefault("server.idle_timeout_seconds", 60)
+	v.SetDefault("server.max_request_body_bytes", 1048576)
 	v.SetDefault("log.level", "info")
 	v.SetDefault("mysql.dsn", "")
 	v.SetDefault("redis.address", "")

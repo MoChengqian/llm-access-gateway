@@ -108,8 +108,11 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService, modelsService, usageService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry),
-		ReadHeaderTimeout: 5 * time.Second,
+		Handler:           api.NewRouter(logger, chatService, modelsService, usageService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry, cfg.Server.MaxRequestBodyBytes),
+		ReadHeaderTimeout: time.Duration(cfg.Server.ReadHeaderTimeoutSeconds) * time.Second,
+		ReadTimeout:       time.Duration(cfg.Server.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(cfg.Server.WriteTimeoutSeconds) * time.Second,
+		IdleTimeout:       time.Duration(cfg.Server.IdleTimeoutSeconds) * time.Second,
 	}
 
 	go func() {

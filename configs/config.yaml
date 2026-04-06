@@ -1,5 +1,10 @@
 server:
   address: ":8080"
+  read_header_timeout_seconds: 5
+  read_timeout_seconds: 15
+  write_timeout_seconds: 60
+  idle_timeout_seconds: 60
+  max_request_body_bytes: 1048576
 
 log:
   level: info

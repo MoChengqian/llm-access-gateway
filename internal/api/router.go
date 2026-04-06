@@ -25,7 +25,7 @@ type RequestMetricsRecorder interface {
 	RecordStreamChunk()
 }
 
-func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService models.Service, usageService usageservice.Service, authenticator auth.Authenticator, governanceService governance.Service, providers handlers.ProviderHealthReader, metricsHandler http.Handler, metricsRecorder RequestMetricsRecorder) http.Handler {
+func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService models.Service, usageService usageservice.Service, authenticator auth.Authenticator, governanceService governance.Service, providers handlers.ProviderHealthReader, metricsHandler http.Handler, metricsRecorder RequestMetricsRecorder, maxRequestBodyBytes int64) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
@@ -50,9 +50,41 @@ func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService model
 	}
 	r.Get("/v1/models", requireAPIKey(authenticator, modelsHandler.List))
 	r.Get("/v1/usage", requireAPIKey(authenticator, usageHandler.GetUsage))
-	r.Post("/v1/chat/completions", requireAPIKey(authenticator, chatHandler.CreateCompletion))
+	r.Post("/v1/chat/completions", chainHandler(
+		requireAPIKey(authenticator, chatHandler.CreateCompletion),
+		limitRequestBody(maxRequestBodyBytes),
+	))
 
 	return r
+}
+
+func chainHandler(handler http.HandlerFunc, middlewares ...func(http.Handler) http.Handler) http.HandlerFunc {
+	var wrapped http.Handler = handler
+	for idx := len(middlewares) - 1; idx >= 0; idx-- {
+		if middlewares[idx] == nil {
+			continue
+		}
+		wrapped = middlewares[idx](wrapped)
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		wrapped.ServeHTTP(w, r)
+	}
+}
+
+func limitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if maxBytes <= 0 {
+			return next
+		}
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func requireAPIKey(authenticator auth.Authenticator, next http.HandlerFunc) http.HandlerFunc {
