@@ -4,7 +4,7 @@ import "context"
 
 type ChatCompletionProvider interface {
 	CreateChatCompletion(ctx context.Context, req ChatCompletionRequest) (ChatCompletionResponse, error)
-	StreamChatCompletion(ctx context.Context, req ChatCompletionRequest) (<-chan ChatCompletionChunk, error)
+	StreamChatCompletion(ctx context.Context, req ChatCompletionRequest) (<-chan ChatCompletionStreamEvent, error)
 }
 
 type ModelProvider interface {
@@ -56,4 +56,9 @@ type ChatCompletionChunk struct {
 	Created int64        `json:"created"`
 	Model   string       `json:"model"`
 	Choices []ChatChoice `json:"choices"`
+}
+
+type ChatCompletionStreamEvent struct {
+	Chunk ChatCompletionChunk
+	Err   error
 }

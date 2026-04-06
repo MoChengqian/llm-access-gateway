@@ -160,7 +160,7 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 	return provider.ChatCompletionResponse{}, lastErr
 }
 
-func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionChunk, error) {
+func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
 	ctx, span := tracing.StartSpan(ctx, "provider.router.stream",
 		zap.String("model", req.Model),
 		zap.Int("configured_backends", len(p.backends)),
@@ -180,50 +180,71 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 			zap.String("backend", backend.Name),
 			zap.Int("attempt", index+1),
 		)
-		chunks, err := backend.Provider.StreamChatCompletion(attemptCtx, req)
-		duration := time.Since(startedAt)
-		if err == nil {
-			recovered := p.markSuccess(backend.Name)
+		events, err := backend.Provider.StreamChatCompletion(attemptCtx, req)
+		if err != nil {
+			attemptSpan.End(err)
+
+			lastErr = err
+			failures, unhealthyUntil := p.markFailure(backend.Name)
 			p.observe(Event{
-				Type:      "provider_request_succeeded",
+				Type:                "provider_request_failed",
+				Operation:           "stream",
+				Backend:             backend.Name,
+				Attempt:             index + 1,
+				Duration:            time.Since(startedAt),
+				ConsecutiveFailures: failures,
+				UnhealthyUntil:      unhealthyUntil,
+				Error:               err.Error(),
+			})
+			continue
+		}
+
+		firstEvent, err := p.awaitFirstStreamEvent(attemptCtx, events)
+		duration := time.Since(startedAt)
+		if err != nil {
+			attemptSpan.End(err)
+
+			lastErr = err
+			failures, unhealthyUntil := p.markFailure(backend.Name)
+			p.observe(Event{
+				Type:                "provider_request_failed",
+				Operation:           "stream",
+				Backend:             backend.Name,
+				Attempt:             index + 1,
+				Duration:            duration,
+				ConsecutiveFailures: failures,
+				UnhealthyUntil:      unhealthyUntil,
+				Error:               err.Error(),
+			})
+			continue
+		}
+
+		recovered := p.markSuccess(backend.Name)
+		p.observe(Event{
+			Type:      "provider_request_succeeded",
+			Operation: "stream",
+			Backend:   backend.Name,
+			Attempt:   index + 1,
+			Duration:  duration,
+		})
+		if index > 0 {
+			p.observe(Event{
+				Type:      "provider_fallback_succeeded",
 				Operation: "stream",
 				Backend:   backend.Name,
 				Attempt:   index + 1,
 				Duration:  duration,
 			})
-			if index > 0 {
-				p.observe(Event{
-					Type:      "provider_fallback_succeeded",
-					Operation: "stream",
-					Backend:   backend.Name,
-					Attempt:   index + 1,
-					Duration:  duration,
-				})
-			}
-			if recovered {
-				p.observe(Event{
-					Type:      "provider_recovered",
-					Operation: "stream",
-					Backend:   backend.Name,
-					Attempt:   index + 1,
-				})
-			}
-			return p.wrapStream(ctx, chunks, span, attemptSpan, backend.Name, index+1), nil
 		}
-		attemptSpan.End(err)
-
-		lastErr = err
-		failures, unhealthyUntil := p.markFailure(backend.Name)
-		p.observe(Event{
-			Type:                "provider_request_failed",
-			Operation:           "stream",
-			Backend:             backend.Name,
-			Attempt:             index + 1,
-			Duration:            duration,
-			ConsecutiveFailures: failures,
-			UnhealthyUntil:      unhealthyUntil,
-			Error:               err.Error(),
-		})
+		if recovered {
+			p.observe(Event{
+				Type:      "provider_recovered",
+				Operation: "stream",
+				Backend:   backend.Name,
+				Attempt:   index + 1,
+			})
+		}
+		return p.wrapStream(ctx, events, firstEvent, span, attemptSpan, backend.Name, index+1), nil
 	}
 
 	span.End(lastErr)
@@ -277,40 +298,86 @@ func (p *Provider) Probe(ctx context.Context) {
 	}
 }
 
-func (p *Provider) wrapStream(ctx context.Context, chunks <-chan provider.ChatCompletionChunk, routerSpan *tracing.Span, backendSpan *tracing.Span, backend string, attempt int) <-chan provider.ChatCompletionChunk {
-	wrapped := make(chan provider.ChatCompletionChunk)
+func (p *Provider) wrapStream(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent, first provider.ChatCompletionStreamEvent, routerSpan *tracing.Span, backendSpan *tracing.Span, backend string, attempt int) <-chan provider.ChatCompletionStreamEvent {
+	wrapped := make(chan provider.ChatCompletionStreamEvent)
 
 	go func() {
 		var traceErr error
 		chunkCount := 0
+		streamStartedAt := time.Now()
 		defer close(wrapped)
 		defer func() {
 			backendSpan.End(traceErr, zap.Int("chunk_count", chunkCount))
 			routerSpan.End(traceErr, zap.String("backend", backend), zap.Int("attempt", attempt), zap.Int("chunk_count", chunkCount))
 		}()
 
+		if !p.forwardStreamEvent(ctx, wrapped, first, backend, attempt, streamStartedAt, &chunkCount, &traceErr) {
+			return
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
 				traceErr = ctx.Err()
 				return
-			case chunk, ok := <-chunks:
+			case event, ok := <-events:
 				if !ok {
 					return
 				}
-
-				select {
-				case <-ctx.Done():
-					traceErr = ctx.Err()
+				if !p.forwardStreamEvent(ctx, wrapped, event, backend, attempt, streamStartedAt, &chunkCount, &traceErr) {
 					return
-				case wrapped <- chunk:
-					chunkCount++
 				}
 			}
 		}
 	}()
 
 	return wrapped
+}
+
+func (p *Provider) awaitFirstStreamEvent(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent) (provider.ChatCompletionStreamEvent, error) {
+	select {
+	case <-ctx.Done():
+		return provider.ChatCompletionStreamEvent{}, ctx.Err()
+	case event, ok := <-events:
+		if !ok {
+			return provider.ChatCompletionStreamEvent{}, errors.New("upstream stream closed before first chunk")
+		}
+		if event.Err != nil {
+			return provider.ChatCompletionStreamEvent{}, event.Err
+		}
+		return event, nil
+	}
+}
+
+func (p *Provider) forwardStreamEvent(ctx context.Context, wrapped chan<- provider.ChatCompletionStreamEvent, event provider.ChatCompletionStreamEvent, backend string, attempt int, streamStartedAt time.Time, chunkCount *int, traceErr *error) bool {
+	if event.Err != nil {
+		*traceErr = event.Err
+		failures, unhealthyUntil := p.markFailure(backend)
+		p.observe(Event{
+			Type:                "provider_stream_interrupted",
+			Operation:           "stream",
+			Backend:             backend,
+			Attempt:             attempt,
+			Duration:            time.Since(streamStartedAt),
+			ConsecutiveFailures: failures,
+			UnhealthyUntil:      unhealthyUntil,
+			Error:               event.Err.Error(),
+		})
+		select {
+		case <-ctx.Done():
+		case wrapped <- event:
+		}
+		return false
+	}
+
+	select {
+	case <-ctx.Done():
+		*traceErr = ctx.Err()
+		return false
+	case wrapped <- event:
+		*chunkCount = *chunkCount + 1
+		return true
+	}
 }
 
 func (p *Provider) candidates() ([]Backend, []Backend) {

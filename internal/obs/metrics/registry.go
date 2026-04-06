@@ -86,7 +86,7 @@ func (r *Registry) OnEvent(event router.Event) {
 	r.providerEvents[key]++
 	if event.Duration > 0 && recordsProviderDuration(event.Type) {
 		result := "success"
-		if strings.Contains(event.Type, "failed") {
+		if strings.Contains(event.Type, "failed") || strings.Contains(event.Type, "interrupted") {
 			result = "error"
 		}
 		durationKey := fmt.Sprintf(`operation="%s",backend="%s",result="%s"`, sanitize(event.Operation), sanitize(event.Backend), result)
@@ -206,7 +206,7 @@ func sanitize(value string) string {
 
 func recordsProviderDuration(eventType string) bool {
 	switch eventType {
-	case "provider_request_succeeded", "provider_request_failed", "provider_probe_succeeded", "provider_probe_failed":
+	case "provider_request_succeeded", "provider_request_failed", "provider_stream_interrupted", "provider_probe_succeeded", "provider_probe_failed":
 		return true
 	default:
 		return false

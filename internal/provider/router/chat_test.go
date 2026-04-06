@@ -37,7 +37,7 @@ func TestCreateCompletionFallsBackToSecondary(t *testing.T) {
 func TestStreamCompletionFallsBackBeforeFirstChunk(t *testing.T) {
 	primary := &stubProvider{streamErr: errors.New("primary stream failed")}
 	secondary := &stubProvider{
-		streamChunks: []provider.ChatCompletionChunk{{Model: "secondary"}},
+		streamChunks: []provider.ChatCompletionStreamEvent{{Chunk: provider.ChatCompletionChunk{Model: "secondary"}}},
 	}
 
 	routed := New([]Backend{
@@ -50,9 +50,74 @@ func TestStreamCompletionFallsBackBeforeFirstChunk(t *testing.T) {
 		t.Fatalf("stream completion: %v", err)
 	}
 
-	chunk := <-chunks
-	if chunk.Model != "secondary" {
-		t.Fatalf("expected secondary stream chunk, got %#v", chunk)
+	event := <-chunks
+	if event.Chunk.Model != "secondary" {
+		t.Fatalf("expected secondary stream chunk, got %#v", event)
+	}
+}
+
+func TestStreamCompletionFallsBackWhenPrimaryErrorsBeforeFirstChunk(t *testing.T) {
+	primary := &stubProvider{
+		streamChunks: []provider.ChatCompletionStreamEvent{
+			{Err: errors.New("primary interrupted before first chunk")},
+		},
+	}
+	secondary := &stubProvider{
+		streamChunks: []provider.ChatCompletionStreamEvent{
+			{Chunk: provider.ChatCompletionChunk{Model: "secondary"}},
+		},
+	}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini", Stream: true})
+	if err != nil {
+		t.Fatalf("stream completion: %v", err)
+	}
+
+	first := <-events
+	if first.Err != nil || first.Chunk.Model != "secondary" {
+		t.Fatalf("expected fallback chunk from secondary, got %#v", first)
+	}
+}
+
+func TestStreamCompletionDoesNotFallbackAfterFirstChunk(t *testing.T) {
+	primary := &stubProvider{
+		streamChunks: []provider.ChatCompletionStreamEvent{
+			{Chunk: provider.ChatCompletionChunk{Model: "primary"}},
+			{Err: errors.New("primary interrupted after first chunk")},
+		},
+	}
+	secondary := &stubProvider{
+		streamChunks: []provider.ChatCompletionStreamEvent{
+			{Chunk: provider.ChatCompletionChunk{Model: "secondary"}},
+		},
+	}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini", Stream: true})
+	if err != nil {
+		t.Fatalf("stream completion: %v", err)
+	}
+
+	first := <-events
+	if first.Err != nil || first.Chunk.Model != "primary" {
+		t.Fatalf("expected first chunk from primary, got %#v", first)
+	}
+
+	second := <-events
+	if second.Err == nil || second.Err.Error() != "primary interrupted after first chunk" {
+		t.Fatalf("expected terminal interruption event, got %#v", second)
+	}
+	if secondary.streamCalled {
+		t.Fatal("expected secondary not to be used after first chunk")
 	}
 }
 
@@ -247,7 +312,7 @@ type stubProvider struct {
 	streamErr    error
 	modelsErr    error
 	response     provider.ChatCompletionResponse
-	streamChunks []provider.ChatCompletionChunk
+	streamChunks []provider.ChatCompletionStreamEvent
 	models       []provider.Model
 }
 
@@ -259,18 +324,18 @@ func (s *stubProvider) CreateChatCompletion(context.Context, provider.ChatComple
 	return s.response, nil
 }
 
-func (s *stubProvider) StreamChatCompletion(context.Context, provider.ChatCompletionRequest) (<-chan provider.ChatCompletionChunk, error) {
+func (s *stubProvider) StreamChatCompletion(context.Context, provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
 	s.streamCalled = true
 	if s.streamErr != nil {
 		return nil, s.streamErr
 	}
 
-	chunks := make(chan provider.ChatCompletionChunk, len(s.streamChunks))
-	for _, chunk := range s.streamChunks {
-		chunks <- chunk
+	events := make(chan provider.ChatCompletionStreamEvent, len(s.streamChunks))
+	for _, event := range s.streamChunks {
+		events <- event
 	}
-	close(chunks)
-	return chunks, nil
+	close(events)
+	return events, nil
 }
 
 func (s *stubProvider) ListModels(context.Context) ([]provider.Model, error) {

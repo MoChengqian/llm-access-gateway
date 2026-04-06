@@ -75,8 +75,11 @@ func TestStreamChatCompletion(t *testing.T) {
 	}
 
 	var parts []string
-	for chunk := range chunks {
-		parts = append(parts, chunk.Choices[0].Message.Content)
+	for event := range chunks {
+		if event.Err != nil {
+			t.Fatalf("expected no stream error, got %v", event.Err)
+		}
+		parts = append(parts, event.Chunk.Choices[0].Message.Content)
 	}
 
 	if got := strings.Join(parts, ""); got != "hello" {
@@ -190,8 +193,11 @@ func TestStreamChatCompletionRetriesBeforeOpen(t *testing.T) {
 	}
 
 	var content strings.Builder
-	for chunk := range chunks {
-		content.WriteString(chunk.Choices[0].Message.Content)
+	for event := range chunks {
+		if event.Err != nil {
+			t.Fatalf("expected no stream error, got %v", event.Err)
+		}
+		content.WriteString(event.Chunk.Choices[0].Message.Content)
 	}
 
 	if attempts != 2 {
@@ -225,5 +231,42 @@ func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "deadline exceeded") {
 		t.Fatalf("expected deadline exceeded error, got %v", err)
+	}
+}
+
+func TestStreamChatCompletionPropagatesMidstreamError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4.1-mini\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":\"\"}]}\n\n"))
+	}))
+	defer server.Close()
+
+	p := New(Config{
+		BaseURL:      server.URL,
+		DefaultModel: "gpt-4.1-mini",
+	})
+
+	events, err := p.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{
+		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("stream chat completion: %v", err)
+	}
+
+	first, ok := <-events
+	if !ok {
+		t.Fatal("expected first stream event")
+	}
+	if first.Err != nil || first.Chunk.Choices[0].Message.Content != "hel" {
+		t.Fatalf("unexpected first stream event %#v", first)
+	}
+
+	second, ok := <-events
+	if !ok {
+		t.Fatal("expected terminal error event")
+	}
+	if second.Err == nil || !strings.Contains(second.Err.Error(), "before [DONE]") {
+		t.Fatalf("expected terminal midstream error, got %#v", second)
 	}
 }

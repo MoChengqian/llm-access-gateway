@@ -121,7 +121,7 @@ func (p Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCom
 	}, nil
 }
 
-func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionChunk, error) {
+func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
 	resp, err := p.openStream(ctx, requestPayload{
 		Model:    p.resolveModel(req.Model),
 		Messages: req.Messages,
@@ -131,9 +131,9 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 		return nil, err
 	}
 
-	chunks := make(chan provider.ChatCompletionChunk)
+	events := make(chan provider.ChatCompletionStreamEvent)
 	go func() {
-		defer close(chunks)
+		defer close(events)
 		defer func() {
 			_ = resp.Body.Close()
 		}()
@@ -143,8 +143,10 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				if errors.Is(err, io.EOF) {
+					publishStreamError(ctx, events, errors.New("upstream stream ended before [DONE]"))
 					return
 				}
+				publishStreamError(ctx, events, err)
 				return
 			}
 
@@ -163,20 +165,32 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 
 			var payload responsePayload
 			if err := json.Unmarshal([]byte(data), &payload); err != nil {
+				publishStreamError(ctx, events, err)
+				return
+			}
+			if payload.Error != nil && payload.Error.Message != "" {
+				publishStreamError(ctx, events, errors.New(payload.Error.Message))
 				return
 			}
 
-			chunks <- provider.ChatCompletionChunk{
-				ID:      payload.ID,
-				Object:  payload.Object,
-				Created: payload.Created,
-				Model:   payload.Model,
-				Choices: toProviderStreamChoices(payload.Choices),
+			select {
+			case <-ctx.Done():
+				publishStreamError(ctx, events, ctx.Err())
+				return
+			case events <- provider.ChatCompletionStreamEvent{
+				Chunk: provider.ChatCompletionChunk{
+					ID:      payload.ID,
+					Object:  payload.Object,
+					Created: payload.Created,
+					Model:   payload.Model,
+					Choices: toProviderStreamChoices(payload.Choices),
+				},
+			}:
 			}
 		}
 	}()
 
-	return chunks, nil
+	return events, nil
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
@@ -405,4 +419,15 @@ func shouldRetryRequest(ctx context.Context, err error) bool {
 
 func shouldRetryHTTPStatus(status int) bool {
 	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
+func publishStreamError(ctx context.Context, events chan<- provider.ChatCompletionStreamEvent, err error) {
+	if err == nil {
+		return
+	}
+
+	select {
+	case <-ctx.Done():
+	case events <- provider.ChatCompletionStreamEvent{Err: err}:
+	}
 }

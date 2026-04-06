@@ -85,57 +85,61 @@ func (p Provider) CreateChatCompletion(_ context.Context, req provider.ChatCompl
 	}, nil
 }
 
-func (p Provider) StreamChatCompletion(_ context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionChunk, error) {
+func (p Provider) StreamChatCompletion(_ context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
 	if p.failStream {
 		return nil, ErrStreamFailed
 	}
 
-	chunks := make(chan provider.ChatCompletionChunk, 4)
+	events := make(chan provider.ChatCompletionStreamEvent, 4)
 
 	go func() {
-		defer close(chunks)
+		defer close(events)
 
 		now := time.Now().Unix()
 		id := "chatcmpl-mock"
 
 		for index, part := range p.streamParts {
-			chunks <- provider.ChatCompletionChunk{
+			events <- provider.ChatCompletionStreamEvent{
+				Chunk: provider.ChatCompletionChunk{
+					ID:      id,
+					Object:  "chat.completion.chunk",
+					Created: now,
+					Model:   req.Model,
+					Choices: []provider.ChatChoice{
+						{
+							Index: index,
+							Message: provider.ChatMessage{
+								Role:    "assistant",
+								Content: part,
+							},
+							FinishReason: "",
+						},
+					},
+				},
+			}
+		}
+
+		events <- provider.ChatCompletionStreamEvent{
+			Chunk: provider.ChatCompletionChunk{
 				ID:      id,
 				Object:  "chat.completion.chunk",
 				Created: now,
 				Model:   req.Model,
 				Choices: []provider.ChatChoice{
 					{
-						Index: index,
+						Index: 0,
 						Message: provider.ChatMessage{
 							Role:    "assistant",
-							Content: part,
+							Content: "",
 						},
-						FinishReason: "",
+						FinishReason: "stop",
 					},
-				},
-			}
-		}
-
-		chunks <- provider.ChatCompletionChunk{
-			ID:      id,
-			Object:  "chat.completion.chunk",
-			Created: now,
-			Model:   req.Model,
-			Choices: []provider.ChatChoice{
-				{
-					Index: 0,
-					Message: provider.ChatMessage{
-						Role:    "assistant",
-						Content: "",
-					},
-					FinishReason: "stop",
 				},
 			},
 		}
 	}()
 
-	return chunks, nil
+	return events, nil
 }
 
 func (p Provider) ListModels(context.Context) ([]provider.Model, error) {

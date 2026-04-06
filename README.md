@@ -224,6 +224,7 @@ Expected results:
 - valid key -> `200` with `"object":"chat.completion"`
 - models -> `200` with `"object":"list"` and partial aggregation from healthy providers when at least one source succeeds
 - `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
+- if an upstream stream is interrupted after the first chunk, the gateway closes the stream without a false `[DONE]`, and fallback is not attempted after output has started
 - with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
 - if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
 - `GET /debug/providers` shows backend health, failure count, and cooldown state

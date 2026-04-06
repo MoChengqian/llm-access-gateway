@@ -106,7 +106,7 @@ func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 
-	chunks, err := h.service.StreamCompletion(ctx, req)
+	events, err := h.service.StreamCompletion(ctx, req)
 	if err != nil {
 		traceErr = err
 		_ = tracker.Fail(ctx)
@@ -114,12 +114,27 @@ func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
+	headersWritten := false
 
-	for chunk := range chunks {
+	for event := range events {
+		if event.Err != nil {
+			traceErr = event.Err
+			_ = tracker.Fail(ctx)
+			if !headersWritten {
+				writeServiceError(w, event.Err)
+			}
+			return
+		}
+
+		chunk := event.Chunk
+		if !headersWritten {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.WriteHeader(http.StatusOK)
+			headersWritten = true
+		}
+
 		tracker.ObserveStreamChunk(chunk)
 
 		payload, err := json.Marshal(chunk)
@@ -142,6 +157,13 @@ func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, re
 			h.metrics.RecordStreamChunk()
 		}
 		flusher.Flush()
+	}
+
+	if !headersWritten {
+		traceErr = errors.New("stream ended before first chunk")
+		_ = tracker.Fail(ctx)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return
 	}
 
 	if _, err := fmt.Fprint(w, "data: [DONE]\n\n"); err != nil {

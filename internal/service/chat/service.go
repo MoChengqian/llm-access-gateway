@@ -14,7 +14,7 @@ var ErrInvalidRequest = errors.New("messages are required")
 
 type Service interface {
 	CreateCompletion(ctx context.Context, req CompletionRequest) (CompletionResponse, error)
-	StreamCompletion(ctx context.Context, req CompletionRequest) (<-chan CompletionChunk, error)
+	StreamCompletion(ctx context.Context, req CompletionRequest) (<-chan CompletionEvent, error)
 }
 
 type service struct {
@@ -60,6 +60,11 @@ type CompletionChunk struct {
 	Created int64         `json:"created"`
 	Model   string        `json:"model"`
 	Choices []ChunkChoice `json:"choices"`
+}
+
+type CompletionEvent struct {
+	Chunk CompletionChunk
+	Err   error
 }
 
 type ChunkChoice struct {
@@ -116,7 +121,7 @@ func (s service) CreateCompletion(ctx context.Context, req CompletionRequest) (C
 	}, nil
 }
 
-func (s service) StreamCompletion(ctx context.Context, req CompletionRequest) (<-chan CompletionChunk, error) {
+func (s service) StreamCompletion(ctx context.Context, req CompletionRequest) (<-chan CompletionEvent, error) {
 	ctx, span := tracing.StartSpan(ctx, "chat.service.stream_completion",
 		zap.String("model", req.Model),
 		zap.String("stream", strconv.FormatBool(true)),
@@ -134,32 +139,49 @@ func (s service) StreamCompletion(ctx context.Context, req CompletionRequest) (<
 		return nil, err
 	}
 
-	serviceChunks := make(chan CompletionChunk)
+	serviceEvents := make(chan CompletionEvent)
 	go func() {
 		var traceErr error
 		chunkCount := 0
 		defer func() {
 			span.End(traceErr, zap.Int("chunk_count", chunkCount))
 		}()
-		defer close(serviceChunks)
-		for chunk := range providerChunks {
-			select {
-			case <-ctx.Done():
+		defer close(serviceEvents)
+		for event := range providerChunks {
+			if ctx.Err() != nil {
 				traceErr = ctx.Err()
 				return
-			case serviceChunks <- CompletionChunk{
-				ID:      chunk.ID,
-				Object:  chunk.Object,
-				Created: chunk.Created,
-				Model:   chunk.Model,
-				Choices: toChunkChoices(chunk.Choices),
-			}:
-				chunkCount++
 			}
+
+			if event.Err != nil {
+				traceErr = event.Err
+				if ctx.Err() != nil {
+					traceErr = ctx.Err()
+					return
+				}
+				serviceEvents <- CompletionEvent{Err: event.Err}
+				return
+			}
+
+			chunk := event.Chunk
+			if ctx.Err() != nil {
+				traceErr = ctx.Err()
+				return
+			}
+			serviceEvents <- CompletionEvent{
+				Chunk: CompletionChunk{
+					ID:      chunk.ID,
+					Object:  chunk.Object,
+					Created: chunk.Created,
+					Model:   chunk.Model,
+					Choices: toChunkChoices(chunk.Choices),
+				},
+			}
+			chunkCount++
 		}
 	}()
 
-	return serviceChunks, nil
+	return serviceEvents, nil
 }
 
 func (s service) prepareProviderRequest(req CompletionRequest) (provider.ChatCompletionRequest, error) {

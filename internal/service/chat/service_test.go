@@ -71,20 +71,22 @@ func TestCreateCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 
 func TestStreamCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 	providerStub := &stubProvider{
-		streamResponse: []provider.ChatCompletionChunk{
+		streamResponse: []provider.ChatCompletionStreamEvent{
 			{
-				ID:      "chatcmpl-mock",
-				Object:  "chat.completion.chunk",
-				Created: 123,
-				Model:   "gpt-4o-mini",
-				Choices: []provider.ChatChoice{
-					{
-						Index: 0,
-						Message: provider.ChatMessage{
-							Role:    "assistant",
-							Content: "hello",
+				Chunk: provider.ChatCompletionChunk{
+					ID:      "chatcmpl-mock",
+					Object:  "chat.completion.chunk",
+					Created: 123,
+					Model:   "gpt-4o-mini",
+					Choices: []provider.ChatChoice{
+						{
+							Index: 0,
+							Message: provider.ChatMessage{
+								Role:    "assistant",
+								Content: "hello",
+							},
+							FinishReason: "",
 						},
-						FinishReason: "",
 					},
 				},
 			},
@@ -105,9 +107,9 @@ func TestStreamCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 		t.Fatalf("stream completion: %v", err)
 	}
 
-	var chunks []CompletionChunk
-	for chunk := range stream {
-		chunks = append(chunks, chunk)
+	var events []CompletionEvent
+	for event := range stream {
+		events = append(events, event)
 	}
 
 	if !providerStub.streamCalled {
@@ -118,33 +120,35 @@ func TestStreamCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 		t.Fatal("expected stream flag to be forwarded to provider")
 	}
 
-	if len(chunks) != 1 || chunks[0].Object != "chat.completion.chunk" {
-		t.Fatalf("expected one chat completion chunk, got %#v", chunks)
+	if len(events) != 1 || events[0].Chunk.Object != "chat.completion.chunk" {
+		t.Fatalf("expected one chat completion chunk event, got %#v", events)
 	}
 
-	if got := chunks[0].Choices[0].Delta.Content; got != "hello" {
+	if got := events[0].Chunk.Choices[0].Delta.Content; got != "hello" {
 		t.Fatalf("expected stream chunk delta content hello, got %q", got)
 	}
 
-	if got := chunks[0].Choices[0].Delta.Role; got != "assistant" {
+	if got := events[0].Chunk.Choices[0].Delta.Role; got != "assistant" {
 		t.Fatalf("expected stream chunk delta role assistant, got %q", got)
 	}
 }
 
 func TestStreamCompletionStopsOnContextCancellation(t *testing.T) {
 	providerStub := &stubProvider{
-		streamResponse: []provider.ChatCompletionChunk{
+		streamResponse: []provider.ChatCompletionStreamEvent{
 			{
-				ID:      "chatcmpl-mock",
-				Object:  "chat.completion.chunk",
-				Created: 123,
-				Model:   "gpt-4o-mini",
-				Choices: []provider.ChatChoice{
-					{
-						Index: 0,
-						Message: provider.ChatMessage{
-							Role:    "assistant",
-							Content: "hello",
+				Chunk: provider.ChatCompletionChunk{
+					ID:      "chatcmpl-mock",
+					Object:  "chat.completion.chunk",
+					Created: 123,
+					Model:   "gpt-4o-mini",
+					Choices: []provider.ChatChoice{
+						{
+							Index: 0,
+							Message: provider.ChatMessage{
+								Role:    "assistant",
+								Content: "hello",
+							},
 						},
 					},
 				},
@@ -168,8 +172,63 @@ func TestStreamCompletionStopsOnContextCancellation(t *testing.T) {
 		t.Fatalf("stream completion: %v", err)
 	}
 
-	if chunk, ok := <-stream; ok {
-		t.Fatalf("expected cancelled stream to close without chunks, got %#v", chunk)
+	if event, ok := <-stream; ok {
+		t.Fatalf("expected cancelled stream to close without events, got %#v", event)
+	}
+}
+
+func TestStreamCompletionPropagatesTerminalStreamError(t *testing.T) {
+	providerStub := &stubProvider{
+		streamResponse: []provider.ChatCompletionStreamEvent{
+			{
+				Chunk: provider.ChatCompletionChunk{
+					ID:      "chatcmpl-mock",
+					Object:  "chat.completion.chunk",
+					Created: 123,
+					Model:   "gpt-4o-mini",
+					Choices: []provider.ChatChoice{
+						{
+							Index: 0,
+							Message: provider.ChatMessage{
+								Role:    "assistant",
+								Content: "hello",
+							},
+						},
+					},
+				},
+			},
+			{Err: errors.New("stream interrupted")},
+		},
+	}
+	service := NewService("gpt-4o-mini", providerStub)
+
+	stream, err := service.StreamCompletion(context.Background(), CompletionRequest{
+		Stream: true,
+		Messages: []Message{
+			{
+				Role:    "user",
+				Content: "hello",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("stream completion: %v", err)
+	}
+
+	first, ok := <-stream
+	if !ok {
+		t.Fatal("expected first chunk event")
+	}
+	if first.Err != nil || first.Chunk.Choices[0].Delta.Content != "hello" {
+		t.Fatalf("unexpected first event %#v", first)
+	}
+
+	second, ok := <-stream
+	if !ok {
+		t.Fatal("expected terminal error event")
+	}
+	if second.Err == nil || second.Err.Error() != "stream interrupted" {
+		t.Fatalf("expected terminal stream error, got %#v", second)
 	}
 }
 
@@ -178,7 +237,7 @@ type stubProvider struct {
 	streamCalled   bool
 	request        provider.ChatCompletionRequest
 	response       provider.ChatCompletionResponse
-	streamResponse []provider.ChatCompletionChunk
+	streamResponse []provider.ChatCompletionStreamEvent
 	err            error
 }
 
@@ -188,15 +247,15 @@ func (s *stubProvider) CreateChatCompletion(_ context.Context, req provider.Chat
 	return s.response, s.err
 }
 
-func (s *stubProvider) StreamChatCompletion(_ context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionChunk, error) {
+func (s *stubProvider) StreamChatCompletion(_ context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
 	s.streamCalled = true
 	s.request = req
 
-	chunks := make(chan provider.ChatCompletionChunk, len(s.streamResponse))
-	for _, chunk := range s.streamResponse {
-		chunks <- chunk
+	events := make(chan provider.ChatCompletionStreamEvent, len(s.streamResponse))
+	for _, event := range s.streamResponse {
+		events <- event
 	}
-	close(chunks)
+	close(events)
 
-	return chunks, s.err
+	return events, s.err
 }

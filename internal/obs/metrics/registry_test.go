@@ -37,6 +37,12 @@ func TestRegistryServeHTTP(t *testing.T) {
 		Backend:   "mock-secondary",
 		Duration:  2 * time.Millisecond,
 	})
+	registry.OnEvent(router.Event{
+		Type:      "provider_stream_interrupted",
+		Operation: "stream",
+		Backend:   "mock-primary",
+		Duration:  7 * time.Millisecond,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -56,6 +62,9 @@ func TestRegistryServeHTTP(t *testing.T) {
 	}
 	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="create",backend="mock-primary",result="error"} 1`) {
 		t.Fatalf("expected provider duration count, got %s", body)
+	}
+	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="stream",backend="mock-primary",result="error"} 1`) {
+		t.Fatalf("expected interrupted stream duration count, got %s", body)
 	}
 	if !strings.Contains(body, `lag_provider_probe_results_total{backend="mock-secondary",result="success"} 1`) {
 		t.Fatalf("expected provider probe result metric, got %s", body)
