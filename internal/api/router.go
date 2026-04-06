@@ -11,6 +11,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/models"
+	usageservice "github.com/MoChengqian/llm-access-gateway/internal/service/usage"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
@@ -24,7 +25,7 @@ type RequestMetricsRecorder interface {
 	RecordStreamChunk()
 }
 
-func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService models.Service, authenticator auth.Authenticator, governanceService governance.Service, providers handlers.ProviderHealthReader, metricsHandler http.Handler, metricsRecorder RequestMetricsRecorder) http.Handler {
+func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService models.Service, usageService usageservice.Service, authenticator auth.Authenticator, governanceService governance.Service, providers handlers.ProviderHealthReader, metricsHandler http.Handler, metricsRecorder RequestMetricsRecorder) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
@@ -37,6 +38,7 @@ func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService model
 	healthHandler := handlers.NewHealthHandler(providers)
 	chatHandler := handlers.NewChatHandler(chatService, governanceService, metricsRecorder)
 	modelsHandler := handlers.NewModelsHandler(modelsService)
+	usageHandler := handlers.NewUsageHandler(usageService)
 
 	r.Get("/healthz", healthHandler.Healthz)
 	r.Get("/readyz", healthHandler.Readyz)
@@ -47,6 +49,7 @@ func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService model
 		})
 	}
 	r.Get("/v1/models", requireAPIKey(authenticator, modelsHandler.List))
+	r.Get("/v1/usage", requireAPIKey(authenticator, usageHandler.GetUsage))
 	r.Post("/v1/chat/completions", requireAPIKey(authenticator, chatHandler.CreateCompletion))
 
 	return r

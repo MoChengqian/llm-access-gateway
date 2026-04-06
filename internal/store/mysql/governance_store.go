@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
+	usageservice "github.com/MoChengqian/llm-access-gateway/internal/service/usage"
 )
 
 type GovernanceStore struct {
@@ -61,6 +62,58 @@ WHERE tenant_id = ?
 	}
 
 	return total, nil
+}
+
+func (s GovernanceStore) ListRecentUsageRecords(ctx context.Context, tenantID uint64, limit int) ([]usageservice.RecentUsageRecord, error) {
+	const query = `
+SELECT
+    request_id,
+    api_key_id,
+    model,
+    stream,
+    status,
+    prompt_tokens,
+    completion_tokens,
+    total_tokens,
+    created_at,
+    updated_at
+FROM request_usages
+WHERE tenant_id = ?
+ORDER BY created_at DESC, id DESC
+LIMIT ?
+`
+
+	rows, err := s.db.QueryContext(ctx, query, tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]usageservice.RecentUsageRecord, 0, limit)
+	for rows.Next() {
+		var record usageservice.RecentUsageRecord
+		if err := rows.Scan(
+			&record.RequestID,
+			&record.APIKeyID,
+			&record.Model,
+			&record.Stream,
+			&record.Status,
+			&record.PromptTokens,
+			&record.CompletionTokens,
+			&record.TotalTokens,
+			&record.CreatedAt,
+			&record.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return records, nil
 }
 
 func (s GovernanceStore) InsertUsageRecord(ctx context.Context, record governance.UsageRecord) (uint64, error) {

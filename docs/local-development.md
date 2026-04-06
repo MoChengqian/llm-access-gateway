@@ -36,6 +36,7 @@ The expected API results are:
 - budget exceeded -> `403`
 - valid key -> `200`
 - models list -> `200`, and the gateway still returns aggregated models if at least one provider source is healthy
+- usage endpoint -> `200`, and only returns summary plus recent request usage for the authenticated tenant
 - `stream:true` -> `text/event-stream` and final `[DONE]`
 - if an upstream stream is interrupted after output starts, the gateway ends the stream without emitting a false `[DONE]`
 - forced primary provider failure still falls back to `200`
@@ -328,6 +329,31 @@ The key checks for streaming are:
 - response header includes `Content-Type: text/event-stream`
 - response contains multiple `data:` events
 - response ends with `data: [DONE]`
+
+## 9.1 Verify Tenant Usage Summary
+
+Run:
+
+```bash
+curl -i 'http://127.0.0.1:8080/v1/usage?limit=5' \
+  -H 'Authorization: Bearer lag-local-dev-key'
+```
+
+Expected response:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+...
+{"object":"usage","tenant":{"id":...,"name":"local-dev"},"summary":{"requests_last_minute":...,"tokens_last_minute":...,"total_tokens_used":...},"data":[...]}
+```
+
+The key checks are:
+
+- response header includes `Content-Type: application/json`
+- body contains `"object":"usage"`
+- body contains tenant quota fields such as `rpm_limit`, `tpm_limit`, and `token_budget`
+- body contains recent request records in `data`
 
 ## 10. Verify Provider Fallback
 

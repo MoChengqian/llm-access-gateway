@@ -23,6 +23,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	modelsservice "github.com/MoChengqian/llm-access-gateway/internal/service/models"
+	usageservice "github.com/MoChengqian/llm-access-gateway/internal/service/usage"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
 	redisstore "github.com/MoChengqian/llm-access-gateway/internal/store/redis"
 	_ "github.com/go-sql-driver/mysql"
@@ -80,6 +81,7 @@ func main() {
 		}
 	}
 	governanceService := governance.NewService(governanceStore, limiter)
+	usageService := usageservice.NewService(governanceStore)
 	metricsRegistry := metrics.NewRegistry()
 	backends, modelSources, err := buildProviderBackends(cfg)
 	if err != nil {
@@ -106,7 +108,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService, modelsService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry),
+		Handler:           api.NewRouter(logger, chatService, modelsService, usageService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

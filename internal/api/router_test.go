@@ -17,6 +17,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	modelsservice "github.com/MoChengqian/llm-access-gateway/internal/service/models"
+	usageservice "github.com/MoChengqian/llm-access-gateway/internal/service/usage"
 	"go.uber.org/zap"
 )
 
@@ -209,6 +210,95 @@ func TestModelsListRejectsMissingAPIKey(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestUsageReturnsTenantSummaryAndRecentRecords(t *testing.T) {
+	governanceStore := &stubGovernanceStore{
+		insertID:           1,
+		tokensTotal:        140,
+		requestsLastMinute: 2,
+		tokensLastMinute:   42,
+		recentUsageRecords: []usageservice.RecentUsageRecord{
+			{
+				RequestID:        "req-1",
+				APIKeyID:         10,
+				Model:            "gpt-4o-mini",
+				Stream:           true,
+				Status:           "succeeded",
+				PromptTokens:     10,
+				CompletionTokens: 8,
+				TotalTokens:      18,
+			},
+		},
+	}
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme", RPMLimit: 60, TPMLimit: 4000, TokenBudget: 1000},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+			APIKeyID:      10,
+		},
+	}, governanceStore, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/usage?limit=5", nil)
+	req.Header.Set("Authorization", "Bearer live-key")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	bodyText := rec.Body.String()
+	if !strings.Contains(bodyText, `"object":"usage"`) || !strings.Contains(bodyText, `"requests_last_minute":2`) {
+		t.Fatalf("expected usage summary payload, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"remaining_token_budget":860`) || !strings.Contains(bodyText, `"request_id":"req-1"`) {
+		t.Fatalf("expected recent usage payload, got %s", bodyText)
+	}
+	if governanceStore.lastRecentUsageLimit != 5 {
+		t.Fatalf("expected recent usage limit 5, got %d", governanceStore.lastRecentUsageLimit)
+	}
+}
+
+func TestUsageRejectsMissingAPIKey(t *testing.T) {
+	router := newTestRouter(stubAuthStore{}, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/usage", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+	if bodyText := rec.Body.String(); !strings.Contains(bodyText, `"error":"missing api key"`) {
+		t.Fatalf("expected missing api key error, got %s", bodyText)
+	}
+}
+
+func TestUsageRejectsInvalidLimit(t *testing.T) {
+	router := newTestRouter(stubAuthStore{
+		record: auth.APIKeyRecord{
+			Tenant:        auth.Tenant{ID: 1, Name: "acme"},
+			APIKeyEnabled: true,
+			TenantEnabled: true,
+		},
+	}, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/usage?limit=bad", nil)
+	req.Header.Set("Authorization", "Bearer live-key")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+	if bodyText := rec.Body.String(); !strings.Contains(bodyText, `"error":"invalid limit"`) {
+		t.Fatalf("expected invalid limit error, got %s", bodyText)
 	}
 }
 
@@ -579,7 +669,8 @@ func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, li
 	governanceService := governance.NewService(governanceStore, limiter)
 	chatService := chat.NewService("gpt-4o-mini", providermock.New())
 	modelsService := modelsservice.NewService([]modelsservice.Source{providermock.New()})
-	return NewRouter(zap.NewNop(), chatService, modelsService, authService, governanceService, providers, registry, registry)
+	usageService := usageservice.NewService(governanceStore)
+	return NewRouter(zap.NewNop(), chatService, modelsService, usageService, authService, governanceService, providers, registry, registry)
 }
 
 type stubAuthStore struct {
@@ -596,15 +687,32 @@ func (s stubAuthStore) LookupAPIKey(_ context.Context, _ string) (auth.APIKeyRec
 }
 
 type stubGovernanceStore struct {
-	tokensTotal int
-	insertID    uint64
-	inserted    governance.UsageRecord
-	updated     governance.UsageUpdate
-	err         error
+	tokensTotal          int
+	insertID             uint64
+	inserted             governance.UsageRecord
+	updated              governance.UsageUpdate
+	err                  error
+	requestsLastMinute   int
+	tokensLastMinute     int
+	recentUsageRecords   []usageservice.RecentUsageRecord
+	lastRecentUsageLimit int
 }
 
 func (s *stubGovernanceStore) SumTotalTokens(context.Context, uint64) (int, error) {
 	return s.tokensTotal, s.err
+}
+
+func (s *stubGovernanceStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
+	return s.requestsLastMinute, s.err
+}
+
+func (s *stubGovernanceStore) SumTotalTokensSince(context.Context, uint64, time.Time) (int, error) {
+	return s.tokensLastMinute, s.err
+}
+
+func (s *stubGovernanceStore) ListRecentUsageRecords(_ context.Context, _ uint64, limit int) ([]usageservice.RecentUsageRecord, error) {
+	s.lastRecentUsageLimit = limit
+	return s.recentUsageRecords, s.err
 }
 
 func (s *stubGovernanceStore) InsertUsageRecord(_ context.Context, record governance.UsageRecord) (uint64, error) {

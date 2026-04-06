@@ -21,6 +21,7 @@ real provider adapters, richer routing, or production observability.
 
 - `POST /v1/chat/completions`
 - `GET /v1/models`
+- `GET /v1/usage`
 - `Authorization: Bearer <key>` authentication
 - MySQL-backed tenant and API key lookup
 - `stream=false` JSON response
@@ -28,6 +29,7 @@ real provider adapters, richer routing, or production observability.
 - final streaming marker `data: [DONE]`
 - health endpoints: `GET /healthz` and `GET /readyz`
 - provider status endpoint: `GET /debug/providers`
+- tenant usage endpoint: `GET /v1/usage`
 - metrics endpoint: `GET /metrics`
 - tracing header: `X-Trace-Id` on every HTTP response
 - configurable OpenAI-compatible upstream provider adapter
@@ -210,6 +212,10 @@ curl -i http://127.0.0.1:8080/v1/chat/completions \
 curl -i http://127.0.0.1:8080/v1/models \
   -H 'Authorization: Bearer lag-local-dev-key'
 
+# valid key, usage -> 200 JSON summary + recent records
+curl -i 'http://127.0.0.1:8080/v1/usage?limit=5' \
+  -H 'Authorization: Bearer lag-local-dev-key'
+
 # valid key, stream -> text/event-stream + [DONE]
 curl -i -N http://127.0.0.1:8080/v1/chat/completions \
   -H 'Authorization: Bearer lag-local-dev-key' \
@@ -223,6 +229,7 @@ Expected results:
 - invalid key -> `401` and `{"error":"invalid api key"}`
 - valid key -> `200` with `"object":"chat.completion"`
 - models -> `200` with `"object":"list"` and partial aggregation from healthy providers when at least one source succeeds
+- usage -> `200` with `"object":"usage"`, tenant quota summary, and recent usage records for the authenticated tenant only
 - `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
 - if an upstream stream is interrupted after the first chunk, the gateway closes the stream without a false `[DONE]`, and fallback is not attempted after output has started
 - with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
