@@ -14,6 +14,7 @@ import (
 type Registry struct {
 	mu                   sync.Mutex
 	httpRequests         map[string]uint64
+	httpDurations        map[string]durationSample
 	providerEvents       map[string]uint64
 	providerDurations    map[string]durationSample
 	probeResults         map[string]uint64
@@ -33,6 +34,7 @@ type durationSample struct {
 func NewRegistry() *Registry {
 	return &Registry{
 		httpRequests:         make(map[string]uint64),
+		httpDurations:        make(map[string]durationSample),
 		providerEvents:       make(map[string]uint64),
 		providerDurations:    make(map[string]durationSample),
 		probeResults:         make(map[string]uint64),
@@ -40,12 +42,16 @@ func NewRegistry() *Registry {
 	}
 }
 
-func (r *Registry) RecordHTTPRequest(method string, path string, status int) {
+func (r *Registry) RecordHTTPRequest(method string, path string, status int, duration time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	key := fmt.Sprintf(`method="%s",path="%s",status="%d"`, sanitize(method), sanitize(path), status)
 	r.httpRequests[key]++
+	sample := r.httpDurations[key]
+	sample.count++
+	sample.sumMS += uint64(duration.Milliseconds())
+	r.httpDurations[key] = sample
 }
 
 func (r *Registry) RecordReadyzFailure() {
@@ -121,6 +127,24 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 		builder.WriteString(key)
 		builder.WriteString("} ")
 		builder.WriteString(fmt.Sprintf("%d\n", r.httpRequests[key]))
+	}
+
+	builder.WriteString("# HELP lag_http_request_duration_milliseconds_sum Aggregate HTTP request duration in milliseconds.\n")
+	builder.WriteString("# TYPE lag_http_request_duration_milliseconds_sum counter\n")
+	for _, key := range sortedKeys(r.httpDurations) {
+		builder.WriteString("lag_http_request_duration_milliseconds_sum{")
+		builder.WriteString(key)
+		builder.WriteString("} ")
+		builder.WriteString(fmt.Sprintf("%d\n", r.httpDurations[key].sumMS))
+	}
+
+	builder.WriteString("# HELP lag_http_request_duration_milliseconds_count Count of HTTP requests with latency recorded.\n")
+	builder.WriteString("# TYPE lag_http_request_duration_milliseconds_count counter\n")
+	for _, key := range sortedKeys(r.httpDurations) {
+		builder.WriteString("lag_http_request_duration_milliseconds_count{")
+		builder.WriteString(key)
+		builder.WriteString("} ")
+		builder.WriteString(fmt.Sprintf("%d\n", r.httpDurations[key].count))
 	}
 
 	builder.WriteString("# HELP lag_provider_events_total Total provider routing events.\n")

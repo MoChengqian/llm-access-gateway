@@ -12,8 +12,8 @@ import (
 
 func TestRegistryServeHTTP(t *testing.T) {
 	registry := NewRegistry()
-	registry.RecordHTTPRequest(http.MethodGet, "/healthz", http.StatusOK)
-	registry.RecordHTTPRequest(http.MethodPost, "/v1/chat/completions", http.StatusUnauthorized)
+	registry.RecordHTTPRequest(http.MethodGet, "/healthz", http.StatusOK, 12*time.Millisecond)
+	registry.RecordHTTPRequest(http.MethodPost, "/v1/chat/completions", http.StatusUnauthorized, 34*time.Millisecond)
 	registry.RecordReadyzFailure()
 	registry.RecordGovernanceRejection("rate_limit_exceeded")
 	registry.RecordStreamRequest(25 * time.Millisecond)
@@ -59,6 +59,9 @@ func TestRegistryServeHTTP(t *testing.T) {
 	}
 	if !strings.Contains(body, `lag_provider_events_total{type="provider_fallback_succeeded",operation="create",backend="mock-secondary"} 1`) {
 		t.Fatalf("expected fallback metric, got %s", body)
+	}
+	if !strings.Contains(body, `lag_http_request_duration_milliseconds_count{method="GET",path="/healthz",status="200"} 1`) {
+		t.Fatalf("expected http duration count, got %s", body)
 	}
 	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="create",backend="mock-primary",result="error"} 1`) {
 		t.Fatalf("expected provider duration count, got %s", body)

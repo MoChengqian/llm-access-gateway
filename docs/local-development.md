@@ -415,6 +415,7 @@ lag_governance_rejections_total{reason="rate_limit_exceeded"} ...
 lag_stream_requests_total ...
 lag_stream_chunks_total ...
 lag_stream_ttft_milliseconds_count ...
+lag_http_request_duration_milliseconds_count{method="GET",path="/healthz",status="200"} ...
 lag_provider_operation_duration_milliseconds_count{operation="create",backend="primary",result="success"} ...
 lag_provider_probe_results_total{backend="primary",result="success"} ...
 ```
@@ -425,6 +426,16 @@ You can also use the helper script:
 ./scripts/provider-fallback-drill.sh create-fail
 ./scripts/gateway-smoke-check.sh
 ```
+
+The smoke script now covers:
+
+- `/healthz`
+- `/metrics`
+- `/v1/models`
+- `/v1/usage`
+- non-stream chat
+- stream chat
+- built-in load test
 
 To force the primary mock provider to fail before streaming starts:
 

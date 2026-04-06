@@ -26,6 +26,13 @@ call_models() {
   printf '\n'
 }
 
+call_usage() {
+  print_section "GET /v1/usage"
+  curl -i -sS "${BASE_URL}/v1/usage?limit=5" \
+    -H "Authorization: Bearer ${API_KEY}"
+  printf '\n'
+}
+
 call_chat() {
   print_section "POST /v1/chat/completions (non-stream)"
   curl -i -sS "${BASE_URL}/v1/chat/completions" \
@@ -58,6 +65,7 @@ call_stream_loadtest() {
 
 call_health
 call_models
+call_usage
 call_chat
 call_stream
 call_loadtest

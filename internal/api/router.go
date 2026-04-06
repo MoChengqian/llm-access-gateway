@@ -18,7 +18,7 @@ import (
 )
 
 type RequestMetricsRecorder interface {
-	RecordHTTPRequest(method string, path string, status int)
+	RecordHTTPRequest(method string, path string, status int, duration time.Duration)
 	RecordReadyzFailure()
 	RecordGovernanceRejection(reason string)
 	RecordStreamRequest(ttft time.Duration)
@@ -154,6 +154,7 @@ func requestLogger(logger *zap.Logger) func(http.Handler) http.Handler {
 func requestMetrics(recorder RequestMetricsRecorder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			startedAt := time.Now()
 			ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			next.ServeHTTP(ww, r)
 
@@ -161,7 +162,7 @@ func requestMetrics(recorder RequestMetricsRecorder) func(http.Handler) http.Han
 				return
 			}
 
-			recorder.RecordHTTPRequest(r.Method, r.URL.Path, ww.Status())
+			recorder.RecordHTTPRequest(r.Method, r.URL.Path, ww.Status(), time.Since(startedAt))
 			if r.URL.Path == "/readyz" && ww.Status() != http.StatusOK {
 				recorder.RecordReadyzFailure()
 			}

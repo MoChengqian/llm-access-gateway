@@ -236,7 +236,7 @@ Expected results:
 - if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
 - `GET /debug/providers` shows backend health, failure count, and cooldown state
 - `GET /metrics` exposes request count, provider failures, fallback count, and readyz failures
-- `/metrics` also exposes governance rejection counts, stream request/chunk/TTFT counters, provider operation latency, and probe success/failure totals
+- `/metrics` also exposes governance rejection counts, stream request/chunk/TTFT counters, HTTP request latency, provider operation latency, and probe success/failure totals
 - every request returns `X-Trace-Id`, and logs now include `trace_id`, `span_id`, and provider span events for request -> handler -> provider correlation
 
 ## Local Development Entry
@@ -335,6 +335,16 @@ There is also a small drill helper:
 ./scripts/provider-fallback-drill.sh stream-fail
 ./scripts/gateway-smoke-check.sh
 ```
+
+The smoke script now checks:
+
+- `/healthz`
+- `/metrics`
+- `/v1/models`
+- `/v1/usage`
+- non-stream chat
+- stream chat
+- built-in load test for both non-stream and stream
 
 Default config file: [`configs/config.yaml`](configs/config.yaml)
 
