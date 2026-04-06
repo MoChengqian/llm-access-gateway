@@ -85,8 +85,6 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 		createTenantsTableSQL,
 		createAPIKeysTableSQL,
 		createRequestUsagesTableSQL,
-		`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tpm_limit INT NOT NULL DEFAULT 4000 AFTER rpm_limit`,
-		`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS token_budget INT NOT NULL DEFAULT 1000000 AFTER tpm_limit`,
 	}
 
 	for _, statement := range statements {
@@ -95,7 +93,35 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	if err := ensureColumnExists(ctx, db, "tenants", "tpm_limit", `ALTER TABLE tenants ADD COLUMN tpm_limit INT NOT NULL DEFAULT 4000 AFTER rpm_limit`); err != nil {
+		return err
+	}
+	if err := ensureColumnExists(ctx, db, "tenants", "token_budget", `ALTER TABLE tenants ADD COLUMN token_budget INT NOT NULL DEFAULT 1000000 AFTER tpm_limit`); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func ensureColumnExists(ctx context.Context, db *sql.DB, tableName string, columnName string, alterStatement string) error {
+	const query = `
+SELECT COUNT(*)
+FROM information_schema.columns
+WHERE table_schema = DATABASE()
+  AND table_name = ?
+  AND column_name = ?
+`
+
+	var count int
+	if err := db.QueryRowContext(ctx, query, tableName, columnName).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	_, err := db.ExecContext(ctx, alterStatement)
+	return err
 }
 
 func SeedDevelopmentData(ctx context.Context, db *sql.DB) (DevelopmentSeed, error) {
