@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,14 +19,18 @@ import (
 )
 
 type config struct {
-	URL         string
-	APIKey      string
-	Model       string
-	Message     string
-	Requests    int
-	Concurrency int
-	Stream      bool
-	Timeout     time.Duration
+	URL            string
+	APIKey         string
+	Model          string
+	Message        string
+	Requests       int
+	Concurrency    int
+	Stream         bool
+	Timeout        time.Duration
+	JSON           bool
+	MinSuccessRate float64
+	MaxLatencyP95  time.Duration
+	MaxTTFTP95     time.Duration
 }
 
 type result struct {
@@ -42,6 +47,24 @@ type report struct {
 	stream        bool
 	totalDuration time.Duration
 	results       []result
+}
+
+type summary struct {
+	Requests        int         `json:"requests"`
+	Concurrency     int         `json:"concurrency"`
+	Stream          bool        `json:"stream"`
+	TotalDurationMS int64       `json:"total_duration_ms"`
+	Success         int         `json:"success"`
+	Failure         int         `json:"failure"`
+	StatusCounts    map[int]int `json:"status_counts"`
+	LatencyP50MS    int64       `json:"latency_p50_ms"`
+	LatencyP95MS    int64       `json:"latency_p95_ms"`
+	LatencyMaxMS    int64       `json:"latency_max_ms"`
+	TTFTP50MS       int64       `json:"ttft_p50_ms,omitempty"`
+	TTFTP95MS       int64       `json:"ttft_p95_ms,omitempty"`
+	TTFTMaxMS       int64       `json:"ttft_max_ms,omitempty"`
+	StreamChunks    int         `json:"stream_chunks_total,omitempty"`
+	SampleError     string      `json:"sample_error,omitempty"`
 }
 
 func main() {
@@ -62,7 +85,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	printReport(rep)
+	sum := buildSummary(rep)
+	if cfg.JSON {
+		printJSONSummary(sum)
+	} else {
+		printSummary(sum)
+	}
+
+	if err := evaluateThresholds(sum, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "load test thresholds failed: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func parseFlags() config {
@@ -75,6 +108,10 @@ func parseFlags() config {
 	flag.IntVar(&cfg.Concurrency, "concurrency", 4, "parallel workers")
 	flag.BoolVar(&cfg.Stream, "stream", false, "enable streaming requests")
 	flag.DurationVar(&cfg.Timeout, "timeout", 30*time.Second, "per-request timeout")
+	flag.BoolVar(&cfg.JSON, "json", false, "print machine-readable JSON summary")
+	flag.Float64Var(&cfg.MinSuccessRate, "min-success-rate", 0, "minimum success rate from 0.0 to 1.0")
+	flag.DurationVar(&cfg.MaxLatencyP95, "max-latency-p95", 0, "maximum allowed latency p95")
+	flag.DurationVar(&cfg.MaxTTFTP95, "max-ttft-p95", 0, "maximum allowed TTFT p95 for stream mode")
 	flag.Parse()
 	return cfg
 }
@@ -218,12 +255,13 @@ func consumeStream(resp *http.Response, started time.Time) result {
 	return result{status: resp.StatusCode, latency: latency, ttft: ttft, streamChunks: chunkCount}
 }
 
-func printReport(rep report) {
+func buildSummary(rep report) summary {
 	statusCounts := make(map[int]int)
 	latencies := make([]time.Duration, 0, len(rep.results))
 	ttfts := make([]time.Duration, 0, len(rep.results))
 	failures := 0
 	totalChunks := 0
+	sampleError := ""
 
 	for _, item := range rep.results {
 		statusCounts[item.status]++
@@ -236,28 +274,91 @@ func printReport(rep report) {
 		totalChunks += item.streamChunks
 		if item.err != nil {
 			failures++
+			if sampleError == "" {
+				sampleError = item.err.Error()
+			}
 		}
 	}
 
-	fmt.Printf("requests=%d concurrency=%d stream=%t total_duration=%s\n", rep.requests, rep.concurrency, rep.stream, rep.totalDuration)
-	fmt.Printf("success=%d failure=%d\n", rep.requests-failures, failures)
-	fmt.Printf("status_counts=%s\n", formatStatusCounts(statusCounts))
+	sum := summary{
+		Requests:        rep.requests,
+		Concurrency:     rep.concurrency,
+		Stream:          rep.stream,
+		TotalDurationMS: rep.totalDuration.Milliseconds(),
+		Success:         rep.requests - failures,
+		Failure:         failures,
+		StatusCounts:    statusCounts,
+		StreamChunks:    totalChunks,
+		SampleError:     sampleError,
+	}
 	if len(latencies) > 0 {
-		fmt.Printf("latency_p50=%s latency_p95=%s latency_max=%s\n", percentile(latencies, 50), percentile(latencies, 95), percentile(latencies, 100))
+		sum.LatencyP50MS = percentile(latencies, 50).Milliseconds()
+		sum.LatencyP95MS = percentile(latencies, 95).Milliseconds()
+		sum.LatencyMaxMS = percentile(latencies, 100).Milliseconds()
 	}
-	if rep.stream {
-		fmt.Printf("stream_chunks_total=%d\n", totalChunks)
-		if len(ttfts) > 0 {
-			fmt.Printf("ttft_p50=%s ttft_p95=%s ttft_max=%s\n", percentile(ttfts, 50), percentile(ttfts, 95), percentile(ttfts, 100))
+	if rep.stream && len(ttfts) > 0 {
+		sum.TTFTP50MS = percentile(ttfts, 50).Milliseconds()
+		sum.TTFTP95MS = percentile(ttfts, 95).Milliseconds()
+		sum.TTFTMaxMS = percentile(ttfts, 100).Milliseconds()
+	}
+	return sum
+}
+
+func printSummary(sum summary) {
+	fmt.Printf("requests=%d concurrency=%d stream=%t total_duration=%s\n", sum.Requests, sum.Concurrency, sum.Stream, time.Duration(sum.TotalDurationMS)*time.Millisecond)
+	fmt.Printf("success=%d failure=%d\n", sum.Success, sum.Failure)
+	fmt.Printf("status_counts=%s\n", formatStatusCounts(sum.StatusCounts))
+	if sum.LatencyP95MS > 0 || sum.LatencyP50MS > 0 || sum.LatencyMaxMS > 0 {
+		fmt.Printf("latency_p50=%s latency_p95=%s latency_max=%s\n",
+			time.Duration(sum.LatencyP50MS)*time.Millisecond,
+			time.Duration(sum.LatencyP95MS)*time.Millisecond,
+			time.Duration(sum.LatencyMaxMS)*time.Millisecond,
+		)
+	}
+	if sum.Stream {
+		fmt.Printf("stream_chunks_total=%d\n", sum.StreamChunks)
+		if sum.TTFTP95MS > 0 || sum.TTFTP50MS > 0 || sum.TTFTMaxMS > 0 {
+			fmt.Printf("ttft_p50=%s ttft_p95=%s ttft_max=%s\n",
+				time.Duration(sum.TTFTP50MS)*time.Millisecond,
+				time.Duration(sum.TTFTP95MS)*time.Millisecond,
+				time.Duration(sum.TTFTMaxMS)*time.Millisecond,
+			)
 		}
 	}
 
-	for _, item := range rep.results {
-		if item.err != nil {
-			fmt.Printf("sample_error=%v\n", item.err)
-			break
+	if sum.SampleError != "" {
+		fmt.Printf("sample_error=%s\n", sum.SampleError)
+	}
+}
+
+func printJSONSummary(sum summary) {
+	data, err := json.MarshalIndent(sum, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "marshal summary failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(data))
+}
+
+func evaluateThresholds(sum summary, cfg config) error {
+	if cfg.MinSuccessRate > 0 {
+		successRate := float64(sum.Success) / float64(sum.Requests)
+		if successRate < cfg.MinSuccessRate {
+			return fmt.Errorf("success rate %.3f below threshold %.3f", successRate, cfg.MinSuccessRate)
 		}
 	}
+	if cfg.MaxLatencyP95 > 0 && time.Duration(sum.LatencyP95MS)*time.Millisecond > cfg.MaxLatencyP95 {
+		return fmt.Errorf("latency p95 %s exceeds threshold %s", time.Duration(sum.LatencyP95MS)*time.Millisecond, cfg.MaxLatencyP95)
+	}
+	if cfg.MaxTTFTP95 > 0 {
+		if !sum.Stream {
+			return errors.New("max-ttft-p95 requires stream mode")
+		}
+		if time.Duration(sum.TTFTP95MS)*time.Millisecond > cfg.MaxTTFTP95 {
+			return fmt.Errorf("ttft p95 %s exceeds threshold %s", time.Duration(sum.TTFTP95MS)*time.Millisecond, cfg.MaxTTFTP95)
+		}
+	}
+	return nil
 }
 
 func formatStatusCounts(values map[int]int) string {

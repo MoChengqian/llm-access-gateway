@@ -1,4 +1,4 @@
-.PHONY: run test fmt docker-build compose-up compose-down loadtest smoke
+.PHONY: run test fmt docker-build compose-up compose-down loadtest smoke verify
 
 run:
 	go run ./cmd/gateway
@@ -23,3 +23,6 @@ loadtest:
 
 smoke:
 	./scripts/gateway-smoke-check.sh
+
+verify:
+	ASSERT=true ./scripts/gateway-smoke-check.sh

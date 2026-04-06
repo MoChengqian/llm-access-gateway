@@ -249,6 +249,7 @@ go run ./cmd/gateway
 make test
 make fmt
 make loadtest
+make verify
 ```
 
 Environment variables currently used by the code:
@@ -358,6 +359,24 @@ The smoke script now checks:
 - non-stream chat
 - stream chat
 - built-in load test for both non-stream and stream
+
+For machine-verifiable local acceptance instead of visual inspection:
+
+```bash
+make verify
+```
+
+That runs the same smoke flow with assertions enabled and exits non-zero if any
+core contract check fails.
+
+The built-in load test also supports machine-readable and threshold-driven runs:
+
+```bash
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -json
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -min-success-rate 1.0
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -json
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -min-success-rate 1.0 -max-ttft-p95 2s
+```
 
 Default config file: [`configs/config.yaml`](configs/config.yaml)
 

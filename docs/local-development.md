@@ -190,6 +190,8 @@ After the gateway is up and `lag-local-dev-key` is seeded, you can run:
 ```bash
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -json
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -min-success-rate 1.0
 ```
 
 Expected output includes:
@@ -198,6 +200,8 @@ Expected output includes:
 - `status_counts=200=...`
 - `latency_p50=... latency_p95=...`
 - for stream mode: `stream_chunks_total=` and `ttft_p50=...`
+- with `-json`: structured summary output
+- with threshold flags: non-zero exit when the threshold is violated
 
 ## 4. Initialize Local Tenant and API Key
 
@@ -438,6 +442,8 @@ You can also use the helper script:
 ```bash
 ./scripts/provider-fallback-drill.sh create-fail
 ./scripts/gateway-smoke-check.sh
+ASSERT=true ./scripts/gateway-smoke-check.sh
+make verify
 ```
 
 The smoke script now covers:
@@ -449,6 +455,13 @@ The smoke script now covers:
 - non-stream chat
 - stream chat
 - built-in load test
+
+When `ASSERT=true` or `make verify` is used, the smoke flow becomes a real
+acceptance check and exits non-zero on:
+
+- wrong HTTP status
+- missing response markers such as `X-Trace-Id`, `object`, or `[DONE]`
+- failed built-in load test thresholds
 
 To force the primary mock provider to fail before streaming starts:
 
