@@ -224,6 +224,173 @@ Content-Type: application/json
 - [POST /v1/chat/completions](endpoints.md#post-v1chatcompletions) - Create chat completions
 - [Architecture: Provider Adapters](../architecture/provider-adapters.md) - Provider abstraction design
 
+## GET /v1/usage
+
+Returns tenant-level usage and quota information for the authenticated API key.
+
+### Authentication
+
+**Required**: Yes
+
+Include your API key in the Authorization header:
+
+```
+Authorization: Bearer <your-api-key>
+```
+
+### Request
+
+**Method**: `GET`
+
+**Path**: `/v1/usage`
+
+**Headers**:
+- `Authorization: Bearer <api-key>` (required)
+
+**Query Parameters**:
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `limit` | integer | No | Number of recent usage records to return. Defaults to `20` and is capped at `100`. |
+
+### Response
+
+**Status Code**: `200 OK`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Response Body**:
+
+```json
+{
+  "object": "usage",
+  "tenant": {
+    "id": 1,
+    "name": "local-dev"
+  },
+  "summary": {
+    "window_seconds": 60,
+    "requests_last_minute": 0,
+    "tokens_last_minute": 0,
+    "total_tokens_used": 47,
+    "rpm_limit": 60,
+    "tpm_limit": 4000,
+    "token_budget": 1000000,
+    "remaining_token_budget": 999953
+  },
+  "data": [
+    {
+      "request_id": "1775464165887288000-8",
+      "api_key_id": 1,
+      "model": "gpt-4o-mini",
+      "stream": true,
+      "status": "succeeded",
+      "prompt_tokens": 3,
+      "completion_tokens": 9,
+      "total_tokens": 12,
+      "created_at": "2026-04-06T08:29:26Z",
+      "updated_at": "2026-04-06T08:29:25Z"
+    }
+  ]
+}
+```
+
+### Behavior
+
+- **Window Summary**: `summary.requests_last_minute` and `summary.tokens_last_minute` cover the last 60 seconds.
+- **Budget View**: `remaining_token_budget` is derived from the tenant budget minus total recorded usage.
+- **Recent History**: `data` returns recent `request_usages` records for the authenticated tenant only.
+- **Limit Handling**: `limit=0` is treated as the default, negative or non-integer values are rejected, and values above `100` are capped.
+
+### Error Responses
+
+#### Authentication Errors
+
+**Missing API Key**
+
+**Status Code**: `401 Unauthorized`
+
+```json
+{
+  "error": "missing api key"
+}
+```
+
+**Invalid API Key**
+
+**Status Code**: `401 Unauthorized`
+
+```json
+{
+  "error": "invalid api key"
+}
+```
+
+#### Request Errors
+
+**Invalid Limit**
+
+**Status Code**: `400 Bad Request`
+
+```json
+{
+  "error": "invalid limit"
+}
+```
+
+#### Server Errors
+
+**Internal Server Error**
+
+**Status Code**: `500 Internal Server Error`
+
+```json
+{
+  "error": "internal server error"
+}
+```
+
+### Examples
+
+#### Successful Request
+
+```bash
+curl -i http://127.0.0.1:8080/v1/usage?limit=5 \
+  -H 'Authorization: Bearer lag-local-dev-key'
+```
+
+#### Error Example: Invalid Limit
+
+```bash
+curl -i http://127.0.0.1:8080/v1/usage?limit=bad \
+  -H 'Authorization: Bearer lag-local-dev-key'
+```
+
+**Response**:
+
+```
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "error": "invalid limit"
+}
+```
+
+### Notes
+
+- **Tenant Scope**: The endpoint always returns data for the authenticated tenant; there is no cross-tenant access path.
+- **Quota Insight**: This is the easiest endpoint to check when debugging RPM, TPM, and budget enforcement.
+- **Non-Mutating**: The endpoint does not consume quota by itself.
+- **Request ID**: The response carries `X-Request-Id` and `X-Trace-Id` like the other API endpoints.
+
+### Related Documentation
+
+- [Authentication](authentication.md) - API key requirements and tenant lookup
+- [Architecture: Governance](../architecture/governance.md) - RPM, TPM, and budget model
+- [Quota Enforcement Drill](../verification/failure-drills/quota-enforcement.md) - Observed rejection behavior
+
 ## POST /v1/chat/completions
 
 Creates a chat completion for the provided messages. Supports both non-streaming and streaming responses.

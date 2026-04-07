@@ -1,0 +1,218 @@
+# Configuration Reference
+
+## Overview
+
+The gateway loads configuration from two sources:
+
+1. [`configs/config.yaml`](../../configs/config.yaml)
+2. `APP_*` environment variables loaded by Viper in [`internal/config/config.go`](../../internal/config/config.go)
+
+Environment variables override values from `config.yaml`. The loader uses:
+
+- env prefix: `APP`
+- key replacer: `.` -> `_`
+
+So `server.address` becomes `APP_SERVER_ADDRESS`, and `provider.primary.max_retries` becomes `APP_PROVIDER_PRIMARY_MAX_RETRIES`.
+
+## Configuration Sources
+
+### YAML file
+
+`configs/config.yaml` contains the baseline development defaults for:
+
+- server timeouts and request body size
+- log level
+- MySQL and Redis connection settings
+- gateway routing/health defaults
+- provider definitions for `primary` and `secondary`
+
+### Environment variables
+
+`Load()` calls `v.AutomaticEnv()`, so any supported field can be overridden by environment variables. This is how the Docker Compose and Kubernetes deployments inject environment-specific settings without editing the YAML file.
+
+## Server Configuration
+
+### YAML keys
+
+```yaml
+server:
+  address: ":8080"
+  read_header_timeout_seconds: 5
+  read_timeout_seconds: 15
+  write_timeout_seconds: 60
+  idle_timeout_seconds: 60
+  max_request_body_bytes: 1048576
+```
+
+### Environment variables
+
+- `APP_SERVER_ADDRESS`
+- `APP_SERVER_READ_HEADER_TIMEOUT_SECONDS`
+- `APP_SERVER_READ_TIMEOUT_SECONDS`
+- `APP_SERVER_WRITE_TIMEOUT_SECONDS`
+- `APP_SERVER_IDLE_TIMEOUT_SECONDS`
+- `APP_SERVER_MAX_REQUEST_BODY_BYTES`
+
+These values map directly to the `http.Server` created in [`cmd/gateway/main.go`](../../cmd/gateway/main.go).
+
+## Log Configuration
+
+### YAML
+
+```yaml
+log:
+  level: info
+```
+
+### Environment variable
+
+- `APP_LOG_LEVEL`
+
+The level is applied to the zap production logger at startup.
+
+## MySQL and Redis
+
+### YAML
+
+```yaml
+mysql:
+  dsn: ""
+
+redis:
+  address: ""
+  password: ""
+  db: 0
+```
+
+### Environment variables
+
+- `APP_MYSQL_DSN`
+- `APP_REDIS_ADDRESS`
+- `APP_REDIS_PASSWORD`
+- `APP_REDIS_DB`
+
+Operational notes:
+
+- `APP_MYSQL_DSN` is required for `cmd/gateway`
+- if Redis is configured but unavailable, the gateway logs the ping failure and falls back to the MySQL limiter
+- if Redis is omitted entirely, MySQL remains the limiter backend
+
+## Gateway Behavior Controls
+
+### YAML
+
+```yaml
+gateway:
+  default_model: gpt-4o-mini
+  provider_failure_threshold: 1
+  provider_cooldown_seconds: 30
+  provider_probe_interval_seconds: 30
+  primary_mock_fail_create: false
+  primary_mock_fail_stream: false
+```
+
+### Environment variables
+
+- `APP_GATEWAY_DEFAULT_MODEL`
+- `APP_GATEWAY_PROVIDER_FAILURE_THRESHOLD`
+- `APP_GATEWAY_PROVIDER_COOLDOWN_SECONDS`
+- `APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS`
+- `APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE`
+- `APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM`
+
+These settings control:
+
+- the fallback model when no model is specified by the request
+- how many consecutive failures trigger cooldown
+- how long cooldown lasts
+- how often the background provider probe loop runs
+- whether the primary mock backend fails for create or stream paths
+
+## Provider Configuration
+
+The gateway currently supports two named providers:
+
+- `provider.primary`
+- `provider.secondary`
+
+Each provider block has the same fields:
+
+```yaml
+provider:
+  primary:
+    type: mock
+    name: primary
+    base_url: ""
+    api_key: ""
+    model: ""
+    timeout_seconds: 15
+    max_retries: 1
+    retry_backoff_milliseconds: 200
+```
+
+Environment variable pattern:
+
+- `APP_PROVIDER_PRIMARY_TYPE`
+- `APP_PROVIDER_PRIMARY_NAME`
+- `APP_PROVIDER_PRIMARY_BASE_URL`
+- `APP_PROVIDER_PRIMARY_API_KEY`
+- `APP_PROVIDER_PRIMARY_MODEL`
+- `APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS`
+- `APP_PROVIDER_PRIMARY_MAX_RETRIES`
+- `APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS`
+
+Equivalent `SECONDARY` variables exist for the secondary backend.
+
+### Supported types
+
+- `mock`
+- `openai`
+
+`buildProviderBackend()` defaults empty provider types to `mock`. For `openai`, `base_url` is required and should already include the upstream `/v1` base path.
+
+## Example Configurations
+
+### Local default path
+
+```bash
+export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
+go run ./cmd/devinit
+go run ./cmd/gateway
+```
+
+### Real OpenAI-compatible primary with mock secondary
+
+```bash
+export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
+export APP_PROVIDER_PRIMARY_TYPE='openai'
+export APP_PROVIDER_PRIMARY_BASE_URL='https://api.openai.com/v1'
+export APP_PROVIDER_PRIMARY_API_KEY='sk-...'
+export APP_PROVIDER_PRIMARY_MODEL='gpt-4.1-mini'
+export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
+export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
+go run ./cmd/gateway
+```
+
+## Configuration Caveats
+
+- Secrets such as upstream API keys and MySQL DSNs should come from environment variables or Kubernetes Secrets, not committed YAML.
+- The provider router is ordered primary/secondary failover; there is no weighted routing field to configure today.
+- Mock failure toggles are useful for drills and local verification but should not be enabled in normal production environments.
+
+## Related Documentation
+
+- [Docker Compose Deployment](docker-compose.md)
+- [Kubernetes Deployment](kubernetes.md)
+- [Production Considerations](production-considerations.md)
+- [Routing and Resilience](../architecture/routing-resilience.md)
+
+## Code References
+
+- [`configs/config.yaml`](../../configs/config.yaml)
+- [`internal/config/config.go`](../../internal/config/config.go)
+- [`cmd/gateway/main.go`](../../cmd/gateway/main.go)
+- [`internal/provider/openai/chat.go`](../../internal/provider/openai/chat.go)
+- [`internal/provider/router/chat.go`](../../internal/provider/router/chat.go)

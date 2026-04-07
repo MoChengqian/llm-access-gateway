@@ -12,10 +12,10 @@ LLM Access Gateway is a **multi-tenant model access and governance gateway** wri
 - **Multi-tenant governance**: API key authentication, per-tenant RPM/TPM rate limiting, and token budget enforcement
 - **SSE streaming proxy**: Real-time streaming with Time-to-First-Token (TTFT) measurement
 - **Resilience**: Provider routing, health tracking, automatic fallback, and retry logic
-- **Observability**: Prometheus metrics, distributed tracing, structured logging
+- **Observability**: Prometheus metrics, request/trace correlation, structured logging
 - **Production-ready deployment**: Docker Compose and Kubernetes manifests with health checks
 
-**Repository**: [github.com/your-org/llm-access-gateway](.) (adjust link as needed)
+**Repository**: [Main README](../README.md)
 
 ## What This Project Is NOT
 
@@ -42,12 +42,12 @@ This is a **focused infrastructure component** that solves the multi-tenant acce
 
 **Evidence**: 
 - Implementation: [`internal/provider/router/chat.go`](../internal/provider/router/chat.go)
-- Failure drill: [Streaming Failures Report](verification/failure-drills/streaming-failures.md) (planned)
-- Code shows explicit checks for `firstChunkSent` flag before attempting fallback
+- Design deep-dive: [Streaming Proxy Architecture](architecture/streaming-proxy.md)
+- Router waits for the first upstream event before returning the stream to the handler
 
 ### 2. Passive Health Tracking with Cooldown
 
-**Decision**: Track provider health passively through request failures rather than active health checks, with exponential cooldown periods.
+**Decision**: Track provider health passively through request failures, apply a fixed cooldown window, and refresh readiness with background probes.
 
 **Rationale**:
 - Active health checks add overhead and don't reflect real request behavior
@@ -59,6 +59,7 @@ This is a **focused infrastructure component** that solves the multi-tenant acce
 - Implementation: [`internal/provider/router/chat.go`](../internal/provider/router/chat.go)
 - Debug endpoint: `GET /debug/providers` shows health state in real-time
 - Metrics: `lag_provider_events_total` tracks failures and recoveries
+- Current defaults: threshold `1`, cooldown `30s`, probe interval `30s`
 
 ### 3. Multi-Layer Rate Limiting with Fallback
 
@@ -110,7 +111,7 @@ This is a **focused infrastructure component** that solves the multi-tenant acce
 
 The project includes a built-in load testing tool that measures:
 - Requests per second (QPS)
-- Latency percentiles (P50, P95, P99)
+- Latency percentiles (P50, P95, and max)
 - Time-to-First-Token (TTFT) for streaming requests
 - Success rates and error distribution
 
@@ -120,10 +121,10 @@ go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 100 -concurrency 10
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 50 -concurrency 5 -stream
 ```
 
-**Benchmark reports**: 
-- [Non-streaming Performance](verification/benchmarks/non-streaming.md) (planned)
-- [Streaming Performance](verification/benchmarks/streaming.md) (planned)
-- [Methodology](verification/benchmarks/methodology.md) (planned)
+**Benchmark reports**:
+- [Non-Streaming Benchmarks](verification/benchmarks/non-streaming.md)
+- [Streaming Benchmarks](verification/benchmarks/streaming.md)
+- [Benchmark Methodology](verification/benchmarks/methodology.md)
 
 ### Failure Drills
 
@@ -142,10 +143,10 @@ make verify                        # Machine-verifiable acceptance tests
 ```
 
 **Failure drill reports**:
-- [Provider Timeout Behavior](verification/failure-drills/provider-timeout.md) (planned)
-- [Provider Error Handling](verification/failure-drills/provider-errors.md) (planned)
-- [Quota Enforcement](verification/failure-drills/quota-enforcement.md) (planned)
-- [Streaming Failures](verification/failure-drills/streaming-failures.md) (planned)
+- [Provider Timeout Drill](verification/failure-drills/provider-timeout.md)
+- [Provider Error Drill](verification/failure-drills/provider-errors.md)
+- [Quota Enforcement Drill](verification/failure-drills/quota-enforcement.md)
+- [Streaming Failure Drill](verification/failure-drills/streaming-failures.md)
 
 ### Test Coverage
 
@@ -228,7 +229,7 @@ kubectl apply -f deployments/k8s/service.yaml
 
 Includes: Namespace, ConfigMap, Secret, init Job, Deployment with health checks, and Service.
 
-**Guide**: [Kubernetes Deployment](deployment/kubernetes.md) (planned)
+**Guide**: [Kubernetes Deployment](deployment/kubernetes.md)
 
 ## Suggested Reading Path
 
@@ -239,16 +240,16 @@ Includes: Namespace, ConfigMap, Secret, init Job, Deployment with health checks,
 
 ### For Technical Deep-Dive (1-2 hours)
 1. [API Reference](api.md) - Complete endpoint documentation
-2. [Architecture Deep-Dive](architecture/) - Component design decisions (planned)
-3. [Benchmark Reports](verification/benchmarks/) - Performance evidence (planned)
-4. [Failure Drills](verification/failure-drills/) - Resilience evidence (planned)
+2. [Architecture Deep-Dive](architecture/) - Component design decisions
+3. [Benchmark Reports](verification/benchmarks/) - Performance evidence
+4. [Failure Drills](verification/failure-drills/) - Resilience evidence
 
 ### For Learning and Blog Content (2-3 hours)
-1. [Blog: Project Overview](blog/001-project-overview.md) (planned)
-2. [Blog: SSE Streaming Implementation](blog/002-sse-streaming.md) (planned)
-3. [Blog: Resilience and Failure Handling](blog/003-resilience.md) (planned)
-4. [Blog: Observability](blog/004-observability.md) (planned)
-5. [Blog: Multi-Tenant Governance](blog/006-multi-tenant-governance.md) (planned)
+1. [Blog: Project Overview](blog/001-project-overview.md)
+2. [Blog: SSE Streaming Implementation](blog/002-sse-streaming.md)
+3. [Blog: Resilience and Failure Handling](blog/003-resilience.md)
+4. [Blog: Observability](blog/004-observability.md)
+5. [Blog: Multi-Tenant Governance](blog/006-multi-tenant-governance.md)
 
 ## Quick Verification
 
@@ -283,7 +284,7 @@ curl http://127.0.0.1:8080/metrics
 - **Database**: MySQL 8.0+ (auth, usage tracking)
 - **Cache**: Redis 7.0+ (rate limiting)
 - **HTTP Router**: chi (lightweight, composable)
-- **Observability**: Prometheus metrics, structured logging (zap)
+- **Observability**: Prometheus metrics, structured logging (zap), request/trace correlation
 - **Deployment**: Docker, Kubernetes
 
 ## Project Maturity
@@ -321,13 +322,12 @@ If you're evaluating this project, consider exploring:
 
 ## Contact and Contribution
 
-- **Repository**: [Link to repo]
-- **Documentation**: [`docs/`](.)
-- **Issues**: [Link to issues]
-- **Maintainer**: [Your name/contact]
+- **Main README**: [../README.md](../README.md)
+- **Documentation Index**: [README.md](README.md)
+- **Local Development Guide**: [local-development.md](local-development.md)
 
 ---
 
-**Last Updated**: 2024-01-XX  
+**Last Updated**: 2026-04-07
 **Status**: Complete  
 **Audience**: Interviewers, Recruiters, Technical Evaluators

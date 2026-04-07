@@ -68,7 +68,7 @@ The gateway is responsible for:
 - **SSE Streaming Proxy**: Proxying Server-Sent Events streams from providers to clients
 - **Provider Routing**: Selecting between multiple provider backends with health tracking
 - **Resilience**: Retry logic and fallback to secondary providers (before first chunk only for streams)
-- **Observability**: Request/trace ID propagation, structured logging, Prometheus metrics, and distributed tracing
+- **Observability**: Request/trace ID propagation, structured logging, Prometheus metrics, and log-based trace correlation
 - **Deployment Support**: Docker Compose and Kubernetes deployment configurations
 
 ## What the Gateway Does Not Do
@@ -194,7 +194,7 @@ The observability layer provides visibility into system behavior:
 
 **Key Observability Features**:
 - Every request gets a unique `X-Request-Id`
-- Every request gets a unique `X-Trace-Id` for distributed tracing
+- Every request gets a unique `X-Trace-Id` for request/trace correlation
 - Logs include `request_id`, `trace_id`, `span_id`, and tenant context
 - Metrics track request counts, latencies, provider failures, and governance rejections
 - Traces correlate request → handler → provider spans
@@ -364,7 +364,7 @@ For performance benchmarks, see [../verification/benchmarks/](../verification/be
 The gateway provides comprehensive observability:
 
 - **Metrics**: Prometheus-style metrics on `/metrics` (request counts, latencies, failures)
-- **Tracing**: Request and trace ID propagation for distributed tracing
+- **Tracing**: Request and trace ID propagation with log-based spans
 - **Logging**: Structured JSON logs with request/trace/tenant context
 
 For observability details, see [observability.md](observability.md).

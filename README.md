@@ -108,6 +108,15 @@ INFO gateway starting address=:8080
 
 For a full walkthrough, see [docs/local-development.md](docs/local-development.md).
 
+## Documentation
+
+The repository now includes a structured documentation index under [docs/README.md](docs/README.md). Good entry points are:
+
+- [docs/quick-start-guide.md](docs/quick-start-guide.md) for a 10-minute project overview
+- [docs/architecture/overview.md](docs/architecture/overview.md) for the system layers and boundaries
+- [docs/local-development.md](docs/local-development.md) for the runnable local path
+- [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md) and [docs/deployment/kubernetes.md](docs/deployment/kubernetes.md) for deployment guidance
+
 ## Container Quick Start
 
 To start the full local stack in containers:
