@@ -418,7 +418,6 @@ The repository already has valuable documentation that should be reorganized and
 - `docs/architecture.md`: Foundation for architecture documentation
 - `docs/api.md`: Foundation for API documentation
 - `docs/local-development.md`: Foundation for deployment documentation
-- `docs/execution-plan.md`: Context for project overview blog article
 
 ### Evidence Collection
 

@@ -129,7 +129,6 @@ Templates and guidelines for creating consistent documentation.
 ### Repository Links
 - [Main README](../README.md) - Project overview and quick start
 - [PRD v1](prd-v1.md) - Original product requirements
-- [Execution Plan](execution-plan.md) - Implementation roadmap
 
 ### Quick Reference
 - **Local Dev Key:** `lag-local-dev-key` (after running `go run ./cmd/devinit`)
