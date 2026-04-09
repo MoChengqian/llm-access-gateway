@@ -1,0 +1,371 @@
+name: nightly-verification
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests
+        run: go test ./...
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: llm_access_gateway
+          MYSQL_USER: user
+          MYSQL_PASSWORD: pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uuser -ppass --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      APP_MYSQL_DSN: user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true
+      APP_REDIS_ADDRESS: 127.0.0.1:6379
+      APP_SERVER_ADDRESS: 127.0.0.1:18080
+      BASE_URL: http://127.0.0.1:18080
+      API_KEY: lag-local-dev-key
+      GOCACHE: /tmp/go-build
+      GOMODCACHE: /tmp/go-mod
+      ARTIFACT_DIR: /tmp/nightly-artifacts/benchmarks
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Prepare artifact directory
+        run: mkdir -p "${ARTIFACT_DIR}"
+
+      - name: Seed benchmark tenant limits
+        run: |
+          go run ./cmd/devinit -rpm-limit 1000 -tpm-limit 100000 -token-budget 1000000 | tee "${ARTIFACT_DIR}/seed-benchmark.txt"
+
+      - name: Start gateway for mock provider benchmarks
+        run: |
+          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-mock.log" 2>&1 &
+          echo $! >/tmp/gateway.pid
+
+          for i in $(seq 1 60); do
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "${ARTIFACT_DIR}/gateway-mock.log"
+          exit 1
+
+      - name: Run mock provider benchmarks
+        run: |
+          go run ./cmd/loadtest -url "${BASE_URL}/v1/chat/completions" -auth-key "${API_KEY}" -requests 100 -concurrency 10 -json -min-success-rate 1.0 | tee "${ARTIFACT_DIR}/mock-non-stream.json"
+          go run ./cmd/loadtest -url "${BASE_URL}/v1/chat/completions" -auth-key "${API_KEY}" -requests 50 -concurrency 5 -stream -json -min-success-rate 1.0 | tee "${ARTIFACT_DIR}/mock-stream.json"
+          curl -fsS "${BASE_URL}/metrics" >"${ARTIFACT_DIR}/mock-metrics.prom"
+          curl -fsS "${BASE_URL}/debug/providers" >"${ARTIFACT_DIR}/mock-providers.json"
+
+      - name: Stop mock benchmark gateway
+        if: always()
+        run: |
+          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
+          rm -f /tmp/gateway.pid
+
+      - name: Start synthetic upstream for adapter benchmarks
+        run: |
+          nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode ok >"${ARTIFACT_DIR}/upstream-ok.log" 2>&1 &
+          echo $! >/tmp/upstream.pid
+
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "${ARTIFACT_DIR}/upstream-ok.log"
+          exit 1
+
+      - name: Start gateway for adapter benchmarks
+        env:
+          APP_PROVIDER_PRIMARY_TYPE: openai
+          APP_PROVIDER_PRIMARY_NAME: openai-primary
+          APP_PROVIDER_PRIMARY_BASE_URL: http://127.0.0.1:18081/v1
+          APP_PROVIDER_PRIMARY_MODEL: gpt-4o-mini
+          APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS: "1"
+          APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
+          APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
+        run: |
+          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-adapter.log" 2>&1 &
+          echo $! >/tmp/gateway.pid
+
+          for i in $(seq 1 60); do
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "${ARTIFACT_DIR}/gateway-adapter.log"
+          exit 1
+
+      - name: Run adapter benchmarks
+        run: |
+          go run ./cmd/loadtest -url "${BASE_URL}/v1/chat/completions" -auth-key "${API_KEY}" -model gpt-4o-mini -requests 100 -concurrency 10 -json -min-success-rate 1.0 | tee "${ARTIFACT_DIR}/adapter-non-stream.json"
+          go run ./cmd/loadtest -url "${BASE_URL}/v1/chat/completions" -auth-key "${API_KEY}" -model gpt-4o-mini -requests 50 -concurrency 5 -stream -json -min-success-rate 1.0 | tee "${ARTIFACT_DIR}/adapter-stream.json"
+          curl -fsS "${BASE_URL}/metrics" >"${ARTIFACT_DIR}/adapter-metrics.prom"
+          curl -fsS "${BASE_URL}/debug/providers" >"${ARTIFACT_DIR}/adapter-providers.json"
+
+      - name: Restore default development tenant limits
+        if: always()
+        run: |
+          go run ./cmd/devinit | tee "${ARTIFACT_DIR}/seed-default.txt"
+
+      - name: Dump benchmark logs on failure
+        if: failure()
+        run: |
+          test -f "${ARTIFACT_DIR}/gateway-mock.log" && cat "${ARTIFACT_DIR}/gateway-mock.log" || true
+          test -f "${ARTIFACT_DIR}/gateway-adapter.log" && cat "${ARTIFACT_DIR}/gateway-adapter.log" || true
+          test -f "${ARTIFACT_DIR}/upstream-ok.log" && cat "${ARTIFACT_DIR}/upstream-ok.log" || true
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-benchmarks
+          path: /tmp/nightly-artifacts/benchmarks
+          if-no-files-found: error
+
+      - name: Stop background processes
+        if: always()
+        run: |
+          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
+          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+
+  stream-failure-drills:
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: llm_access_gateway
+          MYSQL_USER: user
+          MYSQL_PASSWORD: pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uuser -ppass --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      APP_MYSQL_DSN: user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true
+      APP_REDIS_ADDRESS: 127.0.0.1:6379
+      APP_SERVER_ADDRESS: 127.0.0.1:18080
+      BASE_URL: http://127.0.0.1:18080
+      API_KEY: lag-local-dev-key
+      GOCACHE: /tmp/go-build
+      GOMODCACHE: /tmp/go-mod
+      ARTIFACT_DIR: /tmp/nightly-artifacts/streaming-failures
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Prepare artifact directory
+        run: mkdir -p "${ARTIFACT_DIR}"
+
+      - name: Seed default development tenant
+        run: go run ./cmd/devinit | tee "${ARTIFACT_DIR}/seed-default.txt"
+
+      - name: Start synthetic upstream for pre-chunk failure scenario
+        run: |
+          nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_prechunk_fail >"${ARTIFACT_DIR}/upstream-prechunk.log" 2>&1 &
+          echo $! >/tmp/upstream.pid
+
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "${ARTIFACT_DIR}/upstream-prechunk.log"
+          exit 1
+
+      - name: Start gateway for pre-chunk failure scenario
+        env:
+          APP_PROVIDER_PRIMARY_TYPE: openai
+          APP_PROVIDER_PRIMARY_NAME: openai-primary
+          APP_PROVIDER_PRIMARY_BASE_URL: http://127.0.0.1:18081/v1
+          APP_PROVIDER_PRIMARY_MODEL: gpt-4o-mini
+          APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS: "1"
+          APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
+          APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
+        run: |
+          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
+          echo $! >/tmp/gateway.pid
+
+          for i in $(seq 1 60); do
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "${ARTIFACT_DIR}/gateway-prechunk.log"
+          exit 1
+
+      - name: Run and assert pre-chunk failure drill
+        run: |
+          ./scripts/provider-fallback-drill.sh stream-fail | tee "${ARTIFACT_DIR}/prechunk.out"
+          grep -Fq 'HTTP/1.1 200 OK' "${ARTIFACT_DIR}/prechunk.out"
+          grep -Fq 'data: [DONE]' "${ARTIFACT_DIR}/prechunk.out"
+          grep -Fq 'chatcmpl-mock' "${ARTIFACT_DIR}/prechunk.out"
+          curl -fsS "${BASE_URL}/metrics" >"${ARTIFACT_DIR}/prechunk-metrics.prom"
+          grep -Fq 'lag_provider_events_total{type="provider_request_failed",operation="stream",backend="openai-primary"} 1' "${ARTIFACT_DIR}/prechunk-metrics.prom"
+          grep -Fq 'lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1' "${ARTIFACT_DIR}/prechunk-metrics.prom"
+          curl -fsS "${BASE_URL}/debug/providers" >"${ARTIFACT_DIR}/prechunk-providers.json"
+
+      - name: Stop pre-chunk processes
+        if: always()
+        run: |
+          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
+          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          rm -f /tmp/gateway.pid /tmp/upstream.pid
+
+      - name: Start synthetic upstream for partial stream scenario
+        run: |
+          nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_partial >"${ARTIFACT_DIR}/upstream-partial.log" 2>&1 &
+          echo $! >/tmp/upstream.pid
+
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "${ARTIFACT_DIR}/upstream-partial.log"
+          exit 1
+
+      - name: Start gateway for partial stream scenario
+        env:
+          APP_PROVIDER_PRIMARY_TYPE: openai
+          APP_PROVIDER_PRIMARY_NAME: openai-primary
+          APP_PROVIDER_PRIMARY_BASE_URL: http://127.0.0.1:18081/v1
+          APP_PROVIDER_PRIMARY_MODEL: gpt-4o-mini
+          APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS: "1"
+          APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
+          APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
+        run: |
+          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
+          echo $! >/tmp/gateway.pid
+
+          for i in $(seq 1 60); do
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "${ARTIFACT_DIR}/gateway-partial.log"
+          exit 1
+
+      - name: Run and assert partial stream scenario
+        run: |
+          curl -i -sS -N "${BASE_URL}/v1/chat/completions" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}],"stream":true}' | tee "${ARTIFACT_DIR}/partial.out"
+          grep -Fq 'HTTP/1.1 200 OK' "${ARTIFACT_DIR}/partial.out"
+          grep -Fq 'partial ' "${ARTIFACT_DIR}/partial.out"
+          if grep -Fq 'data: [DONE]' "${ARTIFACT_DIR}/partial.out"; then
+            echo "unexpected [DONE] marker after partial stream failure" >&2
+            exit 1
+          fi
+          curl -fsS "${BASE_URL}/metrics" >"${ARTIFACT_DIR}/partial-metrics.prom"
+          grep -Fq 'lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="openai-primary"} 1' "${ARTIFACT_DIR}/partial-metrics.prom"
+          if grep -Fq 'lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}' "${ARTIFACT_DIR}/partial-metrics.prom"; then
+            echo "unexpected stream fallback after first chunk" >&2
+            exit 1
+          fi
+          curl -fsS "${BASE_URL}/debug/providers" >"${ARTIFACT_DIR}/partial-providers.json"
+
+      - name: Dump stream drill logs on failure
+        if: failure()
+        run: |
+          test -f "${ARTIFACT_DIR}/gateway-prechunk.log" && cat "${ARTIFACT_DIR}/gateway-prechunk.log" || true
+          test -f "${ARTIFACT_DIR}/gateway-partial.log" && cat "${ARTIFACT_DIR}/gateway-partial.log" || true
+          test -f "${ARTIFACT_DIR}/upstream-prechunk.log" && cat "${ARTIFACT_DIR}/upstream-prechunk.log" || true
+          test -f "${ARTIFACT_DIR}/upstream-partial.log" && cat "${ARTIFACT_DIR}/upstream-partial.log" || true
+
+      - name: Upload streaming drill artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-stream-failure-drills
+          path: /tmp/nightly-artifacts/streaming-failures
+          if-no-files-found: error
+
+      - name: Stop background processes
+        if: always()
+        run: |
+          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
+          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true

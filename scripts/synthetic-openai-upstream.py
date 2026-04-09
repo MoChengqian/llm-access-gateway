@@ -171,7 +171,13 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_GET(self) -> None:
-        if urlparse(self.path).path == "/v1/models":
+        path = urlparse(self.path).path
+
+        if path == "/healthz":
+            self._write_json(200, {"status": "ok", "mode": self.server.mode})
+            return
+
+        if path == "/v1/models":
             self.log_message("models mode=%s", self.server.mode)
             self._write_models()
             return
