@@ -151,6 +151,7 @@ provider:
     api_key: ""
     model: ""
     models: []
+    max_tokens: 1024
     timeout_seconds: 15
     max_retries: 1
     retry_backoff_milliseconds: 200
@@ -164,6 +165,7 @@ Environment variable pattern:
 - `APP_PROVIDER_PRIMARY_BASE_URL`
 - `APP_PROVIDER_PRIMARY_API_KEY`
 - `APP_PROVIDER_PRIMARY_MODEL`
+- `APP_PROVIDER_PRIMARY_MAX_TOKENS`
 - `APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS`
 - `APP_PROVIDER_PRIMARY_MAX_RETRIES`
 - `APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS`
@@ -185,6 +187,17 @@ provider:
       timeout_seconds: 15
       max_retries: 1
       retry_backoff_milliseconds: 200
+    - name: anthropic-sonnet
+      type: anthropic
+      priority: 20
+      models: ["claude-3-5-sonnet-latest"]
+      base_url: "https://api.anthropic.com/v1"
+      api_key: "${ANTHROPIC_API_KEY}"
+      model: "claude-3-5-sonnet-latest"
+      max_tokens: 1024
+      timeout_seconds: 15
+      max_retries: 1
+      retry_backoff_milliseconds: 200
     - name: generic-fallback
       type: mock
       priority: 100
@@ -202,9 +215,10 @@ Routing semantics:
 
 - `mock`
 - `openai`
+- `anthropic`
 - `ollama`
 
-`buildProviderBackend()` defaults empty provider types to `mock`. For `openai`, `base_url` is required and should already include the upstream `/v1` base path. For `ollama`, `base_url` should point at the Ollama server root such as `http://127.0.0.1:11434`.
+`buildProviderBackend()` defaults empty provider types to `mock`. For `openai`, `base_url` is required and should already include the upstream `/v1` base path. For `anthropic`, `base_url` should point at the Anthropic API root such as `https://api.anthropic.com/v1`; the adapter automatically sends `x-api-key` and `anthropic-version` headers, translates OpenAI-style `system` messages into Anthropic's top-level `system` field, and requires `max_tokens` (default `1024`). For `ollama`, `base_url` should point at the Ollama server root such as `http://127.0.0.1:11434`.
 
 ## Example Configurations
 
@@ -232,12 +246,29 @@ export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
 go run ./cmd/gateway
 ```
 
+### Real Anthropic primary with mock secondary
+
+```bash
+export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
+export APP_REDIS_ADDRESS='127.0.0.1:6379'
+export APP_PROVIDER_PRIMARY_TYPE='anthropic'
+export APP_PROVIDER_PRIMARY_BASE_URL='https://api.anthropic.com/v1'
+export APP_PROVIDER_PRIMARY_API_KEY='sk-ant-...'
+export APP_PROVIDER_PRIMARY_MODEL='claude-3-5-sonnet-latest'
+export APP_PROVIDER_PRIMARY_MAX_TOKENS='1024'
+export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
+export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
+go run ./cmd/gateway
+```
+
 ## Configuration Caveats
 
 - Secrets such as upstream API keys and MySQL DSNs should come from environment variables or Kubernetes Secrets, not committed YAML.
 - The provider router is deterministic failover. It now supports exact model matching plus explicit numeric priority, but it still does not implement weighted balancing.
 - Mock failure toggles are useful for drills and local verification but should not be enabled in normal production environments.
 - `gateway.primary_mock_fail_*` only affects the legacy `provider.primary` path, not `provider.backends[]`.
+- `max_tokens` is currently consumed by the Anthropic adapter. OpenAI-compatible and Ollama adapters ignore it today because the shared gateway request contract does not expose provider-specific generation parameters yet.
 
 ## Related Documentation
 
@@ -251,5 +282,6 @@ go run ./cmd/gateway
 - [`configs/config.yaml`](../../configs/config.yaml)
 - [`internal/config/config.go`](../../internal/config/config.go)
 - [`cmd/gateway/main.go`](../../cmd/gateway/main.go)
+- [`internal/provider/anthropic/chat.go`](../../internal/provider/anthropic/chat.go)
 - [`internal/provider/openai/chat.go`](../../internal/provider/openai/chat.go)
 - [`internal/provider/router/chat.go`](../../internal/provider/router/chat.go)

@@ -60,6 +60,7 @@ type ProviderEndpointConfig struct {
 	APIKey                   string   `mapstructure:"api_key" json:"api_key"`
 	Model                    string   `mapstructure:"model" json:"model"`
 	Models                   []string `mapstructure:"models" json:"models"`
+	MaxTokens                int      `mapstructure:"max_tokens" json:"max_tokens"`
 	Priority                 int      `mapstructure:"priority" json:"priority"`
 	TimeoutSeconds           int      `mapstructure:"timeout_seconds" json:"timeout_seconds"`
 	MaxRetries               int      `mapstructure:"max_retries" json:"max_retries"`
@@ -115,6 +116,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("provider.primary.api_key", "")
 	v.SetDefault("provider.primary.model", "")
 	v.SetDefault("provider.primary.models", []string{})
+	v.SetDefault("provider.primary.max_tokens", 1024)
 	v.SetDefault("provider.primary.priority", 100)
 	v.SetDefault("provider.primary.timeout_seconds", 15)
 	v.SetDefault("provider.primary.max_retries", 1)
@@ -125,6 +127,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("provider.secondary.api_key", "")
 	v.SetDefault("provider.secondary.model", "")
 	v.SetDefault("provider.secondary.models", []string{})
+	v.SetDefault("provider.secondary.max_tokens", 1024)
 	v.SetDefault("provider.secondary.priority", 200)
 	v.SetDefault("provider.secondary.timeout_seconds", 15)
 	v.SetDefault("provider.secondary.max_retries", 1)

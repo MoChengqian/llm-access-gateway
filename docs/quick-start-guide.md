@@ -154,7 +154,7 @@ The codebase includes comprehensive unit tests for critical components:
 - Auth service: [`internal/auth/service_test.go`](../internal/auth/service_test.go)
 - Chat service: [`internal/service/chat/service_test.go`](../internal/service/chat/service_test.go)
 - Governance service: [`internal/service/governance/service_test.go`](../internal/service/governance/service_test.go)
-- Provider implementations: [`internal/provider/openai/chat_test.go`](../internal/provider/openai/chat_test.go)
+- Provider implementations: [`internal/provider/openai/chat_test.go`](../internal/provider/openai/chat_test.go), [`internal/provider/anthropic/chat_test.go`](../internal/provider/anthropic/chat_test.go), [`internal/provider/ollama/chat_test.go`](../internal/provider/ollama/chat_test.go)
 - Metrics registry: [`internal/obs/metrics/registry_test.go`](../internal/obs/metrics/registry_test.go)
 
 **Run tests**:
@@ -177,7 +177,7 @@ Service Layer (request validation, response shaping)
     ↓
 Provider Router (health tracking, fallback)
     ↓
-Provider Adapters (OpenAI, mock)
+Provider Adapters (OpenAI-compatible, Anthropic, Ollama, mock)
 ```
 
 **Key principle**: Handlers stay thin, business logic lives in services, cross-cutting concerns (auth, tracing) use middleware.
@@ -296,16 +296,13 @@ curl http://127.0.0.1:8080/metrics
 - Multi-tenant auth and governance
 - SSE streaming proxy
 - Provider routing and fallback
+- OpenAI-compatible, Anthropic, and Ollama provider adapters
 - Observability basics
 - Docker and K8s deployment
-
-🚧 **In Progress**:
-- Comprehensive documentation and blog content
-- Performance benchmark reports
-- Failure drill documentation
+- Documentation, benchmark reports, and failure drill reports
 
 📋 **Future Enhancements**:
-- Additional provider adapters (Anthropic, etc.)
+- Additional hosted provider adapters beyond OpenAI-compatible / Anthropic
 - Admin API for tenant management
 - Enhanced metrics and dashboards
 - Long-term analytics

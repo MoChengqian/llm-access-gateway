@@ -168,17 +168,22 @@ The provider layer abstracts upstream model providers:
 - **Provider Interface**: Unified `ChatCompletionProvider` and `ModelProvider` interfaces
 - **Mock Provider** (`provider/mock/`): In-memory mock for testing
 - **OpenAI Provider** (`provider/openai/`): OpenAI-compatible HTTP client
+- **Anthropic Provider** (`provider/anthropic/`): Anthropic Messages API adapter
+- **Ollama Provider** (`provider/ollama/`): Ollama local HTTP API adapter
 - **Provider Router** (`provider/router/`): Health tracking, routing, fallback, and probing
 
 **Key Components**:
 - `provider.go`: Provider interface definitions
 - `router/chat.go`: Provider selection and fallback logic
+- `anthropic/chat.go`: Anthropic provider adapter
 - `mock/chat.go`: Mock provider implementation
 - `openai/chat.go`: OpenAI-compatible provider adapter
+- `ollama/chat.go`: Ollama provider adapter
 
 **Boundaries**:
 - All providers implement the same interface
 - Provider-specific details are hidden behind the interface
+- Anthropic system prompts are translated from OpenAI-style `system` messages into Anthropic's top-level `system` field inside the adapter
 - Fallback only happens before the first stream chunk is sent
 - Health state is tracked passively based on request outcomes
 - Active probing refreshes provider health periodically

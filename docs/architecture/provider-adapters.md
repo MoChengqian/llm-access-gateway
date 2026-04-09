@@ -2,7 +2,7 @@
 
 ## Overview
 
-The LLM Access Gateway uses a provider adapter pattern to abstract different LLM providers (OpenAI-compatible APIs, Ollama, local mocks, and future adapters) behind a unified interface. This design allows the gateway to support multiple providers without coupling the core routing, governance, and API layers to provider-specific implementations.
+The LLM Access Gateway uses a provider adapter pattern to abstract different LLM providers (OpenAI-compatible APIs, Anthropic's Messages API, Ollama, local mocks, and future adapters) behind a unified interface. This design allows the gateway to support multiple providers without coupling the core routing, governance, and API layers to provider-specific implementations.
 
 The adapter pattern provides three key benefits:
 
@@ -170,6 +170,34 @@ type Config struct {
 
 This matters because the adapter layer is no longer only validating OpenAI-compatible upstreams. It now proves that the gateway abstraction can normalize a materially different upstream protocol without changing the router or API handlers.
 
+### Anthropic Adapter
+
+The Anthropic adapter ([`internal/provider/anthropic/chat.go`](../../internal/provider/anthropic/chat.go)) connects the gateway to Anthropic's `/v1/messages` and `/v1/models` APIs while preserving the same internal `ChatCompletionProvider` and `ModelProvider` contracts used everywhere else in the codebase.
+
+**Configuration:**
+```go
+type Config struct {
+    BaseURL      string        // Anthropic API root (for example "https://api.anthropic.com/v1")
+    APIKey       string        // Anthropic API key
+    DefaultModel string        // Fallback model if not specified
+    APIVersion   string        // anthropic-version header (defaults to "2023-06-01")
+    MaxTokens    int           // Required by Anthropic messages API
+    HTTPClient   *http.Client  // Custom HTTP client (optional)
+    Timeout      time.Duration // Request timeout
+    MaxRetries   int           // Retry attempts for retryable errors
+    RetryBackoff time.Duration // Delay between retries
+}
+```
+
+**Key Features:**
+- sends Anthropic-specific `x-api-key` and `anthropic-version` headers automatically
+- translates OpenAI-style `system` messages into Anthropic's top-level `system` field before forwarding the remaining `user` / `assistant` messages
+- maps Anthropic text content blocks back into the unified assistant message shape
+- parses Anthropic named SSE events such as `message_start`, `content_block_delta`, `message_delta`, and `message_stop`
+- exposes `GET /v1/models` through `ListModels()`
+
+This adapter matters because Anthropic is the first hosted upstream in the repo that is not merely OpenAI-compatible. It demonstrates that the gateway can normalize a materially different request shape, response schema, and streaming protocol without changing routing, auth, governance, or HTTP handlers.
+
 ## Error Semantic Normalization
 
 Different providers return errors in different formats. The adapter layer normalizes these into consistent error semantics that the router can understand.
@@ -312,13 +340,13 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 }
 ```
 
-The router doesn't need to know whether it's calling OpenAI, a mock, or any other provider—it just calls the interface method and handles the result.
+The router doesn't need to know whether it's calling OpenAI, Anthropic, Ollama, a mock, or any other provider—it just calls the interface method and handles the result.
 
 ## Adding New Providers
 
-To add a new provider (e.g., Anthropic, Cohere, local models):
+To add a new provider (e.g., Cohere, Bedrock, local models):
 
-1. **Implement the interfaces** in a new package (e.g., `internal/provider/anthropic/`)
+1. **Implement the interfaces** in a new package (e.g., `internal/provider/cohere/`)
 2. **Translate request format** from the unified format to the provider's API format
 3. **Translate response format** from the provider's API format to the unified format
 4. **Normalize errors** into retryable vs. terminal categories
@@ -327,7 +355,7 @@ To add a new provider (e.g., Anthropic, Cohere, local models):
 
 **Example structure:**
 ```go
-package anthropic
+package cohere
 
 import "github.com/MoChengqian/llm-access-gateway/internal/provider"
 
@@ -347,22 +375,22 @@ func New(cfg Config) Provider {
 }
 
 func (p Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
-    // 1. Translate req to Anthropic format
-    // 2. Call Anthropic API
+    // 1. Translate req to provider-specific format
+    // 2. Call upstream API
     // 3. Translate response to unified format
     // 4. Normalize errors
 }
 
 func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
-    // 1. Translate req to Anthropic format
-    // 2. Open Anthropic stream
+    // 1. Translate req to provider-specific format
+    // 2. Open upstream stream
     // 3. Parse SSE chunks
     // 4. Translate chunks to unified format
     // 5. Propagate errors properly
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
-    // Call Anthropic models API
+    // Call provider models API
 }
 ```
 
@@ -397,6 +425,7 @@ No changes to the router, API handlers, or governance layers are required—the 
 ## Code References
 
 - Provider interfaces: [`internal/provider/provider.go`](../../internal/provider/provider.go)
+- Anthropic adapter: [`internal/provider/anthropic/chat.go`](../../internal/provider/anthropic/chat.go)
 - OpenAI adapter: [`internal/provider/openai/chat.go`](../../internal/provider/openai/chat.go)
 - Ollama adapter: [`internal/provider/ollama/chat.go`](../../internal/provider/ollama/chat.go)
 - Mock adapter: [`internal/provider/mock/chat.go`](../../internal/provider/mock/chat.go)

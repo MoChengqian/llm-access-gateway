@@ -17,6 +17,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	"github.com/MoChengqian/llm-access-gateway/internal/obs/metrics"
+	provideranthropic "github.com/MoChengqian/llm-access-gateway/internal/provider/anthropic"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	providerollama "github.com/MoChengqian/llm-access-gateway/internal/provider/ollama"
 	provideropenai "github.com/MoChengqian/llm-access-gateway/internal/provider/openai"
@@ -260,6 +261,25 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 				BaseURL:      cfg.BaseURL,
 				APIKey:       cfg.APIKey,
 				DefaultModel: model,
+				Timeout:      time.Duration(cfg.TimeoutSeconds) * time.Second,
+				MaxRetries:   cfg.MaxRetries,
+				RetryBackoff: time.Duration(cfg.RetryBackoffMilliseconds) * time.Millisecond,
+			}),
+		}, nil
+	case "anthropic":
+		if strings.TrimSpace(cfg.BaseURL) == "" {
+			return providerrouter.Backend{}, fmt.Errorf("%s provider base_url is required for type anthropic", role)
+		}
+
+		return providerrouter.Backend{
+			Name:     name,
+			Priority: cfg.Priority,
+			Models:   models,
+			Provider: provideranthropic.New(provideranthropic.Config{
+				BaseURL:      cfg.BaseURL,
+				APIKey:       cfg.APIKey,
+				DefaultModel: model,
+				MaxTokens:    cfg.MaxTokens,
 				Timeout:      time.Duration(cfg.TimeoutSeconds) * time.Second,
 				MaxRetries:   cfg.MaxRetries,
 				RetryBackoff: time.Duration(cfg.RetryBackoffMilliseconds) * time.Millisecond,

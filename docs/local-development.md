@@ -48,9 +48,10 @@ The expected API results are:
 - provider health can be inspected from `/debug/providers`
 - metrics can be inspected from `/metrics`
 - every response includes `X-Trace-Id` for log correlation
-- primary / secondary providers can be configured as `mock` or `openai`
+- primary / secondary providers can be configured as `mock`, `openai`, `anthropic`, or `ollama`
 - provider readiness is refreshed by an active background probe loop
-- OpenAI-compatible providers support timeout plus pre-stream retries before fallback
+- Hosted HTTP providers support timeout plus pre-stream retries before fallback
+- Anthropic providers translate OpenAI-style `system` messages into Anthropic's top-level `system` field and require `max_tokens` (default `1024`)
 
 ## Prerequisites
 
@@ -183,7 +184,29 @@ Notes:
 - if you do not set these variables, the repo keeps the current mock-first behavior
 - timeout applies to non-stream requests and provider probes; stream retries only happen before the upstream stream opens
 
-## 3.2 Optional: Run the Built-In Load Test
+## 3.2 Optional: Configure a Real Anthropic Upstream
+
+If you want the gateway to proxy to Anthropic's Messages API instead of the built-in mock primary backend, export:
+
+```bash
+export APP_PROVIDER_PRIMARY_TYPE='anthropic'
+export APP_PROVIDER_PRIMARY_BASE_URL='https://api.anthropic.com/v1'
+export APP_PROVIDER_PRIMARY_API_KEY='sk-ant-...'
+export APP_PROVIDER_PRIMARY_MODEL='claude-3-5-sonnet-latest'
+export APP_PROVIDER_PRIMARY_MAX_TOKENS='1024'
+export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
+export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
+```
+
+Notes:
+
+- `APP_PROVIDER_PRIMARY_BASE_URL` should point at Anthropic's `/v1` API root
+- the adapter automatically sends `x-api-key` and `anthropic-version`
+- OpenAI-style `system` messages are joined and forwarded through Anthropic's top-level `system` field
+- the secondary backend can stay on the default `mock` type for local fallback verification
+
+## 3.3 Optional: Run the Built-In Load Test
 
 After the gateway is up and `lag-local-dev-key` is seeded, you can run:
 

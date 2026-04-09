@@ -76,7 +76,7 @@ So `/readyz` can report the gateway as not ready while request paths still make 
 
 ### Adapter-level retry happens before router fallback
 
-Retry is implemented inside the OpenAI-compatible provider adapter, not inside `internal/provider/router/chat.go`. `doRequest()` retries the same backend up to `MaxRetries` times with linear backoff before returning control to the router.
+Retry is implemented inside the hosted provider adapters, not inside `internal/provider/router/chat.go`. The OpenAI-compatible adapter, Anthropic adapter, and Ollama adapter each use `doRequest()` to retry the same backend up to `MaxRetries` times with linear backoff before returning control to the router.
 
 Retryable conditions are:
 
@@ -101,7 +101,7 @@ for attempt := 0; attempt <= p.maxRetries; attempt++ {
 }
 ```
 
-This produces a two-stage flow for OpenAI backends:
+This produces a two-stage flow for hosted HTTP backends:
 
 1. retry the same upstream endpoint locally
 2. if the backend still fails, let the router fall back to the next backend
@@ -304,5 +304,7 @@ That shared observer path keeps failure diagnosis aligned across `/debug/provide
 - [`internal/config/config.go`](../../internal/config/config.go)
 - [`internal/provider/router/chat.go`](../../internal/provider/router/chat.go)
 - [`internal/provider/router/chat_test.go`](../../internal/provider/router/chat_test.go)
+- [`internal/provider/anthropic/chat.go`](../../internal/provider/anthropic/chat.go)
 - [`internal/provider/openai/chat.go`](../../internal/provider/openai/chat.go)
+- [`internal/provider/ollama/chat.go`](../../internal/provider/ollama/chat.go)
 - [`internal/api/handlers/health.go`](../../internal/api/handlers/health.go)

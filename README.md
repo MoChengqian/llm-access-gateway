@@ -6,7 +6,7 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 - API key authentication backed by MySQL
 - Redis-backed RPM / TPM limiting with MySQL fallback
 - tenant resolution from API key
-- provider routing with model-aware priority and configurable OpenAI-compatible, Ollama, or mock backends
+- provider routing with model-aware priority and configurable OpenAI-compatible, Anthropic, Ollama, or mock backends
 - active provider probing via the models endpoint
 - mock non-streaming chat completions
 - SSE streaming chat completions
@@ -34,8 +34,10 @@ observability basics.
 - metrics endpoint: `GET /metrics`
 - tracing header: `X-Trace-Id` on every HTTP response
 - configurable OpenAI-compatible upstream provider adapter
+- configurable Anthropic upstream provider adapter
 - configurable Ollama upstream provider adapter
-- provider-level timeout and pre-stream retry policy for OpenAI-compatible upstreams
+- provider-level timeout and pre-stream retry policy for hosted HTTP upstreams
+- Anthropic system prompt translation plus named-SSE normalization
 - model-aware failover ordering using exact model matches plus explicit backend priority
 
 ## Project Structure
@@ -62,7 +64,7 @@ internal/
   api/         Router and HTTP handlers
   auth/        Bearer auth and tenant resolution
   config/      Config loading
-  provider/    Provider interface plus mock, OpenAI-compatible, and Ollama adapters
+  provider/    Provider interface plus mock, OpenAI-compatible, Anthropic, and Ollama adapters
   provider/router Failover router with passive backend health
   service/chat Chat request validation and response shaping
   store/mysql/ MySQL auth lookup, usage storage, and local bootstrap helpers
@@ -282,6 +284,7 @@ export APP_PROVIDER_PRIMARY_TYPE='mock'
 export APP_PROVIDER_PRIMARY_BASE_URL=''
 export APP_PROVIDER_PRIMARY_API_KEY=''
 export APP_PROVIDER_PRIMARY_MODEL=''
+export APP_PROVIDER_PRIMARY_MAX_TOKENS='1024'
 export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
 export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
 export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
@@ -289,6 +292,7 @@ export APP_PROVIDER_SECONDARY_TYPE='mock'
 export APP_PROVIDER_SECONDARY_BASE_URL=''
 export APP_PROVIDER_SECONDARY_API_KEY=''
 export APP_PROVIDER_SECONDARY_MODEL=''
+export APP_PROVIDER_SECONDARY_MAX_TOKENS='1024'
 export APP_PROVIDER_SECONDARY_TIMEOUT_SECONDS='15'
 export APP_PROVIDER_SECONDARY_MAX_RETRIES='1'
 export APP_PROVIDER_SECONDARY_RETRY_BACKOFF_MILLISECONDS='200'
@@ -317,6 +321,21 @@ export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
 The gateway will keep the configured secondary backend for fallback, and streaming fallback still only happens before the first chunk is emitted.
 Provider readiness is also refreshed by a background probe loop that uses the configured provider model listing path.
 For OpenAI-compatible upstreams, timeout applies to non-stream requests and model probing, while retries only happen before a stream is opened.
+
+To use Anthropic as the primary backend:
+
+```bash
+export APP_PROVIDER_PRIMARY_TYPE='anthropic'
+export APP_PROVIDER_PRIMARY_BASE_URL='https://api.anthropic.com/v1'
+export APP_PROVIDER_PRIMARY_API_KEY='sk-ant-...'
+export APP_PROVIDER_PRIMARY_MODEL='claude-3-5-sonnet-latest'
+export APP_PROVIDER_PRIMARY_MAX_TOKENS='1024'
+export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
+export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
+export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
+```
+
+The Anthropic adapter automatically sends the required `anthropic-version` header, maps OpenAI-style `system` messages into Anthropic's top-level `system` field, and normalizes Anthropic streaming events into the gateway's standard SSE contract.
 
 ## Load Testing
 

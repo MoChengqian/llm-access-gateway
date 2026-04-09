@@ -33,6 +33,7 @@ provider:
     api_key: ""
     model: ""
     models: []
+    max_tokens: 1024
     priority: 100
     timeout_seconds: 15
     max_retries: 1
@@ -44,6 +45,7 @@ provider:
     api_key: ""
     model: ""
     models: []
+    max_tokens: 1024
     priority: 200
     timeout_seconds: 15
     max_retries: 1

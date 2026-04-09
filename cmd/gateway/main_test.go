@@ -64,6 +64,35 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 	}
 }
 
+func TestBuildProviderBackendSupportsAnthropic(t *testing.T) {
+	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
+		Type:      "anthropic",
+		Name:      "anthropic-primary",
+		BaseURL:   "https://api.anthropic.com/v1",
+		APIKey:    "test-key",
+		Model:     "claude-3-5-sonnet-latest",
+		MaxTokens: 2048,
+		Priority:  15,
+		Models:    []string{"claude-3-5-sonnet-latest"},
+	}, "gpt-4o-mini", providermock.Config{})
+	if err != nil {
+		t.Fatalf("build anthropic backend: %v", err)
+	}
+
+	if backend.Name != "anthropic-primary" {
+		t.Fatalf("expected anthropic-primary, got %s", backend.Name)
+	}
+	if backend.Priority != 15 {
+		t.Fatalf("expected priority 15, got %d", backend.Priority)
+	}
+	if len(backend.Models) != 1 || backend.Models[0] != "claude-3-5-sonnet-latest" {
+		t.Fatalf("expected configured models, got %#v", backend.Models)
+	}
+	if backend.Provider == nil {
+		t.Fatal("expected provider implementation")
+	}
+}
+
 func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type:     "ollama",
@@ -94,6 +123,15 @@ func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 func TestBuildProviderBackendRejectsMissingOpenAIBaseURL(t *testing.T) {
 	_, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type: "openai",
+	}, "gpt-4o-mini", providermock.Config{})
+	if err == nil {
+		t.Fatal("expected missing base url error")
+	}
+}
+
+func TestBuildProviderBackendRejectsMissingAnthropicBaseURL(t *testing.T) {
+	_, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
+		Type: "anthropic",
 	}, "gpt-4o-mini", providermock.Config{})
 	if err == nil {
 		t.Fatal("expected missing base url error")

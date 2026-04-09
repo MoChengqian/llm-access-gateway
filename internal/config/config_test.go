@@ -34,3 +34,16 @@ func TestLoadParsesCommaSeparatedProviderModelListsFromEnvironment(t *testing.T)
 		t.Fatalf("expected two primary models, got %#v", cfg.Provider.Primary.Models)
 	}
 }
+
+func TestLoadParsesProviderMaxTokensFromEnvironment(t *testing.T) {
+	t.Setenv("APP_PROVIDER_PRIMARY_MAX_TOKENS", "2048")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Provider.Primary.MaxTokens != 2048 {
+		t.Fatalf("expected primary max tokens 2048, got %d", cfg.Provider.Primary.MaxTokens)
+	}
+}
