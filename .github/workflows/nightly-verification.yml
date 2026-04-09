@@ -371,3 +371,54 @@ jobs:
         run: |
           test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
           test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+
+  report:
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - benchmarks
+      - stream-failure-drills
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-benchmarks
+          path: /tmp/nightly-artifacts/benchmarks
+
+      - name: Download streaming drill artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-stream-failure-drills
+          path: /tmp/nightly-artifacts/streaming-failures
+
+      - name: Generate markdown summary
+        run: |
+          mkdir -p /tmp/nightly-artifacts/report
+          go run ./cmd/nightlyreport \
+            -baseline .github/nightly/benchmark-baseline.json \
+            -mock-non-stream /tmp/nightly-artifacts/benchmarks/mock-non-stream.json \
+            -mock-stream /tmp/nightly-artifacts/benchmarks/mock-stream.json \
+            -adapter-non-stream /tmp/nightly-artifacts/benchmarks/adapter-non-stream.json \
+            -adapter-stream /tmp/nightly-artifacts/benchmarks/adapter-stream.json \
+            -prechunk-output /tmp/nightly-artifacts/streaming-failures/prechunk.out \
+            -prechunk-metrics /tmp/nightly-artifacts/streaming-failures/prechunk-metrics.prom \
+            -partial-output /tmp/nightly-artifacts/streaming-failures/partial.out \
+            -partial-metrics /tmp/nightly-artifacts/streaming-failures/partial-metrics.prom \
+            -output /tmp/nightly-artifacts/report/nightly-summary.md
+          cat /tmp/nightly-artifacts/report/nightly-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload nightly summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-summary
+          path: /tmp/nightly-artifacts/report/nightly-summary.md
+          if-no-files-found: error

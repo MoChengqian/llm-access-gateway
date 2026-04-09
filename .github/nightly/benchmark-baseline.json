@@ -1,0 +1,57 @@
+{
+  "source": "docs/verification/benchmarks/*.md (collected 2026-04-07)",
+  "benchmarks": {
+    "mock-non-stream": {
+      "requests": 100,
+      "concurrency": 10,
+      "stream": false,
+      "success": 100,
+      "failure": 0,
+      "total_duration_ms": 135,
+      "latency_p50_ms": 11,
+      "latency_p95_ms": 22,
+      "latency_max_ms": 24
+    },
+    "adapter-non-stream": {
+      "requests": 100,
+      "concurrency": 10,
+      "stream": false,
+      "success": 100,
+      "failure": 0,
+      "total_duration_ms": 164,
+      "latency_p50_ms": 14,
+      "latency_p95_ms": 34,
+      "latency_max_ms": 37
+    },
+    "mock-stream": {
+      "requests": 50,
+      "concurrency": 5,
+      "stream": true,
+      "success": 50,
+      "failure": 0,
+      "total_duration_ms": 91,
+      "latency_p50_ms": 7,
+      "latency_p95_ms": 19,
+      "latency_max_ms": 20,
+      "ttft_p50_ms": 4,
+      "ttft_p95_ms": 12,
+      "ttft_max_ms": 15,
+      "stream_chunks_total": 200
+    },
+    "adapter-stream": {
+      "requests": 50,
+      "concurrency": 5,
+      "stream": true,
+      "success": 50,
+      "failure": 0,
+      "total_duration_ms": 814,
+      "latency_p50_ms": 79,
+      "latency_p95_ms": 98,
+      "latency_max_ms": 99,
+      "ttft_p50_ms": 6,
+      "ttft_p95_ms": 28,
+      "ttft_max_ms": 30,
+      "stream_chunks_total": 150
+    }
+  }
+}

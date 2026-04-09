@@ -136,6 +136,16 @@ The gateway CPU sample is not very informative because the request burst was sho
 - The load test tool reports P50, P95, and max; it does not currently emit histogram buckets or P99.
 - Because the gateway process is short-lived in local verification, resource sampling is point-in-time rather than continuous.
 
+## Nightly Baseline Automation
+
+The repository now keeps a persisted nightly benchmark reference in:
+
+```text
+.github/nightly/benchmark-baseline.json
+```
+
+That baseline is derived from the verified local evidence captured on `2026-04-07`. The nightly workflow compares current benchmark artifacts against threshold checks, then renders a markdown delta summary so regressions are visible without manually opening each JSON file.
+
 ## Related Documentation
 
 - [Non-Streaming Benchmarks](non-streaming.md)
@@ -153,3 +163,6 @@ The gateway CPU sample is not very informative because the request burst was sho
 - `internal/provider/openai/chat.go`
 - `deployments/docker/docker-compose.yml`
 - `scripts/synthetic-openai-upstream.py`
+- `cmd/nightlycheck/main.go`
+- `cmd/nightlyreport/main.go`
+- `.github/nightly/benchmark-baseline.json`
