@@ -6,7 +6,7 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 - API key authentication backed by MySQL
 - Redis-backed RPM / TPM limiting with MySQL fallback
 - tenant resolution from API key
-- provider routing with configurable OpenAI-compatible or mock backends
+- provider routing with model-aware priority and configurable OpenAI-compatible, Ollama, or mock backends
 - active provider probing via the models endpoint
 - mock non-streaming chat completions
 - SSE streaming chat completions
@@ -14,8 +14,9 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 - request ID propagation in responses and logs
 
 The current codebase is intentionally small. It is suitable for local
-development, auth validation, and API contract verification before adding
-real provider adapters, richer routing, or production observability.
+development, auth validation, and API contract verification while already
+covering real provider adapters, richer routing, and production-facing
+observability basics.
 
 ## Core Capabilities
 
@@ -33,7 +34,9 @@ real provider adapters, richer routing, or production observability.
 - metrics endpoint: `GET /metrics`
 - tracing header: `X-Trace-Id` on every HTTP response
 - configurable OpenAI-compatible upstream provider adapter
+- configurable Ollama upstream provider adapter
 - provider-level timeout and pre-stream retry policy for OpenAI-compatible upstreams
+- model-aware failover ordering using exact model matches plus explicit backend priority
 
 ## Project Structure
 
@@ -59,7 +62,7 @@ internal/
   api/         Router and HTTP handlers
   auth/        Bearer auth and tenant resolution
   config/      Config loading
-  provider/    Provider interface and mock provider
+  provider/    Provider interface plus mock, OpenAI-compatible, and Ollama adapters
   provider/router Failover router with passive backend health
   service/chat Chat request validation and response shaping
   store/mysql/ MySQL auth lookup, usage storage, and local bootstrap helpers

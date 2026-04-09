@@ -48,19 +48,22 @@ type GatewayConfig struct {
 }
 
 type ProviderConfig struct {
-	Primary   ProviderEndpointConfig `mapstructure:"primary" json:"primary"`
-	Secondary ProviderEndpointConfig `mapstructure:"secondary" json:"secondary"`
+	Backends  []ProviderEndpointConfig `mapstructure:"backends" json:"backends"`
+	Primary   ProviderEndpointConfig   `mapstructure:"primary" json:"primary"`
+	Secondary ProviderEndpointConfig   `mapstructure:"secondary" json:"secondary"`
 }
 
 type ProviderEndpointConfig struct {
-	Type                     string `mapstructure:"type" json:"type"`
-	Name                     string `mapstructure:"name" json:"name"`
-	BaseURL                  string `mapstructure:"base_url" json:"base_url"`
-	APIKey                   string `mapstructure:"api_key" json:"api_key"`
-	Model                    string `mapstructure:"model" json:"model"`
-	TimeoutSeconds           int    `mapstructure:"timeout_seconds" json:"timeout_seconds"`
-	MaxRetries               int    `mapstructure:"max_retries" json:"max_retries"`
-	RetryBackoffMilliseconds int    `mapstructure:"retry_backoff_milliseconds" json:"retry_backoff_milliseconds"`
+	Type                     string   `mapstructure:"type" json:"type"`
+	Name                     string   `mapstructure:"name" json:"name"`
+	BaseURL                  string   `mapstructure:"base_url" json:"base_url"`
+	APIKey                   string   `mapstructure:"api_key" json:"api_key"`
+	Model                    string   `mapstructure:"model" json:"model"`
+	Models                   []string `mapstructure:"models" json:"models"`
+	Priority                 int      `mapstructure:"priority" json:"priority"`
+	TimeoutSeconds           int      `mapstructure:"timeout_seconds" json:"timeout_seconds"`
+	MaxRetries               int      `mapstructure:"max_retries" json:"max_retries"`
+	RetryBackoffMilliseconds int      `mapstructure:"retry_backoff_milliseconds" json:"retry_backoff_milliseconds"`
 }
 
 func Load() (Config, error) {
@@ -111,6 +114,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("provider.primary.base_url", "")
 	v.SetDefault("provider.primary.api_key", "")
 	v.SetDefault("provider.primary.model", "")
+	v.SetDefault("provider.primary.models", []string{})
+	v.SetDefault("provider.primary.priority", 100)
 	v.SetDefault("provider.primary.timeout_seconds", 15)
 	v.SetDefault("provider.primary.max_retries", 1)
 	v.SetDefault("provider.primary.retry_backoff_milliseconds", 200)
@@ -119,6 +124,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("provider.secondary.base_url", "")
 	v.SetDefault("provider.secondary.api_key", "")
 	v.SetDefault("provider.secondary.model", "")
+	v.SetDefault("provider.secondary.models", []string{})
+	v.SetDefault("provider.secondary.priority", 200)
 	v.SetDefault("provider.secondary.timeout_seconds", 15)
 	v.SetDefault("provider.secondary.max_retries", 1)
 	v.SetDefault("provider.secondary.retry_backoff_milliseconds", 200)

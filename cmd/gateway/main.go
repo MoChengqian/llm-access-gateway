@@ -18,6 +18,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	"github.com/MoChengqian/llm-access-gateway/internal/obs/metrics"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
+	providerollama "github.com/MoChengqian/llm-access-gateway/internal/provider/ollama"
 	provideropenai "github.com/MoChengqian/llm-access-gateway/internal/provider/openai"
 	providerrouter "github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
@@ -163,6 +164,14 @@ func startProviderProbeLoop(ctx context.Context, logger *zap.Logger, prober inte
 }
 
 func buildProviderBackends(cfg config.Config) ([]providerrouter.Backend, []modelsservice.Source, error) {
+	if len(cfg.Provider.Backends) > 0 {
+		backends, err := buildConfiguredProviderBackends(cfg.Provider.Backends, cfg.Gateway.DefaultModel)
+		if err != nil {
+			return nil, nil, err
+		}
+		return backends, collectModelSources(backends), nil
+	}
+
 	primary, err := buildProviderBackend("primary", cfg.Provider.Primary, cfg.Gateway.DefaultModel, providermock.Config{
 		FailCreate: cfg.Gateway.PrimaryMockFailCreate,
 		FailStream: cfg.Gateway.PrimaryMockFailStream,
@@ -176,13 +185,35 @@ func buildProviderBackends(cfg config.Config) ([]providerrouter.Backend, []model
 		return nil, nil, err
 	}
 
-	sources := make([]modelsservice.Source, 0, 2)
-	for _, backend := range []providerrouter.Backend{primary, secondary} {
+	backends := []providerrouter.Backend{primary, secondary}
+	return backends, collectModelSources(backends), nil
+}
+
+func buildConfiguredProviderBackends(cfgs []config.ProviderEndpointConfig, defaultModel string) ([]providerrouter.Backend, error) {
+	backends := make([]providerrouter.Backend, 0, len(cfgs))
+	for index, providerCfg := range cfgs {
+		backend, err := buildProviderBackend(fmt.Sprintf("backends[%d]", index), providerCfg, defaultModel, providermock.Config{})
+		if err != nil {
+			return nil, err
+		}
+		backends = append(backends, backend)
+	}
+
+	if len(backends) == 0 {
+		return nil, errors.New("at least one provider backend is required")
+	}
+
+	return backends, nil
+}
+
+func collectModelSources(backends []providerrouter.Backend) []modelsservice.Source {
+	sources := make([]modelsservice.Source, 0, len(backends))
+	for _, backend := range backends {
 		if source, ok := backend.Provider.(modelsservice.Source); ok {
 			sources = append(sources, source)
 		}
 	}
-	return []providerrouter.Backend{primary, secondary}, sources, nil
+	return sources
 }
 
 func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaultModel string, mockCfg providermock.Config) (providerrouter.Backend, error) {
@@ -200,11 +231,14 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 	if model == "" {
 		model = defaultModel
 	}
+	models := normalizeModels(cfg.Models)
 
 	switch providerType {
 	case "mock":
 		return providerrouter.Backend{
-			Name: name,
+			Name:     name,
+			Priority: cfg.Priority,
+			Models:   models,
 			Provider: providermock.NewWithConfig(providermock.Config{
 				ResponseText: mockCfg.ResponseText,
 				StreamParts:  mockCfg.StreamParts,
@@ -219,8 +253,28 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 		}
 
 		return providerrouter.Backend{
-			Name: name,
+			Name:     name,
+			Priority: cfg.Priority,
+			Models:   models,
 			Provider: provideropenai.New(provideropenai.Config{
+				BaseURL:      cfg.BaseURL,
+				APIKey:       cfg.APIKey,
+				DefaultModel: model,
+				Timeout:      time.Duration(cfg.TimeoutSeconds) * time.Second,
+				MaxRetries:   cfg.MaxRetries,
+				RetryBackoff: time.Duration(cfg.RetryBackoffMilliseconds) * time.Millisecond,
+			}),
+		}, nil
+	case "ollama":
+		if strings.TrimSpace(cfg.BaseURL) == "" {
+			return providerrouter.Backend{}, fmt.Errorf("%s provider base_url is required for type ollama", role)
+		}
+
+		return providerrouter.Backend{
+			Name:     name,
+			Priority: cfg.Priority,
+			Models:   models,
+			Provider: providerollama.New(providerollama.Config{
 				BaseURL:      cfg.BaseURL,
 				APIKey:       cfg.APIKey,
 				DefaultModel: model,
@@ -232,6 +286,30 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 	default:
 		return providerrouter.Backend{}, fmt.Errorf("%s provider type %q is not supported", role, cfg.Type)
 	}
+}
+
+func normalizeModels(models []string) []string {
+	if len(models) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		trimmed := strings.TrimSpace(strings.ToLower(model))
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 type providerHealthAdapter struct {
@@ -300,6 +378,8 @@ func (a providerHealthAdapter) BackendStatuses() []handlers.ProviderBackendStatu
 	for _, status := range statuses {
 		result = append(result, handlers.ProviderBackendStatus{
 			Name:                status.Name,
+			Priority:            status.Priority,
+			Models:              append([]string(nil), status.Models...),
 			Healthy:             status.Healthy,
 			ConsecutiveFailures: status.ConsecutiveFailures,
 			UnhealthyUntil:      status.UnhealthyUntil,

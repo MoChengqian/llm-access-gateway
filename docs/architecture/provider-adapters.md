@@ -2,7 +2,7 @@
 
 ## Overview
 
-The LLM Access Gateway uses a provider adapter pattern to abstract different LLM providers (OpenAI, Anthropic, local models, etc.) behind a unified interface. This design allows the gateway to support multiple providers without coupling the core routing, governance, and API layers to provider-specific implementations.
+The LLM Access Gateway uses a provider adapter pattern to abstract different LLM providers (OpenAI-compatible APIs, Ollama, local mocks, and future adapters) behind a unified interface. This design allows the gateway to support multiple providers without coupling the core routing, governance, and API layers to provider-specific implementations.
 
 The adapter pattern provides three key benefits:
 
@@ -145,6 +145,31 @@ type Config struct {
 - Failure scenario testing (timeouts, errors, interruptions)
 - Performance benchmarking without external rate limits
 
+### Ollama Adapter
+
+The Ollama adapter ([`internal/provider/ollama/chat.go`](../../internal/provider/ollama/chat.go)) connects the gateway to Ollama's local HTTP API while still returning the same internal response types used by the OpenAI-compatible adapter.
+
+**Configuration:**
+```go
+type Config struct {
+    BaseURL      string        // Ollama server root (for example "http://127.0.0.1:11434")
+    APIKey       string        // Optional bearer token for proxied deployments
+    DefaultModel string        // Fallback model if not specified
+    HTTPClient   *http.Client  // Custom HTTP client (optional)
+    Timeout      time.Duration // Request timeout
+    MaxRetries   int           // Retry attempts for retryable errors
+    RetryBackoff time.Duration // Delay between retries
+}
+```
+
+**Key Features:**
+- translates Ollama `POST /api/chat` responses into the unified completion shape
+- converts newline-delimited streaming responses into `ChatCompletionStreamEvent` values
+- exposes `GET /api/tags` through `ListModels()`
+- reuses timeout and retry semantics for retryable HTTP and network failures
+
+This matters because the adapter layer is no longer only validating OpenAI-compatible upstreams. It now proves that the gateway abstraction can normalize a materially different upstream protocol without changing the router or API handlers.
+
 ## Error Semantic Normalization
 
 Different providers return errors in different formats. The adapter layer normalizes these into consistent error semantics that the router can understand.
@@ -254,12 +279,14 @@ The provider router ([`internal/provider/router/chat.go`](../../internal/provide
 ```go
 type Backend struct {
     Name     string
+    Priority int
+    Models   []string
     Provider provider.ChatCompletionProvider
 }
 ```
 
 The router treats all backends uniformly:
-- Iterates through backends in order
+- Ranks backends using exact model matches and explicit priority
 - Calls the same interface methods regardless of provider type
 - Handles errors consistently based on normalized error semantics
 - Tracks health state per backend without provider-specific logic
@@ -267,7 +294,7 @@ The router treats all backends uniformly:
 **Example: Non-Streaming Fallback**
 ```go
 func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
-    candidates, skipped := p.candidates()
+    candidates, skipped := p.candidates(req.Model)
     
     var lastErr error
     for index, backend := range candidates {
@@ -371,6 +398,7 @@ No changes to the router, API handlers, or governance layers are required—the 
 
 - Provider interfaces: [`internal/provider/provider.go`](../../internal/provider/provider.go)
 - OpenAI adapter: [`internal/provider/openai/chat.go`](../../internal/provider/openai/chat.go)
+- Ollama adapter: [`internal/provider/ollama/chat.go`](../../internal/provider/ollama/chat.go)
 - Mock adapter: [`internal/provider/mock/chat.go`](../../internal/provider/mock/chat.go)
 - Provider router: [`internal/provider/router/chat.go`](../../internal/provider/router/chat.go)
 - Router tests: [`internal/provider/router/chat_test.go`](../../internal/provider/router/chat_test.go)

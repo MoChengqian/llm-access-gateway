@@ -25,6 +25,7 @@ So `server.address` becomes `APP_SERVER_ADDRESS`, and `provider.primary.max_retr
 - MySQL and Redis connection settings
 - gateway routing/health defaults
 - provider definitions for `primary` and `secondary`
+- optional multi-backend routing definitions under `provider.backends`
 
 ### Environment variables
 
@@ -130,21 +131,26 @@ These settings control:
 
 ## Provider Configuration
 
-The gateway currently supports two named providers:
+The gateway supports two provider configuration styles:
 
-- `provider.primary`
-- `provider.secondary`
+1. legacy named providers:
+   - `provider.primary`
+   - `provider.secondary`
+2. preferred multi-backend list:
+   - `provider.backends[]`
 
-Each provider block has the same fields:
+Each provider block uses the same core fields:
 
 ```yaml
 provider:
   primary:
     type: mock
     name: primary
+    priority: 100
     base_url: ""
     api_key: ""
     model: ""
+    models: []
     timeout_seconds: 15
     max_retries: 1
     retry_backoff_milliseconds: 200
@@ -154,6 +160,7 @@ Environment variable pattern:
 
 - `APP_PROVIDER_PRIMARY_TYPE`
 - `APP_PROVIDER_PRIMARY_NAME`
+- `APP_PROVIDER_PRIMARY_PRIORITY`
 - `APP_PROVIDER_PRIMARY_BASE_URL`
 - `APP_PROVIDER_PRIMARY_API_KEY`
 - `APP_PROVIDER_PRIMARY_MODEL`
@@ -163,12 +170,41 @@ Environment variable pattern:
 
 Equivalent `SECONDARY` variables exist for the secondary backend.
 
+When you need more than two backends or model-aware routing, define `provider.backends` in YAML. The repository currently documents and tests list-style routing through YAML, not through environment-variable expansion for list items:
+
+```yaml
+provider:
+  backends:
+    - name: openai-gpt4o
+      type: openai
+      priority: 10
+      models: ["gpt-4o-mini"]
+      base_url: "https://api.openai.com/v1"
+      api_key: "${OPENAI_API_KEY}"
+      model: "gpt-4o-mini"
+      timeout_seconds: 15
+      max_retries: 1
+      retry_backoff_milliseconds: 200
+    - name: generic-fallback
+      type: mock
+      priority: 100
+      models: []
+```
+
+Routing semantics:
+
+- lower `priority` values are attempted first
+- `models[]` is an exact-match preference list for request models
+- backends with empty `models[]` are generic fallbacks
+- if `provider.backends` is present, it replaces legacy `primary` and `secondary` assembly
+
 ### Supported types
 
 - `mock`
 - `openai`
+- `ollama`
 
-`buildProviderBackend()` defaults empty provider types to `mock`. For `openai`, `base_url` is required and should already include the upstream `/v1` base path.
+`buildProviderBackend()` defaults empty provider types to `mock`. For `openai`, `base_url` is required and should already include the upstream `/v1` base path. For `ollama`, `base_url` should point at the Ollama server root such as `http://127.0.0.1:11434`.
 
 ## Example Configurations
 
@@ -199,8 +235,9 @@ go run ./cmd/gateway
 ## Configuration Caveats
 
 - Secrets such as upstream API keys and MySQL DSNs should come from environment variables or Kubernetes Secrets, not committed YAML.
-- The provider router is ordered primary/secondary failover; there is no weighted routing field to configure today.
+- The provider router is deterministic failover. It now supports exact model matching plus explicit numeric priority, but it still does not implement weighted balancing.
 - Mock failure toggles are useful for drills and local verification but should not be enabled in normal production environments.
+- `gateway.primary_mock_fail_*` only affects the legacy `provider.primary` path, not `provider.backends[]`.
 
 ## Related Documentation
 

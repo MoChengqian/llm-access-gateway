@@ -1,0 +1,159 @@
+name: runtime-ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests
+        run: go test ./...
+
+  runtime:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: llm_access_gateway
+          MYSQL_USER: user
+          MYSQL_PASSWORD: pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uuser -ppass --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      APP_MYSQL_DSN: user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true
+      APP_REDIS_ADDRESS: 127.0.0.1:6379
+      APP_SERVER_ADDRESS: 127.0.0.1:18080
+      BASE_URL: http://127.0.0.1:18080
+      API_KEY: lag-local-dev-key
+      GOCACHE: /tmp/go-build
+      GOMODCACHE: /tmp/go-mod
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Seed schema and dev key
+        run: go run ./cmd/devinit
+
+      - name: Start gateway for smoke verification
+        run: |
+          nohup go run ./cmd/gateway >/tmp/gateway.log 2>&1 &
+          echo $! >/tmp/gateway.pid
+
+          for i in $(seq 1 60); do
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat /tmp/gateway.log
+          exit 1
+
+      - name: Run smoke checks and lightweight loadtests
+        run: ASSERT=true ./scripts/gateway-smoke-check.sh
+
+      - name: Stop smoke gateway and start synthetic upstream
+        run: |
+          if test -f /tmp/gateway.pid; then
+            kill "$(cat /tmp/gateway.pid)" || true
+          fi
+
+          nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode error500 >/tmp/upstream.log 2>&1 &
+          echo $! >/tmp/upstream.pid
+
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat /tmp/upstream.log
+          exit 1
+
+      - name: Start gateway for fallback verification
+        env:
+          APP_PROVIDER_PRIMARY_TYPE: openai
+          APP_PROVIDER_PRIMARY_NAME: openai-primary
+          APP_PROVIDER_PRIMARY_BASE_URL: http://127.0.0.1:18081/v1
+          APP_PROVIDER_PRIMARY_MODEL: gpt-4o-mini
+          APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS: "1"
+          APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
+          APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
+        run: |
+          nohup go run ./cmd/gateway >/tmp/gateway-fallback.log 2>&1 &
+          echo $! >/tmp/gateway.pid
+
+          for i in $(seq 1 60); do
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat /tmp/gateway-fallback.log
+          exit 1
+
+      - name: Run fallback drill
+        run: ./scripts/provider-fallback-drill.sh create-fail | tee /tmp/fallback.out
+
+      - name: Assert fallback result and degraded health
+        run: |
+          grep -q 'HTTP/1.1 200 OK' /tmp/fallback.out
+          grep -q 'This is a mock response from LLM Access Gateway.' /tmp/fallback.out
+
+          curl -fsS "${BASE_URL}/debug/providers" | tee /tmp/providers.json
+          grep -q '"name":"openai-primary"' /tmp/providers.json
+          grep -q '"healthy":false' /tmp/providers.json
+
+      - name: Dump process logs on failure
+        if: failure()
+        run: |
+          test -f /tmp/gateway.log && cat /tmp/gateway.log || true
+          test -f /tmp/gateway-fallback.log && cat /tmp/gateway-fallback.log || true
+          test -f /tmp/upstream.log && cat /tmp/upstream.log || true
+
+      - name: Stop background processes
+        if: always()
+        run: |
+          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
+          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true

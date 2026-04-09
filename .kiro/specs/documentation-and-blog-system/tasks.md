@@ -186,7 +186,7 @@ Each task focuses on creating specific markdown files with evidence-based conten
 - [x] 8. Checkpoint - Review verification documentation
   - Ensure all benchmark and failure drill reports are complete with evidence, ask the user if questions arise.
 
-- [ ] 9. Create blog articles
+- [x] 9. Create blog articles
   - [x] 9.1 Write project overview article (docs/blog/001-project-overview.md)
     - Explain gateway's position in LLM ecosystem
     - Document project boundaries (what it does and doesn't do)

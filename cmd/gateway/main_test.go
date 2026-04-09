@@ -12,8 +12,10 @@ import (
 
 func TestBuildProviderBackendSupportsMock(t *testing.T) {
 	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
-		Type: "mock",
-		Name: "mock-primary",
+		Type:     "mock",
+		Name:     "mock-primary",
+		Priority: 90,
+		Models:   []string{"gpt-4o-mini", "GPT-4O-MINI"},
 	}, "gpt-4o-mini", providermock.Config{})
 	if err != nil {
 		t.Fatalf("build mock backend: %v", err)
@@ -21,6 +23,12 @@ func TestBuildProviderBackendSupportsMock(t *testing.T) {
 
 	if backend.Name != "mock-primary" {
 		t.Fatalf("expected mock-primary, got %s", backend.Name)
+	}
+	if backend.Priority != 90 {
+		t.Fatalf("expected priority 90, got %d", backend.Priority)
+	}
+	if len(backend.Models) != 1 || backend.Models[0] != "gpt-4o-mini" {
+		t.Fatalf("expected normalized models, got %#v", backend.Models)
 	}
 	_, ok := backend.Provider.(provider.ModelProvider)
 	if !ok {
@@ -30,11 +38,13 @@ func TestBuildProviderBackendSupportsMock(t *testing.T) {
 
 func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
-		Type:    "openai",
-		Name:    "openai-primary",
-		BaseURL: "https://example.com/v1",
-		APIKey:  "key",
-		Model:   "gpt-4.1-mini",
+		Type:     "openai",
+		Name:     "openai-primary",
+		BaseURL:  "https://example.com/v1",
+		APIKey:   "key",
+		Model:    "gpt-4.1-mini",
+		Priority: 10,
+		Models:   []string{"gpt-4.1-mini"},
 	}, "gpt-4o-mini", providermock.Config{})
 	if err != nil {
 		t.Fatalf("build openai backend: %v", err)
@@ -42,6 +52,39 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 
 	if backend.Name != "openai-primary" {
 		t.Fatalf("expected openai-primary, got %s", backend.Name)
+	}
+	if backend.Priority != 10 {
+		t.Fatalf("expected priority 10, got %d", backend.Priority)
+	}
+	if len(backend.Models) != 1 || backend.Models[0] != "gpt-4.1-mini" {
+		t.Fatalf("expected configured models, got %#v", backend.Models)
+	}
+	if backend.Provider == nil {
+		t.Fatal("expected provider implementation")
+	}
+}
+
+func TestBuildProviderBackendSupportsOllama(t *testing.T) {
+	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
+		Type:     "ollama",
+		Name:     "ollama-primary",
+		BaseURL:  "http://127.0.0.1:11434",
+		Model:    "llama3.1:8b",
+		Priority: 20,
+		Models:   []string{"llama3.1:8b"},
+	}, "gpt-4o-mini", providermock.Config{})
+	if err != nil {
+		t.Fatalf("build ollama backend: %v", err)
+	}
+
+	if backend.Name != "ollama-primary" {
+		t.Fatalf("expected ollama-primary, got %s", backend.Name)
+	}
+	if backend.Priority != 20 {
+		t.Fatalf("expected priority 20, got %d", backend.Priority)
+	}
+	if len(backend.Models) != 1 || backend.Models[0] != "llama3.1:8b" {
+		t.Fatalf("expected configured models, got %#v", backend.Models)
 	}
 	if backend.Provider == nil {
 		t.Fatal("expected provider implementation")
@@ -54,6 +97,51 @@ func TestBuildProviderBackendRejectsMissingOpenAIBaseURL(t *testing.T) {
 	}, "gpt-4o-mini", providermock.Config{})
 	if err == nil {
 		t.Fatal("expected missing base url error")
+	}
+}
+
+func TestBuildProviderBackendRejectsMissingOllamaBaseURL(t *testing.T) {
+	_, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
+		Type: "ollama",
+	}, "gpt-4o-mini", providermock.Config{})
+	if err == nil {
+		t.Fatal("expected missing base url error")
+	}
+}
+
+func TestBuildProviderBackendsSupportsConfiguredList(t *testing.T) {
+	backends, sources, err := buildProviderBackends(config.Config{
+		Gateway: config.GatewayConfig{
+			DefaultModel: "gpt-4o-mini",
+		},
+		Provider: config.ProviderConfig{
+			Backends: []config.ProviderEndpointConfig{
+				{
+					Type:     "mock",
+					Name:     "generic-fallback",
+					Priority: 200,
+				},
+				{
+					Type:     "mock",
+					Name:     "fast-gpt4o",
+					Priority: 50,
+					Models:   []string{"gpt-4o-mini"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured backends: %v", err)
+	}
+
+	if len(backends) != 2 {
+		t.Fatalf("expected 2 backends, got %d", len(backends))
+	}
+	if backends[1].Priority != 50 || len(backends[1].Models) != 1 {
+		t.Fatalf("expected routing metadata on second backend, got %#v", backends[1])
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected model sources for both mock backends, got %d", len(sources))
 	}
 }
 

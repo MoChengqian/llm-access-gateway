@@ -8,36 +8,54 @@ The LLM Access Gateway routes chat requests through an ordered set of provider b
 2. router-level fallback across backends
 3. passive health tracking plus active probing
 
-The current implementation is intentionally simple and evidence-based: it is an ordered primary/secondary failover design, not a weighted load balancer. Backend order comes from process configuration, unhealthy backends are skipped during cooldown when healthy alternatives exist, and streaming fallback stops once the first chunk has been accepted from an upstream provider.
+The current implementation is intentionally simple and evidence-based: it is a deterministic failover router, not a weighted load balancer. Backend choice now comes from process configuration plus two routing hints:
+
+1. exact model matches are preferred over generic backends
+2. lower numeric `priority` values are attempted before higher values
+
+After candidate ranking, unhealthy backends are skipped during cooldown when healthy alternatives exist, and streaming fallback still stops once the first chunk has been accepted from an upstream provider.
 
 ## Routing Strategy
 
 ### Backend order is deterministic
 
-The gateway builds exactly two chat backends, `primary` and `secondary`, in that order. `buildProviderBackends()` returns the slice `[primary, secondary]`, and the router preserves that order when choosing candidates.
+The gateway now supports two configuration shapes:
+
+- legacy `provider.primary` plus `provider.secondary`
+- preferred `provider.backends[]` for any number of backends
+
+In both cases, `buildProviderBackends()` produces an ordered backend slice. The router then ranks that slice with `rankBackends()`:
+
+- model-scoped backends whose `models[]` list contains the request model get the highest score
+- generic backends with an empty `models[]` list stay eligible for all requests
+- non-matching specialized backends remain last-resort candidates
+- ties are broken by lower `priority`
+- remaining ties preserve configuration order
 
 ```go
-func buildProviderBackends(cfg config.Config) ([]providerrouter.Backend, []modelsservice.Source, error) {
-    primary, err := buildProviderBackend("primary", cfg.Provider.Primary, cfg.Gateway.DefaultModel, providermock.Config{
-        FailCreate: cfg.Gateway.PrimaryMockFailCreate,
-        FailStream: cfg.Gateway.PrimaryMockFailStream,
+func rankBackends(backends []Backend, model string) []Backend {
+    sort.SliceStable(ranked, func(i, j int) bool {
+        leftScore := backendModelScore(ranked[i], normalizedModel)
+        rightScore := backendModelScore(ranked[j], normalizedModel)
+        if leftScore != rightScore {
+            return leftScore > rightScore
+        }
+        return ranked[i].Priority < ranked[j].Priority
     })
-    secondary, err := buildProviderBackend("secondary", cfg.Provider.Secondary, cfg.Gateway.DefaultModel, providermock.Config{})
-    return []providerrouter.Backend{primary, secondary}, sources, nil
 }
 ```
 
 This means:
 
-- the primary backend is always attempted first when it is considered healthy
-- the secondary backend is a failover target, not a load-balancing peer
-- there is no weight field, percentage split, or random selection in the current code path
+- a backend can be made request-specific without hard-coding router branches
+- a generic backend can still act as a safety net when the preferred model-specific backend fails
+- there is still no weight field, percentage split, or random selection in the current code path
 
-That last point matters because earlier handoff notes mention weight-based routing, but the shipped implementation does not currently support it.
+Legacy primary/secondary configs still work unchanged. They are converted into two ranked backends with default priorities so existing environments keep their original behavior.
 
 ### Candidate selection is health-aware
 
-Before each request, the router calls `candidates()` to split configured backends into:
+Before each request, the router calls `candidates(req.Model)` to split ranked backends into:
 
 - `candidates`: backends that are not currently in cooldown
 - `skipped`: backends whose `unhealthyUntil` timestamp is still in the future
@@ -207,7 +225,7 @@ The HTTP handler maps that state to:
 
 ### `/debug/providers`
 
-`/debug/providers` exposes aggregate readiness plus per-backend status:
+`/debug/providers` exposes aggregate readiness plus per-backend status, including routing metadata:
 
 ```json
 {
@@ -215,6 +233,8 @@ The HTTP handler maps that state to:
   "providers": [
     {
       "name": "primary",
+      "priority": 100,
+      "models": [],
       "healthy": false,
       "consecutive_failures": 1,
       "unhealthy_until": "2026-04-07T10:00:30Z",

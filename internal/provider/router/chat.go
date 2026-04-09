@@ -3,6 +3,8 @@ package router
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,10 +16,14 @@ import (
 type Backend struct {
 	Name     string
 	Provider provider.ChatCompletionProvider
+	Priority int
+	Models   []string
 }
 
 type BackendStatus struct {
 	Name                string    `json:"name"`
+	Priority            int       `json:"priority"`
+	Models              []string  `json:"models,omitempty"`
 	Healthy             bool      `json:"healthy"`
 	ConsecutiveFailures int       `json:"consecutive_failures"`
 	UnhealthyUntil      time.Time `json:"unhealthy_until,omitempty"`
@@ -95,7 +101,7 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 		span.End(traceErr)
 	}()
 
-	candidates, skipped := p.candidates()
+	candidates, skipped := p.candidates(req.Model)
 	if len(candidates) == 0 {
 		traceErr = errors.New("no provider backends configured")
 		return provider.ChatCompletionResponse{}, traceErr
@@ -165,7 +171,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 		zap.String("model", req.Model),
 		zap.Int("configured_backends", len(p.backends)),
 	)
-	candidates, skipped := p.candidates()
+	candidates, skipped := p.candidates(req.Model)
 	if len(candidates) == 0 {
 		err := errors.New("no provider backends configured")
 		span.End(err)
@@ -380,15 +386,16 @@ func (p *Provider) forwardStreamEvent(ctx context.Context, wrapped chan<- provid
 	}
 }
 
-func (p *Provider) candidates() ([]Backend, []Backend) {
+func (p *Provider) candidates(model string) ([]Backend, []Backend) {
 	now := p.now()
+	ranked := rankBackends(p.backends, model)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	candidates := make([]Backend, 0, len(p.backends))
-	skipped := make([]Backend, 0, len(p.backends))
-	for _, backend := range p.backends {
+	candidates := make([]Backend, 0, len(ranked))
+	skipped := make([]Backend, 0, len(ranked))
+	for _, backend := range ranked {
 		state := p.states[backend.Name]
 		if !state.unhealthyUntil.IsZero() && state.unhealthyUntil.After(now) {
 			skipped = append(skipped, backend)
@@ -477,6 +484,8 @@ func (p *Provider) BackendStatuses() []BackendStatus {
 		healthy := state.unhealthyUntil.IsZero() || !state.unhealthyUntil.After(now)
 		statuses = append(statuses, BackendStatus{
 			Name:                backend.Name,
+			Priority:            backend.Priority,
+			Models:              append([]string(nil), backend.Models...),
 			Healthy:             healthy,
 			ConsecutiveFailures: state.consecutiveFailures,
 			UnhealthyUntil:      state.unhealthyUntil,
@@ -503,4 +512,38 @@ func (p *Provider) observe(event Event) {
 		return
 	}
 	p.observer.OnEvent(event)
+}
+
+func rankBackends(backends []Backend, model string) []Backend {
+	ranked := append([]Backend(nil), backends...)
+	if len(ranked) <= 1 {
+		return ranked
+	}
+
+	normalizedModel := strings.TrimSpace(strings.ToLower(model))
+	sort.SliceStable(ranked, func(i, j int) bool {
+		leftScore := backendModelScore(ranked[i], normalizedModel)
+		rightScore := backendModelScore(ranked[j], normalizedModel)
+		if leftScore != rightScore {
+			return leftScore > rightScore
+		}
+		return ranked[i].Priority < ranked[j].Priority
+	})
+
+	return ranked
+}
+
+func backendModelScore(backend Backend, normalizedModel string) int {
+	if normalizedModel == "" {
+		return 1
+	}
+	if len(backend.Models) == 0 {
+		return 1
+	}
+	for _, candidate := range backend.Models {
+		if strings.EqualFold(strings.TrimSpace(candidate), normalizedModel) {
+			return 2
+		}
+	}
+	return 0
 }

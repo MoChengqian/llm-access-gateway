@@ -154,6 +154,73 @@ func TestUnhealthyPrimaryIsSkippedDuringCooldown(t *testing.T) {
 	}
 }
 
+func TestCreateCompletionPrefersModelMatchedHigherPriorityBackend(t *testing.T) {
+	generic := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "generic"},
+	}
+	matched := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "matched"},
+	}
+	nonMatching := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "other"},
+	}
+
+	routed := New([]Backend{
+		{Name: "generic", Priority: 200, Provider: generic},
+		{Name: "other", Priority: 10, Models: []string{"claude-3-7-sonnet"}, Provider: nonMatching},
+		{Name: "matched", Priority: 50, Models: []string{"gpt-4o-mini"}, Provider: matched},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	if err != nil {
+		t.Fatalf("create completion: %v", err)
+	}
+
+	if resp.Model != "matched" {
+		t.Fatalf("expected matched response first, got %#v", resp)
+	}
+	if !matched.createCalled {
+		t.Fatal("expected matched backend to be attempted")
+	}
+	if generic.createCalled {
+		t.Fatal("expected generic backend not to be used after matched success")
+	}
+	if nonMatching.createCalled {
+		t.Fatal("expected non-matching backend to stay behind generic fallback")
+	}
+}
+
+func TestCreateCompletionFallsBackFromMatchedBackendToGenericBackend(t *testing.T) {
+	matched := &stubProvider{createErr: errors.New("matched failed")}
+	generic := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "generic"},
+	}
+	nonMatching := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "other"},
+	}
+
+	routed := New([]Backend{
+		{Name: "non-matching", Priority: 1, Models: []string{"claude-3-7-sonnet"}, Provider: nonMatching},
+		{Name: "generic", Priority: 100, Provider: generic},
+		{Name: "matched", Priority: 50, Models: []string{"gpt-4o-mini"}, Provider: matched},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	if err != nil {
+		t.Fatalf("create completion: %v", err)
+	}
+
+	if resp.Model != "generic" {
+		t.Fatalf("expected generic fallback response, got %#v", resp)
+	}
+	if !matched.createCalled || !generic.createCalled {
+		t.Fatalf("expected matched and generic backends to be attempted, got matched=%v generic=%v", matched.createCalled, generic.createCalled)
+	}
+	if nonMatching.createCalled {
+		t.Fatal("expected non-matching backend to remain last resort")
+	}
+}
+
 func TestReadyAndBackendStatusesReflectCooldown(t *testing.T) {
 	now := time.Unix(123, 0)
 	primary := &stubProvider{createErr: errors.New("primary failed")}

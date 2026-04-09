@@ -126,7 +126,7 @@ func applyEnvOverrides(values map[string]any, prefix string, envPrefix string, r
 		}
 
 		if envValue, ok := os.LookupEnv(envKey); ok {
-			values[key] = parseScalar(envValue)
+			values[key] = parseOverrideValue(envValue, value)
 		}
 	}
 }
@@ -225,6 +225,13 @@ func parseSimpleYAML(content string) (map[string]any, error) {
 func parseScalar(value string) any {
 	unquoted := strings.Trim(value, "\"")
 
+	if strings.HasPrefix(unquoted, "[") && strings.HasSuffix(unquoted, "]") {
+		var parsed any
+		if err := json.Unmarshal([]byte(unquoted), &parsed); err == nil {
+			return parsed
+		}
+	}
+
 	if intValue, err := strconv.Atoi(unquoted); err == nil {
 		return intValue
 	}
@@ -237,6 +244,35 @@ func parseScalar(value string) any {
 	}
 
 	return unquoted
+}
+
+func parseOverrideValue(value string, existing any) any {
+	switch existing.(type) {
+	case []any, []string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return []string{}
+		}
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			var parsed any
+			if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+				return parsed
+			}
+		}
+
+		parts := strings.Split(trimmed, ",")
+		items := make([]string, 0, len(parts))
+		for _, part := range parts {
+			item := strings.TrimSpace(part)
+			if item == "" {
+				continue
+			}
+			items = append(items, item)
+		}
+		return items
+	default:
+		return parseScalar(value)
+	}
 }
 
 func countLeadingSpaces(line string) int {
