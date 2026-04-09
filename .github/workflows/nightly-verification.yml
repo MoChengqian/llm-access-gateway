@@ -151,6 +151,15 @@ jobs:
           curl -fsS "${BASE_URL}/metrics" >"${ARTIFACT_DIR}/adapter-metrics.prom"
           curl -fsS "${BASE_URL}/debug/providers" >"${ARTIFACT_DIR}/adapter-providers.json"
 
+      - name: Check benchmark regression thresholds
+        run: |
+          go run ./cmd/nightlycheck \
+            -mode benchmarks \
+            -mock-non-stream "${ARTIFACT_DIR}/mock-non-stream.json" \
+            -mock-stream "${ARTIFACT_DIR}/mock-stream.json" \
+            -adapter-non-stream "${ARTIFACT_DIR}/adapter-non-stream.json" \
+            -adapter-stream "${ARTIFACT_DIR}/adapter-stream.json"
+
       - name: Restore default development tenant limits
         if: always()
         run: |
@@ -272,15 +281,10 @@ jobs:
           cat "${ARTIFACT_DIR}/gateway-prechunk.log"
           exit 1
 
-      - name: Run and assert pre-chunk failure drill
+      - name: Run pre-chunk failure drill
         run: |
           ./scripts/provider-fallback-drill.sh stream-fail | tee "${ARTIFACT_DIR}/prechunk.out"
-          grep -Fq 'HTTP/1.1 200 OK' "${ARTIFACT_DIR}/prechunk.out"
-          grep -Fq 'data: [DONE]' "${ARTIFACT_DIR}/prechunk.out"
-          grep -Fq 'chatcmpl-mock' "${ARTIFACT_DIR}/prechunk.out"
           curl -fsS "${BASE_URL}/metrics" >"${ARTIFACT_DIR}/prechunk-metrics.prom"
-          grep -Fq 'lag_provider_events_total{type="provider_request_failed",operation="stream",backend="openai-primary"} 1' "${ARTIFACT_DIR}/prechunk-metrics.prom"
-          grep -Fq 'lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1' "${ARTIFACT_DIR}/prechunk-metrics.prom"
           curl -fsS "${BASE_URL}/debug/providers" >"${ARTIFACT_DIR}/prechunk-providers.json"
 
       - name: Stop pre-chunk processes
@@ -328,25 +332,23 @@ jobs:
           cat "${ARTIFACT_DIR}/gateway-partial.log"
           exit 1
 
-      - name: Run and assert partial stream scenario
+      - name: Run partial stream scenario
         run: |
           curl -i -sS -N "${BASE_URL}/v1/chat/completions" \
             -H "Authorization: Bearer ${API_KEY}" \
             -H 'Content-Type: application/json' \
             -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}],"stream":true}' | tee "${ARTIFACT_DIR}/partial.out"
-          grep -Fq 'HTTP/1.1 200 OK' "${ARTIFACT_DIR}/partial.out"
-          grep -Fq 'partial ' "${ARTIFACT_DIR}/partial.out"
-          if grep -Fq 'data: [DONE]' "${ARTIFACT_DIR}/partial.out"; then
-            echo "unexpected [DONE] marker after partial stream failure" >&2
-            exit 1
-          fi
           curl -fsS "${BASE_URL}/metrics" >"${ARTIFACT_DIR}/partial-metrics.prom"
-          grep -Fq 'lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="openai-primary"} 1' "${ARTIFACT_DIR}/partial-metrics.prom"
-          if grep -Fq 'lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}' "${ARTIFACT_DIR}/partial-metrics.prom"; then
-            echo "unexpected stream fallback after first chunk" >&2
-            exit 1
-          fi
           curl -fsS "${BASE_URL}/debug/providers" >"${ARTIFACT_DIR}/partial-providers.json"
+
+      - name: Check streaming failure regression expectations
+        run: |
+          go run ./cmd/nightlycheck \
+            -mode stream-failures \
+            -prechunk-output "${ARTIFACT_DIR}/prechunk.out" \
+            -prechunk-metrics "${ARTIFACT_DIR}/prechunk-metrics.prom" \
+            -partial-output "${ARTIFACT_DIR}/partial.out" \
+            -partial-metrics "${ARTIFACT_DIR}/partial-metrics.prom"
 
       - name: Dump stream drill logs on failure
         if: failure()
