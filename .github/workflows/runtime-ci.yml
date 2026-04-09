@@ -97,7 +97,28 @@ jobs:
       - name: Stop smoke gateway and start synthetic upstream
         run: |
           if test -f /tmp/gateway.pid; then
-            kill "$(cat /tmp/gateway.pid)" || true
+            smoke_pid="$(cat /tmp/gateway.pid)"
+            kill "${smoke_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${smoke_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          for i in $(seq 1 30); do
+            if ! curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+            echo "smoke gateway still serving ${BASE_URL} after shutdown" >&2
+            test -f /tmp/gateway.log && cat /tmp/gateway.log || true
+            exit 1
           fi
 
           nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode error500 >/tmp/upstream.log 2>&1 &
@@ -115,6 +136,7 @@ jobs:
 
       - name: Start gateway for fallback verification
         env:
+          APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS: "0"
           APP_PROVIDER_PRIMARY_TYPE: openai
           APP_PROVIDER_PRIMARY_NAME: openai-primary
           APP_PROVIDER_PRIMARY_BASE_URL: http://127.0.0.1:18081/v1
@@ -127,15 +149,30 @@ jobs:
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
-            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
-              exit 0
+            if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
+              cat /tmp/gateway-fallback.log
+              exit 1
             fi
+
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              providers_json="$(curl -fsS "${BASE_URL}/debug/providers" 2>/dev/null || true)"
+              if printf '%s' "${providers_json}" | grep -q '"name":"openai-primary"'; then
+                printf '%s\n' "${providers_json}" >/tmp/fallback-start-providers.json
+                exit 0
+              fi
+            fi
+
+            if grep -q 'address already in use' /tmp/gateway-fallback.log; then
+              cat /tmp/gateway-fallback.log
+              exit 1
+            fi
+
             sleep 1
           done
 
           cat /tmp/gateway-fallback.log
+          test -f /tmp/fallback-start-providers.json && cat /tmp/fallback-start-providers.json || true
           exit 1
-
       - name: Run fallback drill
         run: ./scripts/provider-fallback-drill.sh create-fail | tee /tmp/fallback.out
 
@@ -145,8 +182,9 @@ jobs:
           grep -q 'This is a mock response from LLM Access Gateway.' /tmp/fallback.out
 
           curl -fsS "${BASE_URL}/debug/providers" | tee /tmp/providers.json
-          grep -q '"name":"openai-primary"' /tmp/providers.json
-          grep -q '"healthy":false' /tmp/providers.json
+          grep -Eq '"name":"openai-primary".*"healthy":false' /tmp/providers.json
+          grep -Eq '"name":"secondary".*"healthy":true' /tmp/providers.json
+          grep -q '"ready":true' /tmp/providers.json
 
       - name: Dump process logs on failure
         if: failure()

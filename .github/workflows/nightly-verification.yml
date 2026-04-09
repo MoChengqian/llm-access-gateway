@@ -106,7 +106,31 @@ jobs:
       - name: Stop mock benchmark gateway
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          for i in $(seq 1 30); do
+            if ! curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+            echo "mock benchmark gateway still serving ${BASE_URL} after shutdown" >&2
+            test -f "${ARTIFACT_DIR}/gateway-mock.log" && cat "${ARTIFACT_DIR}/gateway-mock.log" || true
+            exit 1
+          fi
+
           rm -f /tmp/gateway.pid
 
       - name: Start synthetic upstream for adapter benchmarks
@@ -138,13 +162,29 @@ jobs:
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
-            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
-              exit 0
+            if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
+              cat "${ARTIFACT_DIR}/gateway-adapter.log"
+              exit 1
             fi
+
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              providers_json="$(curl -fsS "${BASE_URL}/debug/providers" 2>/dev/null || true)"
+              if printf '%s' "${providers_json}" | grep -q '"name":"openai-primary"'; then
+                printf '%s\n' "${providers_json}" >"${ARTIFACT_DIR}/gateway-adapter-start-providers.json"
+                exit 0
+              fi
+            fi
+
+            if grep -q 'address already in use' "${ARTIFACT_DIR}/gateway-adapter.log"; then
+              cat "${ARTIFACT_DIR}/gateway-adapter.log"
+              exit 1
+            fi
+
             sleep 1
           done
 
           cat "${ARTIFACT_DIR}/gateway-adapter.log"
+          test -f "${ARTIFACT_DIR}/gateway-adapter-start-providers.json" && cat "${ARTIFACT_DIR}/gateway-adapter-start-providers.json" || true
           exit 1
 
       - name: Run adapter benchmarks
@@ -263,6 +303,7 @@ jobs:
 
       - name: Start gateway for pre-chunk failure scenario
         env:
+          APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS: "0"
           APP_PROVIDER_PRIMARY_TYPE: openai
           APP_PROVIDER_PRIMARY_NAME: openai-primary
           APP_PROVIDER_PRIMARY_BASE_URL: http://127.0.0.1:18081/v1
@@ -275,13 +316,29 @@ jobs:
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
-            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
-              exit 0
+            if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
+              cat "${ARTIFACT_DIR}/gateway-prechunk.log"
+              exit 1
             fi
+
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              providers_json="$(curl -fsS "${BASE_URL}/debug/providers" 2>/dev/null || true)"
+              if printf '%s' "${providers_json}" | grep -q '"name":"openai-primary"'; then
+                printf '%s\n' "${providers_json}" >"${ARTIFACT_DIR}/gateway-prechunk-start-providers.json"
+                exit 0
+              fi
+            fi
+
+            if grep -q 'address already in use' "${ARTIFACT_DIR}/gateway-prechunk.log"; then
+              cat "${ARTIFACT_DIR}/gateway-prechunk.log"
+              exit 1
+            fi
+
             sleep 1
           done
 
           cat "${ARTIFACT_DIR}/gateway-prechunk.log"
+          test -f "${ARTIFACT_DIR}/gateway-prechunk-start-providers.json" && cat "${ARTIFACT_DIR}/gateway-prechunk-start-providers.json" || true
           exit 1
 
       - name: Run pre-chunk failure drill
@@ -293,8 +350,52 @@ jobs:
       - name: Stop pre-chunk processes
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
-          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          if test -f /tmp/upstream.pid; then
+            upstream_pid="$(cat /tmp/upstream.pid)"
+            kill "${upstream_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          for i in $(seq 1 30); do
+            gateway_down=true
+            upstream_down=true
+            curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
+            curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null 2>&1 && upstream_down=false
+            if $gateway_down && $upstream_down; then
+              break
+            fi
+            sleep 1
+          done
+
+          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+            echo "pre-chunk gateway still serving ${BASE_URL} after shutdown" >&2
+            test -f "${ARTIFACT_DIR}/gateway-prechunk.log" && cat "${ARTIFACT_DIR}/gateway-prechunk.log" || true
+            exit 1
+          fi
+          if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null 2>&1; then
+            echo "pre-chunk upstream still serving http://127.0.0.1:18081 after shutdown" >&2
+            test -f "${ARTIFACT_DIR}/upstream-prechunk.log" && cat "${ARTIFACT_DIR}/upstream-prechunk.log" || true
+            exit 1
+          fi
+
           rm -f /tmp/gateway.pid /tmp/upstream.pid
 
       - name: Start synthetic upstream for partial stream scenario
@@ -314,6 +415,7 @@ jobs:
 
       - name: Start gateway for partial stream scenario
         env:
+          APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS: "0"
           APP_PROVIDER_PRIMARY_TYPE: openai
           APP_PROVIDER_PRIMARY_NAME: openai-primary
           APP_PROVIDER_PRIMARY_BASE_URL: http://127.0.0.1:18081/v1
@@ -326,13 +428,29 @@ jobs:
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
-            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
-              exit 0
+            if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
+              cat "${ARTIFACT_DIR}/gateway-partial.log"
+              exit 1
             fi
+
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              providers_json="$(curl -fsS "${BASE_URL}/debug/providers" 2>/dev/null || true)"
+              if printf '%s' "${providers_json}" | grep -q '"name":"openai-primary"'; then
+                printf '%s\n' "${providers_json}" >"${ARTIFACT_DIR}/gateway-partial-start-providers.json"
+                exit 0
+              fi
+            fi
+
+            if grep -q 'address already in use' "${ARTIFACT_DIR}/gateway-partial.log"; then
+              cat "${ARTIFACT_DIR}/gateway-partial.log"
+              exit 1
+            fi
+
             sleep 1
           done
 
           cat "${ARTIFACT_DIR}/gateway-partial.log"
+          test -f "${ARTIFACT_DIR}/gateway-partial-start-providers.json" && cat "${ARTIFACT_DIR}/gateway-partial-start-providers.json" || true
           exit 1
 
       - name: Run partial stream scenario
@@ -466,13 +584,29 @@ jobs:
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
-            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
-              exit 0
+            if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
+              cat "${ARTIFACT_DIR}/gateway-system.log"
+              exit 1
             fi
+
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              providers_json="$(curl -fsS "${BASE_URL}/debug/providers" 2>/dev/null || true)"
+              if printf '%s' "${providers_json}" | grep -q '"name":"anthropic-primary"'; then
+                printf '%s\n' "${providers_json}" >"${ARTIFACT_DIR}/gateway-system-start-providers.json"
+                exit 0
+              fi
+            fi
+
+            if grep -q 'address already in use' "${ARTIFACT_DIR}/gateway-system.log"; then
+              cat "${ARTIFACT_DIR}/gateway-system.log"
+              exit 1
+            fi
+
             sleep 1
           done
 
           cat "${ARTIFACT_DIR}/gateway-system.log"
+          test -f "${ARTIFACT_DIR}/gateway-system-start-providers.json" && cat "${ARTIFACT_DIR}/gateway-system-start-providers.json" || true
           exit 1
 
       - name: Run system prompt translation drill
@@ -483,8 +617,52 @@ jobs:
       - name: Stop system prompt processes
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
-          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          if test -f /tmp/upstream.pid; then
+            upstream_pid="$(cat /tmp/upstream.pid)"
+            kill "${upstream_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          for i in $(seq 1 30); do
+            gateway_down=true
+            upstream_down=true
+            curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
+            curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1 && upstream_down=false
+            if $gateway_down && $upstream_down; then
+              break
+            fi
+            sleep 1
+          done
+
+          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+            echo "system prompt gateway still serving ${BASE_URL} after shutdown" >&2
+            test -f "${ARTIFACT_DIR}/gateway-system.log" && cat "${ARTIFACT_DIR}/gateway-system.log" || true
+            exit 1
+          fi
+          if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1; then
+            echo "system prompt upstream still serving ${UPSTREAM_BASE_URL} after shutdown" >&2
+            test -f "${ARTIFACT_DIR}/upstream-system.log" && cat "${ARTIFACT_DIR}/upstream-system.log" || true
+            exit 1
+          fi
+
           rm -f /tmp/gateway.pid /tmp/upstream.pid
 
       - name: Start synthetic Anthropic upstream for pre-chunk failure scenario
@@ -504,6 +682,7 @@ jobs:
 
       - name: Start gateway for Anthropic pre-chunk failure scenario
         env:
+          APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS: "0"
           APP_GATEWAY_DEFAULT_MODEL: claude-3-5-sonnet-latest
           APP_PROVIDER_PRIMARY_TYPE: anthropic
           APP_PROVIDER_PRIMARY_NAME: anthropic-primary
@@ -519,13 +698,29 @@ jobs:
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
-            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
-              exit 0
+            if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
+              cat "${ARTIFACT_DIR}/gateway-prechunk.log"
+              exit 1
             fi
+
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              providers_json="$(curl -fsS "${BASE_URL}/debug/providers" 2>/dev/null || true)"
+              if printf '%s' "${providers_json}" | grep -q '"name":"anthropic-primary"'; then
+                printf '%s\n' "${providers_json}" >"${ARTIFACT_DIR}/gateway-prechunk-start-providers.json"
+                exit 0
+              fi
+            fi
+
+            if grep -q 'address already in use' "${ARTIFACT_DIR}/gateway-prechunk.log"; then
+              cat "${ARTIFACT_DIR}/gateway-prechunk.log"
+              exit 1
+            fi
+
             sleep 1
           done
 
           cat "${ARTIFACT_DIR}/gateway-prechunk.log"
+          test -f "${ARTIFACT_DIR}/gateway-prechunk-start-providers.json" && cat "${ARTIFACT_DIR}/gateway-prechunk-start-providers.json" || true
           exit 1
 
       - name: Run Anthropic pre-chunk failure drill
@@ -537,8 +732,52 @@ jobs:
       - name: Stop Anthropic pre-chunk processes
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
-          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          if test -f /tmp/upstream.pid; then
+            upstream_pid="$(cat /tmp/upstream.pid)"
+            kill "${upstream_pid}" || true
+
+            for i in $(seq 1 30); do
+              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+          for i in $(seq 1 30); do
+            gateway_down=true
+            upstream_down=true
+            curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
+            curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1 && upstream_down=false
+            if $gateway_down && $upstream_down; then
+              break
+            fi
+            sleep 1
+          done
+
+          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+            echo "Anthropic pre-chunk gateway still serving ${BASE_URL} after shutdown" >&2
+            test -f "${ARTIFACT_DIR}/gateway-prechunk.log" && cat "${ARTIFACT_DIR}/gateway-prechunk.log" || true
+            exit 1
+          fi
+          if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1; then
+            echo "Anthropic pre-chunk upstream still serving ${UPSTREAM_BASE_URL} after shutdown" >&2
+            test -f "${ARTIFACT_DIR}/upstream-prechunk.log" && cat "${ARTIFACT_DIR}/upstream-prechunk.log" || true
+            exit 1
+          fi
+
           rm -f /tmp/gateway.pid /tmp/upstream.pid
 
       - name: Start synthetic Anthropic upstream for partial stream scenario
@@ -558,6 +797,7 @@ jobs:
 
       - name: Start gateway for Anthropic partial stream scenario
         env:
+          APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS: "0"
           APP_GATEWAY_DEFAULT_MODEL: claude-3-5-sonnet-latest
           APP_PROVIDER_PRIMARY_TYPE: anthropic
           APP_PROVIDER_PRIMARY_NAME: anthropic-primary
@@ -573,13 +813,29 @@ jobs:
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
-            if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
-              exit 0
+            if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
+              cat "${ARTIFACT_DIR}/gateway-partial.log"
+              exit 1
             fi
+
+            if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
+              providers_json="$(curl -fsS "${BASE_URL}/debug/providers" 2>/dev/null || true)"
+              if printf '%s' "${providers_json}" | grep -q '"name":"anthropic-primary"'; then
+                printf '%s\n' "${providers_json}" >"${ARTIFACT_DIR}/gateway-partial-start-providers.json"
+                exit 0
+              fi
+            fi
+
+            if grep -q 'address already in use' "${ARTIFACT_DIR}/gateway-partial.log"; then
+              cat "${ARTIFACT_DIR}/gateway-partial.log"
+              exit 1
+            fi
+
             sleep 1
           done
 
           cat "${ARTIFACT_DIR}/gateway-partial.log"
+          test -f "${ARTIFACT_DIR}/gateway-partial-start-providers.json" && cat "${ARTIFACT_DIR}/gateway-partial-start-providers.json" || true
           exit 1
 
       - name: Run Anthropic partial stream scenario
