@@ -7,11 +7,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 )
 
 func TestRegistryServeHTTP(t *testing.T) {
 	registry := NewRegistry()
+	cooldownUntil := time.Now().Add(time.Minute)
+	registry.SyncProviderStatuses([]handlers.ProviderBackendStatus{
+		{
+			Name:                "mock-primary",
+			Healthy:             false,
+			ConsecutiveFailures: 2,
+			UnhealthyUntil:      cooldownUntil,
+		},
+		{
+			Name:    "mock-secondary",
+			Healthy: true,
+		},
+	})
 	registry.RecordHTTPRequest(http.MethodGet, "/healthz", http.StatusOK, 12*time.Millisecond)
 	registry.RecordHTTPRequest(http.MethodPost, "/v1/chat/completions", http.StatusUnauthorized, 34*time.Millisecond)
 	registry.RecordReadyzFailure()
@@ -20,10 +34,12 @@ func TestRegistryServeHTTP(t *testing.T) {
 	registry.RecordStreamChunk()
 	registry.RecordStreamChunk()
 	registry.OnEvent(router.Event{
-		Type:      "provider_request_failed",
-		Operation: "create",
-		Backend:   "mock-primary",
-		Duration:  15 * time.Millisecond,
+		Type:                "provider_request_failed",
+		Operation:           "create",
+		Backend:             "mock-primary",
+		Duration:            15 * time.Millisecond,
+		ConsecutiveFailures: 2,
+		UnhealthyUntil:      cooldownUntil,
 	})
 	registry.OnEvent(router.Event{
 		Type:      "provider_fallback_succeeded",
@@ -38,10 +54,12 @@ func TestRegistryServeHTTP(t *testing.T) {
 		Duration:  2 * time.Millisecond,
 	})
 	registry.OnEvent(router.Event{
-		Type:      "provider_stream_interrupted",
-		Operation: "stream",
-		Backend:   "mock-primary",
-		Duration:  7 * time.Millisecond,
+		Type:                "provider_stream_interrupted",
+		Operation:           "stream",
+		Backend:             "mock-primary",
+		Duration:            7 * time.Millisecond,
+		ConsecutiveFailures: 2,
+		UnhealthyUntil:      cooldownUntil,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -71,6 +89,18 @@ func TestRegistryServeHTTP(t *testing.T) {
 	}
 	if !strings.Contains(body, `lag_provider_probe_results_total{backend="mock-secondary",result="success"} 1`) {
 		t.Fatalf("expected provider probe result metric, got %s", body)
+	}
+	if !strings.Contains(body, `lag_provider_backend_healthy{backend="mock-primary"} 0`) {
+		t.Fatalf("expected backend health gauge, got %s", body)
+	}
+	if !strings.Contains(body, `lag_provider_backend_consecutive_failures{backend="mock-primary"} 2`) {
+		t.Fatalf("expected consecutive failure gauge, got %s", body)
+	}
+	if !strings.Contains(body, `lag_provider_backend_cooldown_remaining_milliseconds{backend="mock-primary"} `) {
+		t.Fatalf("expected cooldown gauge, got %s", body)
+	}
+	if !strings.Contains(body, "lag_provider_ready 1") {
+		t.Fatalf("expected provider ready gauge, got %s", body)
 	}
 	if !strings.Contains(body, "lag_readyz_failures_total 1") {
 		t.Fatalf("expected readyz failure metric, got %s", body)

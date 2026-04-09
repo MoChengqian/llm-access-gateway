@@ -25,6 +25,10 @@ type RequestMetricsRecorder interface {
 	RecordStreamChunk()
 }
 
+type ProviderStatusMetricsRecorder interface {
+	SyncProviderStatuses(statuses []handlers.ProviderBackendStatus)
+}
+
 func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService models.Service, usageService usageservice.Service, authenticator auth.Authenticator, governanceService governance.Service, providers handlers.ProviderHealthReader, metricsHandler http.Handler, metricsRecorder RequestMetricsRecorder, maxRequestBodyBytes int64) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -39,6 +43,10 @@ func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService model
 	chatHandler := handlers.NewChatHandler(chatService, governanceService, metricsRecorder)
 	modelsHandler := handlers.NewModelsHandler(modelsService)
 	usageHandler := handlers.NewUsageHandler(usageService)
+
+	if syncer, ok := metricsRecorder.(ProviderStatusMetricsRecorder); ok && providers != nil {
+		syncer.SyncProviderStatuses(providers.BackendStatuses())
+	}
 
 	r.Get("/healthz", healthHandler.Healthz)
 	r.Get("/readyz", healthHandler.Readyz)

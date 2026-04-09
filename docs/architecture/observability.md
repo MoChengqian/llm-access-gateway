@@ -162,8 +162,17 @@ Provider observer events are translated into metrics:
 - `lag_provider_operation_duration_milliseconds_sum{operation,backend,result}`
 - `lag_provider_operation_duration_milliseconds_count{operation,backend,result}`
 - `lag_provider_probe_results_total{backend,result}`
+- `lag_provider_backend_healthy{backend}`
+- `lag_provider_backend_consecutive_failures{backend}`
+- `lag_provider_backend_cooldown_remaining_milliseconds{backend}`
+- `lag_provider_ready`
 
 `result="error"` is used for failed or interrupted provider operations, while successful attempts are labeled `result="success"`.
+
+The first four metrics are historical counters or count/sum pairs. The latter four are current-state gauges derived from the latest known backend status, so `/metrics` can answer both:
+
+- what happened recently
+- what the router believes right now
 
 ### Governance and readiness metrics
 
@@ -192,6 +201,7 @@ curl -s http://127.0.0.1:8080/metrics
 curl -s http://127.0.0.1:8080/metrics | grep '^lag_http_requests_total'
 curl -s http://127.0.0.1:8080/metrics | grep '^lag_provider'
 curl -s http://127.0.0.1:8080/metrics | grep '^lag_stream'
+curl -s http://127.0.0.1:8080/metrics | grep '^lag_provider_backend_healthy'
 ```
 
 ## What a Correlated Request Looks Like

@@ -132,7 +132,13 @@ func TestMetricsEndpoint(t *testing.T) {
 			APIKeyEnabled: true,
 			TenantEnabled: true,
 		},
-	}, nil, nil, providerHealthStub{ready: true}, registry)
+	}, nil, nil, providerHealthStub{
+		ready: true,
+		statuses: []handlers.ProviderBackendStatus{
+			{Name: "mock-primary", Healthy: true, ConsecutiveFailures: 0},
+			{Name: "mock-secondary", Healthy: true, ConsecutiveFailures: 0},
+		},
+	}, registry)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -149,6 +155,12 @@ func TestMetricsEndpoint(t *testing.T) {
 	bodyText := rec.Body.String()
 	if !strings.Contains(bodyText, `lag_http_requests_total{method="GET",path="/healthz",status="200"} 1`) {
 		t.Fatalf("expected healthz metric, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `lag_provider_backend_healthy{backend="mock-primary"} 1`) {
+		t.Fatalf("expected provider health gauge, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "lag_provider_ready 1") {
+		t.Fatalf("expected provider ready gauge, got %s", bodyText)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/api/handlers"
 	"github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 )
 
@@ -24,11 +25,18 @@ type Registry struct {
 	streamChunks         uint64
 	streamTTFTCount      uint64
 	streamTTFTMillisSum  uint64
+	providerStatuses     map[string]providerStatus
 }
 
 type durationSample struct {
 	count uint64
 	sumMS uint64
+}
+
+type providerStatus struct {
+	healthy             bool
+	consecutiveFailures int
+	unhealthyUntil      time.Time
 }
 
 func NewRegistry() *Registry {
@@ -39,6 +47,20 @@ func NewRegistry() *Registry {
 		providerDurations:    make(map[string]durationSample),
 		probeResults:         make(map[string]uint64),
 		governanceRejections: make(map[string]uint64),
+		providerStatuses:     make(map[string]providerStatus),
+	}
+}
+
+func (r *Registry) SyncProviderStatuses(statuses []handlers.ProviderBackendStatus) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, status := range statuses {
+		r.providerStatuses[status.Name] = providerStatus{
+			healthy:             status.Healthy,
+			consecutiveFailures: status.ConsecutiveFailures,
+			unhealthyUntil:      status.UnhealthyUntil,
+		}
 	}
 }
 
@@ -90,6 +112,7 @@ func (r *Registry) OnEvent(event router.Event) {
 
 	key := fmt.Sprintf(`type="%s",operation="%s",backend="%s"`, sanitize(event.Type), sanitize(event.Operation), sanitize(event.Backend))
 	r.providerEvents[key]++
+	r.updateProviderStatus(event)
 	if event.Duration > 0 && recordsProviderDuration(event.Type) {
 		result := "success"
 		if strings.Contains(event.Type, "failed") || strings.Contains(event.Type, "interrupted") {
@@ -183,6 +206,56 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 		builder.WriteString(fmt.Sprintf("%d\n", r.probeResults[key]))
 	}
 
+	now := time.Now()
+	healthyBackends := 0
+
+	builder.WriteString("# HELP lag_provider_backend_healthy Current provider backend health status (1=healthy, 0=unhealthy).\n")
+	builder.WriteString("# TYPE lag_provider_backend_healthy gauge\n")
+	for _, key := range sortedKeys(r.providerStatuses) {
+		status := r.providerStatuses[key]
+		if isProviderHealthy(status, now) {
+			healthyBackends++
+			builder.WriteString(`lag_provider_backend_healthy{backend="`)
+			builder.WriteString(sanitize(key))
+			builder.WriteString(`"} 1` + "\n")
+			continue
+		}
+
+		builder.WriteString(`lag_provider_backend_healthy{backend="`)
+		builder.WriteString(sanitize(key))
+		builder.WriteString(`"} 0` + "\n")
+	}
+
+	builder.WriteString("# HELP lag_provider_backend_consecutive_failures Current consecutive failure count by backend.\n")
+	builder.WriteString("# TYPE lag_provider_backend_consecutive_failures gauge\n")
+	for _, key := range sortedKeys(r.providerStatuses) {
+		builder.WriteString(`lag_provider_backend_consecutive_failures{backend="`)
+		builder.WriteString(sanitize(key))
+		builder.WriteString(`"} `)
+		builder.WriteString(fmt.Sprintf("%d\n", r.providerStatuses[key].consecutiveFailures))
+	}
+
+	builder.WriteString("# HELP lag_provider_backend_cooldown_remaining_milliseconds Remaining cooldown time before a backend is re-eligible.\n")
+	builder.WriteString("# TYPE lag_provider_backend_cooldown_remaining_milliseconds gauge\n")
+	for _, key := range sortedKeys(r.providerStatuses) {
+		remaining := int64(0)
+		if r.providerStatuses[key].unhealthyUntil.After(now) {
+			remaining = r.providerStatuses[key].unhealthyUntil.Sub(now).Milliseconds()
+		}
+		builder.WriteString(`lag_provider_backend_cooldown_remaining_milliseconds{backend="`)
+		builder.WriteString(sanitize(key))
+		builder.WriteString(`"} `)
+		builder.WriteString(fmt.Sprintf("%d\n", remaining))
+	}
+
+	builder.WriteString("# HELP lag_provider_ready Current provider readiness derived from backend health.\n")
+	builder.WriteString("# TYPE lag_provider_ready gauge\n")
+	if len(r.providerStatuses) == 0 || healthyBackends > 0 {
+		builder.WriteString("lag_provider_ready 1\n")
+	} else {
+		builder.WriteString("lag_provider_ready 0\n")
+	}
+
 	builder.WriteString("# HELP lag_governance_rejections_total Total governance rejections by reason.\n")
 	builder.WriteString("# TYPE lag_governance_rejections_total counter\n")
 	for _, key := range sortedKeys(r.governanceRejections) {
@@ -235,4 +308,36 @@ func recordsProviderDuration(eventType string) bool {
 	default:
 		return false
 	}
+}
+
+func (r *Registry) updateProviderStatus(event router.Event) {
+	if event.Backend == "" {
+		return
+	}
+
+	status := r.providerStatuses[event.Backend]
+	switch event.Type {
+	case "provider_request_succeeded", "provider_probe_succeeded", "provider_recovered":
+		status.healthy = true
+		status.consecutiveFailures = 0
+		status.unhealthyUntil = time.Time{}
+	case "provider_request_failed", "provider_stream_interrupted", "provider_probe_failed":
+		status.consecutiveFailures = event.ConsecutiveFailures
+		status.unhealthyUntil = event.UnhealthyUntil
+		status.healthy = event.UnhealthyUntil.IsZero()
+	default:
+		return
+	}
+
+	r.providerStatuses[event.Backend] = status
+}
+
+func isProviderHealthy(status providerStatus, now time.Time) bool {
+	if status.unhealthyUntil.After(now) {
+		return false
+	}
+	if !status.unhealthyUntil.IsZero() && !status.unhealthyUntil.After(now) {
+		return true
+	}
+	return status.healthy
 }

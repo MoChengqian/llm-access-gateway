@@ -58,6 +58,7 @@ It answers the questions that matter for this service:
 - are readiness failures increasing?
 - are governance rejections happening?
 - what is the stream TTFT profile?
+- which backend is currently healthy right now?
 
 That is a better starting point than a huge metrics surface with no connection to actual operating decisions.
 
@@ -80,6 +81,13 @@ The current implementation uses zap structured logs for:
 - provider events
 
 That means routing events such as fallback, skipped unhealthy backends, probe failures, and recoveries can be correlated with the same request IDs and trace IDs the client sees.
+
+The metrics surface now complements that with current-state gauges for backend health, consecutive failures, cooldown remaining time, and overall provider readiness. That matters because operators no longer need to choose between:
+
+- counters that explain the past
+- `/debug/providers` JSON that explains the present
+
+They can scrape both stories from the same metrics endpoint.
 
 ## A Practical Debugging Loop
 
