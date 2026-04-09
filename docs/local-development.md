@@ -205,6 +205,7 @@ Notes:
 - the adapter automatically sends `x-api-key` and `anthropic-version`
 - OpenAI-style `system` messages are joined and forwarded through Anthropic's top-level `system` field
 - the secondary backend can stay on the default `mock` type for local fallback verification
+- for a runnable local Anthropic drill path, see `scripts/synthetic-anthropic-upstream.py` and `scripts/anthropic-adapter-drill.sh`
 
 ## 3.3 Optional: Run the Built-In Load Test
 

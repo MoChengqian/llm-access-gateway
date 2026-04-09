@@ -97,6 +97,7 @@ Failure drill reports demonstrating system behavior under failure conditions.
 - [Provider Error Drill](verification/failure-drills/provider-errors.md) - 5xx error handling ✅
 - [Quota Enforcement Drill](verification/failure-drills/quota-enforcement.md) - Rate limiting ✅
 - [Streaming Failure Drill](verification/failure-drills/streaming-failures.md) - Stream failure scenarios ✅
+- [Anthropic Adapter Drill](verification/failure-drills/anthropic-adapter.md) - Anthropic request translation and stream handling ✅
 
 ### Blog Articles
 Educational articles showcasing engineering decisions and implementation evidence.

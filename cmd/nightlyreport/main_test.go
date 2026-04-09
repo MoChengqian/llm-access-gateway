@@ -23,8 +23,35 @@ func TestBuildReport(t *testing.T) {
 			"lag_provider_events_total{type=\"provider_fallback_succeeded\",operation=\"stream\",backend=\"secondary\"} 1",
 			"",
 		}, "\n")),
-		PartialOutputPath:  writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: {\"content\":\"partial \"}\n"),
-		PartialMetricsPath: writeTempFile(t, dir, "partial.prom", "lag_provider_events_total{type=\"provider_stream_interrupted\",operation=\"stream\",backend=\"openai-primary\"} 1\n"),
+		PartialOutputPath:         writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: {\"content\":\"partial \"}\n"),
+		PartialMetricsPath:        writeTempFile(t, dir, "partial.prom", "lag_provider_events_total{type=\"provider_stream_interrupted\",operation=\"stream\",backend=\"openai-primary\"} 1\n"),
+		AnthropicSystemOutputPath: writeTempFile(t, dir, "anthropic-system.out", "HTTP/1.1 200 OK\n{\"choices\":[{\"message\":{\"content\":\"system=Be concise.\\\\n\\\\nUse JSON only.;messages=1;first_role=user\"}}]}\n"),
+		AnthropicUpstreamRequestPath: writeTempFile(t, dir, "anthropic-upstream-request.json", `{
+  "path": "/v1/messages",
+  "headers": {
+    "x-api-key": "sk-ant-test",
+    "anthropic-version": "2023-06-01"
+  },
+  "payload": {
+    "model": "claude-3-5-sonnet-latest",
+    "max_tokens": 1024,
+    "system": "Be concise.\n\nUse JSON only.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "reply in five words"
+      }
+    ]
+  }
+}`),
+		AnthropicPrechunkOutputPath: writeTempFile(t, dir, "anthropic-prechunk.out", "HTTP/1.1 200 OK\ndata: {\"id\":\"chatcmpl-mock\"}\ndata: [DONE]\n"),
+		AnthropicPrechunkMetricsPath: writeTempFile(t, dir, "anthropic-prechunk.prom", strings.Join([]string{
+			"lag_provider_events_total{type=\"provider_request_failed\",operation=\"stream\",backend=\"anthropic-primary\"} 1",
+			"lag_provider_events_total{type=\"provider_fallback_succeeded\",operation=\"stream\",backend=\"secondary\"} 1",
+			"",
+		}, "\n")),
+		AnthropicPartialOutputPath:  writeTempFile(t, dir, "anthropic-partial.out", "HTTP/1.1 200 OK\ndata: {\"content\":\"anthropic partial \"}\n"),
+		AnthropicPartialMetricsPath: writeTempFile(t, dir, "anthropic-partial.prom", "lag_provider_events_total{type=\"provider_stream_interrupted\",operation=\"stream\",backend=\"anthropic-primary\"} 1\n"),
 	}
 
 	report, err := buildReport(cfg)
@@ -41,6 +68,10 @@ func TestBuildReport(t *testing.T) {
 		"faster",
 		"Pre-first-chunk fallback",
 		"Post-first-chunk interruption",
+		"Anthropic Adapter Drill Summary",
+		"System prompt translation",
+		"Anthropic pre-first-chunk fallback",
+		"Anthropic post-first-chunk interruption",
 		"pass",
 	} {
 		if !strings.Contains(report, needle) {

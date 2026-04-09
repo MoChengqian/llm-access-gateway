@@ -123,6 +123,104 @@ func TestValidateStreamFailureModeFailure(t *testing.T) {
 	}
 }
 
+func TestValidateAnthropicAdapterModeSuccess(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := config{
+		SystemOutputPath: writeTempFile(t, dir, "system.out", "HTTP/1.1 200 OK\n{\"choices\":[{\"message\":{\"content\":\"system=Be concise.\\\\n\\\\nUse JSON only.;messages=1;first_role=user\"}}]}\n"),
+		UpstreamRequestPath: writeTempFile(t, dir, "upstream-request.json", `{
+  "path": "/v1/messages",
+  "headers": {
+    "x-api-key": "sk-ant-test",
+    "anthropic-version": "2023-06-01"
+  },
+  "payload": {
+    "model": "claude-3-5-sonnet-latest",
+    "max_tokens": 1024,
+    "system": "Be concise.\n\nUse JSON only.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "reply in five words"
+      }
+    ]
+  }
+}`),
+		PrechunkOutputPath: writeTempFile(t, dir, "prechunk.out", "HTTP/1.1 200 OK\ndata: {\"id\":\"chatcmpl-mock\"}\ndata: [DONE]\n"),
+		PrechunkMetricsPath: writeTempFile(t, dir, "prechunk.prom", strings.Join([]string{
+			`lag_provider_events_total{type="provider_request_failed",operation="stream",backend="anthropic-primary"} 1`,
+			`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1`,
+			"",
+		}, "\n")),
+		PartialOutputPath: writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: {\"content\":\"anthropic partial \"}\n"),
+		PartialMetricsPath: writeTempFile(t, dir, "partial.prom", strings.Join([]string{
+			`lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="anthropic-primary"} 1`,
+			"",
+		}, "\n")),
+		PrimaryBackendName:   "anthropic-primary",
+		SecondaryBackendName: "secondary",
+		PartialOutputNeedle:  "anthropic partial ",
+	}
+
+	findings := validateAnthropicAdapterMode(cfg)
+	if len(findings) != 0 {
+		t.Fatalf("validateAnthropicAdapterMode() findings = %v, want none", findings)
+	}
+}
+
+func TestValidateAnthropicAdapterModeFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := config{
+		SystemOutputPath: writeTempFile(t, dir, "system.out", "HTTP/1.1 500 Internal Server Error\n"),
+		UpstreamRequestPath: writeTempFile(t, dir, "upstream-request.json", `{
+  "path": "/wrong",
+  "headers": {},
+  "payload": {
+    "max_tokens": 0,
+    "system": "",
+    "messages": [
+      {"role": "system", "content": "Be concise."},
+      {"role": "assistant", "content": "bad"}
+    ]
+  }
+}`),
+		PrechunkOutputPath:  writeTempFile(t, dir, "prechunk.out", "HTTP/1.1 500 Internal Server Error\n"),
+		PrechunkMetricsPath: writeTempFile(t, dir, "prechunk.prom", ""),
+		PartialOutputPath:   writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: anthropic partial \ndata: [DONE]\n"),
+		PartialMetricsPath: writeTempFile(t, dir, "partial.prom", strings.Join([]string{
+			`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1`,
+			"",
+		}, "\n")),
+		PrimaryBackendName:   "anthropic-primary",
+		SecondaryBackendName: "secondary",
+		PartialOutputNeedle:  "anthropic partial ",
+	}
+
+	findings := validateAnthropicAdapterMode(cfg)
+	joined := strings.Join(findings, "\n")
+	for _, needle := range []string{
+		`system output missing "HTTP/1.1 200 OK"`,
+		`system output missing "messages=1;first_role=user"`,
+		`upstream request path="/wrong", want /v1/messages`,
+		`upstream request missing anthropic-version header`,
+		`upstream request missing x-api-key header`,
+		`upstream request system="", want "Be concise.\n\nUse JSON only."`,
+		`upstream request max_tokens=0, want > 0`,
+		`upstream request messages=2, want 1`,
+		`upstream request unexpectedly forwarded a system role inside messages`,
+		`prechunk metrics missing metric lag_provider_events_total{type="provider_request_failed",operation="stream",backend="anthropic-primary"}`,
+		`partial output unexpectedly contained "data: [DONE]"`,
+		`partial metrics missing metric lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="anthropic-primary"}`,
+	} {
+		if !strings.Contains(joined, needle) {
+			t.Fatalf("validateAnthropicAdapterMode() findings missing %q in %q", needle, joined)
+		}
+	}
+}
+
 func writeTempFile(t *testing.T, dir string, name string, body string) string {
 	t.Helper()
 

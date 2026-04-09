@@ -12,6 +12,7 @@ import (
 const (
 	modeBenchmarks     = "benchmarks"
 	modeStreamFailures = "stream-failures"
+	modeAnthropic      = "anthropic-adapter"
 
 	defaultMinSuccessRate                  = 1.0
 	defaultMockNonStreamMaxLatencyP95MS    = 150
@@ -42,6 +43,12 @@ type config struct {
 	PrechunkMetricsPath string
 	PartialOutputPath   string
 	PartialMetricsPath  string
+	SystemOutputPath    string
+	UpstreamRequestPath string
+
+	PrimaryBackendName   string
+	SecondaryBackendName string
+	PartialOutputNeedle  string
 }
 
 type benchmarkSummary struct {
@@ -79,6 +86,8 @@ func main() {
 		findings = validateBenchmarkMode(cfg)
 	case modeStreamFailures:
 		findings = validateStreamFailureMode(cfg)
+	case modeAnthropic:
+		findings = validateAnthropicAdapterMode(cfg)
 	default:
 		fmt.Fprintf(os.Stderr, "unsupported mode %q\n", cfg.Mode)
 		os.Exit(1)
@@ -104,12 +113,15 @@ func parseFlags(args []string) (config, error) {
 		AdapterNonStreamMaxLatencyP95MS: defaultAdapterNonStreamMaxLatencyP95MS,
 		AdapterStreamMaxLatencyP95MS:    defaultAdapterStreamMaxLatencyP95MS,
 		AdapterStreamMaxTTFTP95MS:       defaultAdapterStreamMaxTTFTP95MS,
+		PrimaryBackendName:              "openai-primary",
+		SecondaryBackendName:            "secondary",
+		PartialOutputNeedle:             "partial ",
 	}
 
 	flagSet := flag.NewFlagSet("nightlycheck", flag.ContinueOnError)
 	flagSet.SetOutput(os.Stderr)
 
-	flagSet.StringVar(&cfg.Mode, "mode", cfg.Mode, "validation mode: benchmarks or stream-failures")
+	flagSet.StringVar(&cfg.Mode, "mode", cfg.Mode, "validation mode: benchmarks, stream-failures, or anthropic-adapter")
 	flagSet.StringVar(&cfg.MockNonStreamPath, "mock-non-stream", "", "path to mock non-stream benchmark JSON")
 	flagSet.StringVar(&cfg.MockStreamPath, "mock-stream", "", "path to mock stream benchmark JSON")
 	flagSet.StringVar(&cfg.AdapterNonStreamPath, "adapter-non-stream", "", "path to adapter non-stream benchmark JSON")
@@ -125,6 +137,11 @@ func parseFlags(args []string) (config, error) {
 	flagSet.StringVar(&cfg.PrechunkMetricsPath, "prechunk-metrics", "", "path to the pre-chunk stream drill metrics")
 	flagSet.StringVar(&cfg.PartialOutputPath, "partial-output", "", "path to the partial stream drill output")
 	flagSet.StringVar(&cfg.PartialMetricsPath, "partial-metrics", "", "path to the partial stream drill metrics")
+	flagSet.StringVar(&cfg.SystemOutputPath, "system-output", "", "path to the Anthropic system prompt drill output")
+	flagSet.StringVar(&cfg.UpstreamRequestPath, "upstream-request", "", "path to the captured upstream request JSON")
+	flagSet.StringVar(&cfg.PrimaryBackendName, "primary-backend", cfg.PrimaryBackendName, "primary backend name expected in metrics")
+	flagSet.StringVar(&cfg.SecondaryBackendName, "secondary-backend", cfg.SecondaryBackendName, "secondary backend name expected in metrics")
+	flagSet.StringVar(&cfg.PartialOutputNeedle, "partial-output-needle", cfg.PartialOutputNeedle, "output fragment expected in partial stream drill output")
 
 	if err := flagSet.Parse(args); err != nil {
 		return config{}, err
@@ -222,6 +239,18 @@ func validateBenchmarkSummary(expectation benchmarkExpectation, summary benchmar
 
 func validateStreamFailureMode(cfg config) []string {
 	var findings []string
+	primaryBackend := strings.TrimSpace(cfg.PrimaryBackendName)
+	if primaryBackend == "" {
+		primaryBackend = "openai-primary"
+	}
+	secondaryBackend := strings.TrimSpace(cfg.SecondaryBackendName)
+	if secondaryBackend == "" {
+		secondaryBackend = "secondary"
+	}
+	partialNeedle := cfg.PartialOutputNeedle
+	if partialNeedle == "" {
+		partialNeedle = "partial "
+	}
 
 	prechunkOutput, err := readFile(cfg.PrechunkOutputPath)
 	if err != nil {
@@ -237,7 +266,7 @@ func validateStreamFailureMode(cfg config) []string {
 		findings = append(findings, fmt.Sprintf("partial output: %v", err))
 	} else {
 		findings = append(findings, requireContains("partial output", partialOutput, "HTTP/1.1 200 OK")...)
-		findings = append(findings, requireContains("partial output", partialOutput, "partial ")...)
+		findings = append(findings, requireContains("partial output", partialOutput, partialNeedle)...)
 		findings = append(findings, requireAbsent("partial output", partialOutput, "data: [DONE]")...)
 	}
 
@@ -245,19 +274,97 @@ func validateStreamFailureMode(cfg config) []string {
 	if err != nil {
 		findings = append(findings, fmt.Sprintf("prechunk metrics: %v", err))
 	} else {
-		findings = append(findings, requireMetricAtLeast("prechunk metrics", prechunkMetrics, `lag_provider_events_total{type="provider_request_failed",operation="stream",backend="openai-primary"}`, 1)...)
-		findings = append(findings, requireMetricAtLeast("prechunk metrics", prechunkMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`, 1)...)
+		findings = append(findings, requireMetricAtLeast("prechunk metrics", prechunkMetrics, fmt.Sprintf(`lag_provider_events_total{type="provider_request_failed",operation="stream",backend="%s"}`, primaryBackend), 1)...)
+		findings = append(findings, requireMetricAtLeast("prechunk metrics", prechunkMetrics, fmt.Sprintf(`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="%s"}`, secondaryBackend), 1)...)
 	}
 
 	partialMetrics, err := loadMetrics(cfg.PartialMetricsPath)
 	if err != nil {
 		findings = append(findings, fmt.Sprintf("partial metrics: %v", err))
 	} else {
-		findings = append(findings, requireMetricAtLeast("partial metrics", partialMetrics, `lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="openai-primary"}`, 1)...)
-		findings = append(findings, requireMetricAbsent("partial metrics", partialMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`)...)
+		findings = append(findings, requireMetricAtLeast("partial metrics", partialMetrics, fmt.Sprintf(`lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="%s"}`, primaryBackend), 1)...)
+		findings = append(findings, requireMetricAbsent("partial metrics", partialMetrics, fmt.Sprintf(`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="%s"}`, secondaryBackend))...)
 	}
 
 	return findings
+}
+
+type recordedUpstreamRequest struct {
+	Path    string            `json:"path"`
+	Headers map[string]string `json:"headers"`
+	Payload struct {
+		Model     string `json:"model"`
+		MaxTokens int    `json:"max_tokens"`
+		System    string `json:"system"`
+		Messages  []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	} `json:"payload"`
+}
+
+func validateAnthropicAdapterMode(cfg config) []string {
+	var findings []string
+
+	systemOutput, err := readFile(cfg.SystemOutputPath)
+	if err != nil {
+		findings = append(findings, fmt.Sprintf("system output: %v", err))
+	} else {
+		findings = append(findings, requireContains("system output", systemOutput, "HTTP/1.1 200 OK")...)
+		findings = append(findings, requireContains("system output", systemOutput, "messages=1;first_role=user")...)
+	}
+
+	request, err := loadRecordedUpstreamRequest(cfg.UpstreamRequestPath)
+	if err != nil {
+		findings = append(findings, fmt.Sprintf("upstream request: %v", err))
+	} else {
+		if request.Path != "/v1/messages" {
+			findings = append(findings, fmt.Sprintf("upstream request path=%q, want /v1/messages", request.Path))
+		}
+		if strings.TrimSpace(request.Headers["anthropic-version"]) == "" {
+			findings = append(findings, "upstream request missing anthropic-version header")
+		}
+		if strings.TrimSpace(request.Headers["x-api-key"]) == "" {
+			findings = append(findings, "upstream request missing x-api-key header")
+		}
+		if request.Payload.System != "Be concise.\n\nUse JSON only." {
+			findings = append(findings, fmt.Sprintf("upstream request system=%q, want %q", request.Payload.System, "Be concise.\n\nUse JSON only."))
+		}
+		if request.Payload.MaxTokens <= 0 {
+			findings = append(findings, fmt.Sprintf("upstream request max_tokens=%d, want > 0", request.Payload.MaxTokens))
+		}
+		if len(request.Payload.Messages) != 1 {
+			findings = append(findings, fmt.Sprintf("upstream request messages=%d, want 1", len(request.Payload.Messages)))
+		} else {
+			if request.Payload.Messages[0].Role != "user" {
+				findings = append(findings, fmt.Sprintf("upstream request first role=%q, want user", request.Payload.Messages[0].Role))
+			}
+			if request.Payload.Messages[0].Content != "reply in five words" {
+				findings = append(findings, fmt.Sprintf("upstream request first content=%q, want %q", request.Payload.Messages[0].Content, "reply in five words"))
+			}
+		}
+		for _, message := range request.Payload.Messages {
+			if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+				findings = append(findings, "upstream request unexpectedly forwarded a system role inside messages")
+				break
+			}
+		}
+	}
+
+	findings = append(findings, validateStreamFailureMode(cfg)...)
+	return findings
+}
+
+func loadRecordedUpstreamRequest(path string) (recordedUpstreamRequest, error) {
+	body, err := os.ReadFile(strings.TrimSpace(path))
+	if err != nil {
+		return recordedUpstreamRequest{}, err
+	}
+	var request recordedUpstreamRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		return recordedUpstreamRequest{}, err
+	}
+	return request, nil
 }
 
 func loadBenchmarkSummary(path string) (benchmarkSummary, error) {

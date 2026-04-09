@@ -24,6 +24,13 @@ type config struct {
 	PartialOutputPath   string
 	PartialMetricsPath  string
 
+	AnthropicSystemOutputPath    string
+	AnthropicUpstreamRequestPath string
+	AnthropicPrechunkOutputPath  string
+	AnthropicPrechunkMetricsPath string
+	AnthropicPartialOutputPath   string
+	AnthropicPartialMetricsPath  string
+
 	OutputPath string
 }
 
@@ -105,6 +112,12 @@ func parseFlags(args []string) (config, error) {
 	flagSet.StringVar(&cfg.PrechunkMetricsPath, "prechunk-metrics", "", "path to the pre-chunk stream drill metrics")
 	flagSet.StringVar(&cfg.PartialOutputPath, "partial-output", "", "path to the partial stream drill output")
 	flagSet.StringVar(&cfg.PartialMetricsPath, "partial-metrics", "", "path to the partial stream drill metrics")
+	flagSet.StringVar(&cfg.AnthropicSystemOutputPath, "anthropic-system-output", "", "path to the Anthropic system prompt drill output")
+	flagSet.StringVar(&cfg.AnthropicUpstreamRequestPath, "anthropic-upstream-request", "", "path to the captured Anthropic upstream request JSON")
+	flagSet.StringVar(&cfg.AnthropicPrechunkOutputPath, "anthropic-prechunk-output", "", "path to the Anthropic pre-chunk stream drill output")
+	flagSet.StringVar(&cfg.AnthropicPrechunkMetricsPath, "anthropic-prechunk-metrics", "", "path to the Anthropic pre-chunk stream drill metrics")
+	flagSet.StringVar(&cfg.AnthropicPartialOutputPath, "anthropic-partial-output", "", "path to the Anthropic partial stream drill output")
+	flagSet.StringVar(&cfg.AnthropicPartialMetricsPath, "anthropic-partial-metrics", "", "path to the Anthropic partial stream drill metrics")
 	flagSet.StringVar(&cfg.OutputPath, "output", "", "path to write markdown report; stdout when omitted")
 	if err := flagSet.Parse(args); err != nil {
 		return config{}, err
@@ -137,6 +150,10 @@ func buildReport(cfg config) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	anthropicScenarios, err := buildAnthropicScenarioSummaries(cfg)
+	if err != nil {
+		return "", err
+	}
 
 	var builder strings.Builder
 	builder.WriteString("# Nightly Verification Summary\n\n")
@@ -156,6 +173,13 @@ func buildReport(cfg config) (string, error) {
 	builder.WriteString("| Scenario | Status | Signals |\n")
 	builder.WriteString("| --- | --- | --- |\n")
 	for _, scenario := range streamScenarios {
+		builder.WriteString(fmt.Sprintf("| %s | %s | %s |\n", scenario.Name, scenario.Status, strings.Join(scenario.Signals, "<br>")))
+	}
+
+	builder.WriteString("\n## Anthropic Adapter Drill Summary\n\n")
+	builder.WriteString("| Scenario | Status | Signals |\n")
+	builder.WriteString("| --- | --- | --- |\n")
+	for _, scenario := range anthropicScenarios {
 		builder.WriteString(fmt.Sprintf("| %s | %s | %s |\n", scenario.Name, scenario.Status, strings.Join(scenario.Signals, "<br>")))
 	}
 
@@ -241,6 +265,105 @@ func buildStreamScenarioSummaries(cfg config) ([]streamScenarioSummary, error) {
 	}, nil
 }
 
+type recordedUpstreamRequest struct {
+	Path    string            `json:"path"`
+	Headers map[string]string `json:"headers"`
+	Payload struct {
+		Model     string `json:"model"`
+		MaxTokens int    `json:"max_tokens"`
+		System    string `json:"system"`
+		Messages  []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	} `json:"payload"`
+}
+
+func buildAnthropicScenarioSummaries(cfg config) ([]streamScenarioSummary, error) {
+	systemOutput, err := readFile(cfg.AnthropicSystemOutputPath)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic system output: %w", err)
+	}
+	upstreamRequest, err := loadRecordedUpstreamRequest(cfg.AnthropicUpstreamRequestPath)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic upstream request: %w", err)
+	}
+	prechunkOutput, err := readFile(cfg.AnthropicPrechunkOutputPath)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic pre-chunk output: %w", err)
+	}
+	prechunkMetrics, err := loadMetrics(cfg.AnthropicPrechunkMetricsPath)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic pre-chunk metrics: %w", err)
+	}
+	partialOutput, err := readFile(cfg.AnthropicPartialOutputPath)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic partial output: %w", err)
+	}
+	partialMetrics, err := loadMetrics(cfg.AnthropicPartialMetricsPath)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic partial metrics: %w", err)
+	}
+
+	systemOK := strings.Contains(systemOutput, "HTTP/1.1 200 OK") &&
+		strings.Contains(systemOutput, "messages=1;first_role=user") &&
+		upstreamRequest.Path == "/v1/messages" &&
+		strings.TrimSpace(upstreamRequest.Headers["anthropic-version"]) != "" &&
+		strings.TrimSpace(upstreamRequest.Headers["x-api-key"]) != "" &&
+		upstreamRequest.Payload.System == "Be concise.\n\nUse JSON only." &&
+		len(upstreamRequest.Payload.Messages) == 1 &&
+		upstreamRequest.Payload.Messages[0].Role == "user" &&
+		upstreamRequest.Payload.Messages[0].Content == "reply in five words"
+
+	prechunkOK := strings.Contains(prechunkOutput, "HTTP/1.1 200 OK") &&
+		strings.Contains(prechunkOutput, "chatcmpl-mock") &&
+		strings.Contains(prechunkOutput, "data: [DONE]") &&
+		metricAtLeast(prechunkMetrics, `lag_provider_events_total{type="provider_request_failed",operation="stream",backend="anthropic-primary"}`, 1) &&
+		metricAtLeast(prechunkMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`, 1)
+
+	partialOK := strings.Contains(partialOutput, "HTTP/1.1 200 OK") &&
+		strings.Contains(partialOutput, "anthropic partial ") &&
+		!strings.Contains(partialOutput, "data: [DONE]") &&
+		metricAtLeast(partialMetrics, `lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="anthropic-primary"}`, 1) &&
+		!metricPresent(partialMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`)
+
+	return []streamScenarioSummary{
+		{
+			Name:   "System prompt translation",
+			Status: boolStatus(systemOK),
+			Signals: []string{
+				"200 OK observed",
+				"gateway response confirms system join",
+				"upstream captured /v1/messages",
+				"anthropic-version header observed",
+				"user-only message list observed",
+			},
+		},
+		{
+			Name:   "Anthropic pre-first-chunk fallback",
+			Status: boolStatus(prechunkOK),
+			Signals: []string{
+				"200 OK observed",
+				"fallback stream body observed",
+				"[DONE] observed",
+				"provider_request_failed recorded",
+				"provider_fallback_succeeded recorded",
+			},
+		},
+		{
+			Name:   "Anthropic post-first-chunk interruption",
+			Status: boolStatus(partialOK),
+			Signals: []string{
+				"200 OK observed",
+				"anthropic partial chunk observed",
+				"no [DONE] marker",
+				"interrupt metric recorded",
+				"no fallback-after-first-chunk metric",
+			},
+		},
+	}, nil
+}
+
 func boolStatus(ok bool) string {
 	if ok {
 		return "pass"
@@ -298,6 +421,18 @@ func loadMetrics(path string) (map[string]float64, error) {
 		metrics[key] = value
 	}
 	return metrics, nil
+}
+
+func loadRecordedUpstreamRequest(path string) (recordedUpstreamRequest, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return recordedUpstreamRequest{}, err
+	}
+	var request recordedUpstreamRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		return recordedUpstreamRequest{}, err
+	}
+	return request, nil
 }
 
 func readFile(path string) (string, error) {
