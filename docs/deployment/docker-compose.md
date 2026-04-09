@@ -56,6 +56,12 @@ docker compose -f deployments/docker/docker-compose.yml config
 
 That command was used during documentation verification to confirm the file expands correctly with the current repo layout.
 
+The repository also includes a reusable deployment validator that wraps this Compose expansion check together with Kubernetes manifest structure checks:
+
+```bash
+./scripts/validate-deployments.rb
+```
+
 ## Environment and Service Wiring
 
 The Compose file injects these application settings into the containers:

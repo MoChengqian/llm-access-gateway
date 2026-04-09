@@ -143,6 +143,7 @@ Because health state is kept in-process today, multiple replicas will not share 
 ```bash
 go test ./...
 docker compose -f deployments/docker/docker-compose.yml config
+./scripts/validate-deployments.rb
 ```
 
 If you have cluster access, also verify the Kubernetes apply flow in your target environment before the first rollout.

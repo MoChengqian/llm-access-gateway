@@ -148,6 +148,14 @@ To structurally inspect the manifests without applying them, you can always pars
 
 Client-side `kubectl apply --dry-run=client` still depends on the current kube-context in this environment, so full API recognition requires a Kubernetes client that can reach your cluster control plane.
 
+For repository-level structural checks that do not depend on cluster access, use:
+
+```bash
+./scripts/validate-deployments.rb
+```
+
+That validator confirms the manifest kinds, namespace wiring, Deployment probes, Service port, bootstrap Job command, and the Compose expansion model used in local delivery.
+
 ## Operational Checks After Apply
 
 Once the resources are applied in a real cluster, use:
