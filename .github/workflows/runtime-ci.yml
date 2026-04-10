@@ -57,6 +57,7 @@ jobs:
       APP_SERVER_ADDRESS: 127.0.0.1:18080
       BASE_URL: http://127.0.0.1:18080
       API_KEY: lag-local-dev-key
+      GATEWAY_BIN: /tmp/lag-gateway
       GOCACHE: /tmp/go-build
       GOMODCACHE: /tmp/go-mod
     steps:
@@ -73,12 +74,15 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Build gateway binary
+        run: go build -o "${GATEWAY_BIN}" ./cmd/gateway
+
       - name: Seed schema and dev key
         run: go run ./cmd/devinit
 
       - name: Start gateway for smoke verification
         run: |
-          nohup go run ./cmd/gateway >/tmp/gateway.log 2>&1 &
+          nohup "${GATEWAY_BIN}" >/tmp/gateway.log 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -106,6 +110,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${smoke_pid}" 2>/dev/null; then
+              kill -9 "${smoke_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${smoke_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           for i in $(seq 1 30); do
@@ -145,7 +159,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
-          nohup go run ./cmd/gateway >/tmp/gateway-fallback.log 2>&1 &
+          nohup "${GATEWAY_BIN}" >/tmp/gateway-fallback.log 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -196,5 +210,26 @@ jobs:
       - name: Stop background processes
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
-          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${gateway_pid}" 2>/dev/null || true
+          fi
+
+          if test -f /tmp/upstream.pid; then
+            upstream_pid="$(cat /tmp/upstream.pid)"
+            kill "${upstream_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${upstream_pid}" 2>/dev/null || true
+          fi

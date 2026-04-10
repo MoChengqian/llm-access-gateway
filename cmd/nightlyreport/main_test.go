@@ -80,6 +80,25 @@ func TestBuildReport(t *testing.T) {
 	}
 }
 
+func TestWriteReportFileCreatesParentDir(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outputPath := filepath.Join(root, "nested", "report", "nightly-summary.md")
+
+	if err := writeReportFile(outputPath, "# hello\n"); err != nil {
+		t.Fatalf("writeReportFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", outputPath, err)
+	}
+	if string(data) != "# hello\n" {
+		t.Fatalf("unexpected report body %q", string(data))
+	}
+}
+
 const baselineFixtureJSON = `{
   "source": "docs fixtures",
   "benchmarks": {

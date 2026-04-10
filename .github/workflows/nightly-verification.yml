@@ -57,6 +57,7 @@ jobs:
       APP_SERVER_ADDRESS: 127.0.0.1:18080
       BASE_URL: http://127.0.0.1:18080
       API_KEY: lag-local-dev-key
+      GATEWAY_BIN: /tmp/lag-gateway
       GOCACHE: /tmp/go-build
       GOMODCACHE: /tmp/go-mod
       ARTIFACT_DIR: /tmp/nightly-artifacts/benchmarks
@@ -74,6 +75,9 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Build gateway binary
+        run: go build -o "${GATEWAY_BIN}" ./cmd/gateway
+
       - name: Prepare artifact directory
         run: mkdir -p "${ARTIFACT_DIR}"
 
@@ -83,7 +87,7 @@ jobs:
 
       - name: Start gateway for mock provider benchmarks
         run: |
-          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-mock.log" 2>&1 &
+          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-mock.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -116,6 +120,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${gateway_pid}" 2>/dev/null; then
+              kill -9 "${gateway_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           for i in $(seq 1 30); do
@@ -158,7 +172,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
-          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-adapter.log" 2>&1 &
+          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-adapter.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -226,8 +240,28 @@ jobs:
       - name: Stop background processes
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
-          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${gateway_pid}" 2>/dev/null || true
+          fi
+          if test -f /tmp/upstream.pid; then
+            upstream_pid="$(cat /tmp/upstream.pid)"
+            kill "${upstream_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${upstream_pid}" 2>/dev/null || true
+          fi
 
   stream-failure-drills:
     runs-on: ubuntu-latest
@@ -263,6 +297,7 @@ jobs:
       APP_SERVER_ADDRESS: 127.0.0.1:18080
       BASE_URL: http://127.0.0.1:18080
       API_KEY: lag-local-dev-key
+      GATEWAY_BIN: /tmp/lag-gateway
       GOCACHE: /tmp/go-build
       GOMODCACHE: /tmp/go-mod
       ARTIFACT_DIR: /tmp/nightly-artifacts/streaming-failures
@@ -279,6 +314,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+
+      - name: Build gateway binary
+        run: go build -o "${GATEWAY_BIN}" ./cmd/gateway
 
       - name: Prepare artifact directory
         run: mkdir -p "${ARTIFACT_DIR}"
@@ -312,7 +350,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
-          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
+          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -360,6 +398,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${gateway_pid}" 2>/dev/null; then
+              kill -9 "${gateway_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           if test -f /tmp/upstream.pid; then
@@ -372,6 +420,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${upstream_pid}" 2>/dev/null; then
+              kill -9 "${upstream_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           for i in $(seq 1 30); do
@@ -424,7 +482,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
-          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
+          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -490,8 +548,28 @@ jobs:
       - name: Stop background processes
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
-          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${gateway_pid}" 2>/dev/null || true
+          fi
+          if test -f /tmp/upstream.pid; then
+            upstream_pid="$(cat /tmp/upstream.pid)"
+            kill "${upstream_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${upstream_pid}" 2>/dev/null || true
+          fi
 
   anthropic-adapter-drills:
     runs-on: ubuntu-latest
@@ -529,6 +607,7 @@ jobs:
       UPSTREAM_BASE_URL: http://127.0.0.1:18081
       API_KEY: lag-local-dev-key
       MODEL: claude-3-5-sonnet-latest
+      GATEWAY_BIN: /tmp/lag-gateway
       GOCACHE: /tmp/go-build
       GOMODCACHE: /tmp/go-mod
       ARTIFACT_DIR: /tmp/nightly-artifacts/anthropic-adapter
@@ -545,6 +624,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+
+      - name: Build gateway binary
+        run: go build -o "${GATEWAY_BIN}" ./cmd/gateway
 
       - name: Prepare artifact directory
         run: mkdir -p "${ARTIFACT_DIR}"
@@ -580,7 +662,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
-          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-system.log" 2>&1 &
+          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-system.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -627,6 +709,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${gateway_pid}" 2>/dev/null; then
+              kill -9 "${gateway_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           if test -f /tmp/upstream.pid; then
@@ -639,6 +731,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${upstream_pid}" 2>/dev/null; then
+              kill -9 "${upstream_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           for i in $(seq 1 30); do
@@ -694,7 +796,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
-          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
+          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -742,6 +844,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${gateway_pid}" 2>/dev/null; then
+              kill -9 "${gateway_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           if test -f /tmp/upstream.pid; then
@@ -754,6 +866,16 @@ jobs:
               fi
               sleep 1
             done
+
+            if kill -0 "${upstream_pid}" 2>/dev/null; then
+              kill -9 "${upstream_pid}" || true
+              for i in $(seq 1 5); do
+                if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
           fi
 
           for i in $(seq 1 30); do
@@ -809,7 +931,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
-          nohup go run ./cmd/gateway >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
+          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
           for i in $(seq 1 60); do
@@ -878,8 +1000,28 @@ jobs:
       - name: Stop background processes
         if: always()
         run: |
-          test -f /tmp/gateway.pid && kill "$(cat /tmp/gateway.pid)" || true
-          test -f /tmp/upstream.pid && kill "$(cat /tmp/upstream.pid)" || true
+          if test -f /tmp/gateway.pid; then
+            gateway_pid="$(cat /tmp/gateway.pid)"
+            kill "${gateway_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${gateway_pid}" 2>/dev/null || true
+          fi
+          if test -f /tmp/upstream.pid; then
+            upstream_pid="$(cat /tmp/upstream.pid)"
+            kill "${upstream_pid}" || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            kill -9 "${upstream_pid}" 2>/dev/null || true
+          fi
 
   report:
     runs-on: ubuntu-latest
@@ -898,44 +1040,104 @@ jobs:
           go-version-file: go.mod
 
       - name: Download benchmark artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: nightly-benchmarks
           path: /tmp/nightly-artifacts/benchmarks
 
       - name: Download streaming drill artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: nightly-stream-failure-drills
           path: /tmp/nightly-artifacts/streaming-failures
 
       - name: Download Anthropic drill artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: nightly-anthropic-adapter
           path: /tmp/nightly-artifacts/anthropic-adapter
 
       - name: Generate markdown summary
+        if: always()
         run: |
-          mkdir -p /tmp/nightly-artifacts/report
-          go run ./cmd/nightlyreport \
-            -baseline .github/nightly/benchmark-baseline.json \
-            -mock-non-stream /tmp/nightly-artifacts/benchmarks/mock-non-stream.json \
-            -mock-stream /tmp/nightly-artifacts/benchmarks/mock-stream.json \
-            -adapter-non-stream /tmp/nightly-artifacts/benchmarks/adapter-non-stream.json \
-            -adapter-stream /tmp/nightly-artifacts/benchmarks/adapter-stream.json \
-            -prechunk-output /tmp/nightly-artifacts/streaming-failures/prechunk.out \
-            -prechunk-metrics /tmp/nightly-artifacts/streaming-failures/prechunk-metrics.prom \
-            -partial-output /tmp/nightly-artifacts/streaming-failures/partial.out \
-            -partial-metrics /tmp/nightly-artifacts/streaming-failures/partial-metrics.prom \
-            -anthropic-system-output /tmp/nightly-artifacts/anthropic-adapter/system.out \
-            -anthropic-upstream-request /tmp/nightly-artifacts/anthropic-adapter/upstream-request.json \
-            -anthropic-prechunk-output /tmp/nightly-artifacts/anthropic-adapter/prechunk.out \
-            -anthropic-prechunk-metrics /tmp/nightly-artifacts/anthropic-adapter/prechunk-metrics.prom \
-            -anthropic-partial-output /tmp/nightly-artifacts/anthropic-adapter/partial.out \
-            -anthropic-partial-metrics /tmp/nightly-artifacts/anthropic-adapter/partial-metrics.prom \
-            -output /tmp/nightly-artifacts/report/nightly-summary.md
-          cat /tmp/nightly-artifacts/report/nightly-summary.md >> "$GITHUB_STEP_SUMMARY"
+          report_path=/tmp/nightly-artifacts/report/nightly-summary.md
+          missing=0
+          report_failed=0
+          missing_files=""
+
+          for path in \
+            /tmp/nightly-artifacts/benchmarks/mock-non-stream.json \
+            /tmp/nightly-artifacts/benchmarks/mock-stream.json \
+            /tmp/nightly-artifacts/benchmarks/adapter-non-stream.json \
+            /tmp/nightly-artifacts/benchmarks/adapter-stream.json \
+            /tmp/nightly-artifacts/streaming-failures/prechunk.out \
+            /tmp/nightly-artifacts/streaming-failures/prechunk-metrics.prom \
+            /tmp/nightly-artifacts/streaming-failures/partial.out \
+            /tmp/nightly-artifacts/streaming-failures/partial-metrics.prom \
+            /tmp/nightly-artifacts/anthropic-adapter/system.out \
+            /tmp/nightly-artifacts/anthropic-adapter/upstream-request.json \
+            /tmp/nightly-artifacts/anthropic-adapter/prechunk.out \
+            /tmp/nightly-artifacts/anthropic-adapter/prechunk-metrics.prom \
+            /tmp/nightly-artifacts/anthropic-adapter/partial.out \
+            /tmp/nightly-artifacts/anthropic-adapter/partial-metrics.prom; do
+            if ! test -f "${path}"; then
+              missing=1
+              missing_files="${missing_files}- ${path}\n"
+            fi
+          done
+
+          if [ "${missing}" -eq 0 ]; then
+            if ! go run ./cmd/nightlyreport \
+              -baseline .github/nightly/benchmark-baseline.json \
+              -mock-non-stream /tmp/nightly-artifacts/benchmarks/mock-non-stream.json \
+              -mock-stream /tmp/nightly-artifacts/benchmarks/mock-stream.json \
+              -adapter-non-stream /tmp/nightly-artifacts/benchmarks/adapter-non-stream.json \
+              -adapter-stream /tmp/nightly-artifacts/benchmarks/adapter-stream.json \
+              -prechunk-output /tmp/nightly-artifacts/streaming-failures/prechunk.out \
+              -prechunk-metrics /tmp/nightly-artifacts/streaming-failures/prechunk-metrics.prom \
+              -partial-output /tmp/nightly-artifacts/streaming-failures/partial.out \
+              -partial-metrics /tmp/nightly-artifacts/streaming-failures/partial-metrics.prom \
+              -anthropic-system-output /tmp/nightly-artifacts/anthropic-adapter/system.out \
+              -anthropic-upstream-request /tmp/nightly-artifacts/anthropic-adapter/upstream-request.json \
+              -anthropic-prechunk-output /tmp/nightly-artifacts/anthropic-adapter/prechunk.out \
+              -anthropic-prechunk-metrics /tmp/nightly-artifacts/anthropic-adapter/prechunk-metrics.prom \
+              -anthropic-partial-output /tmp/nightly-artifacts/anthropic-adapter/partial.out \
+              -anthropic-partial-metrics /tmp/nightly-artifacts/anthropic-adapter/partial-metrics.prom \
+              -output "${report_path}"; then
+              report_failed=1
+            fi
+          fi
+
+          if ! test -f "${report_path}"; then
+            mkdir -p "$(dirname "${report_path}")"
+            {
+              echo "# Nightly Verification Summary"
+              echo
+              if [ "${missing}" -ne 0 ]; then
+                echo "Summary generation was degraded because one or more prerequisite jobs failed or expected artifacts were missing."
+              else
+                echo "Summary generation failed even though all prerequisite artifacts were present."
+              fi
+              echo
+              echo "## Job Results"
+              echo
+              echo "- benchmarks: ${{ needs.benchmarks.result }}"
+              echo "- stream-failure-drills: ${{ needs['stream-failure-drills'].result }}"
+              echo "- anthropic-adapter-drills: ${{ needs['anthropic-adapter-drills'].result }}"
+              if [ -n "${missing_files}" ]; then
+                echo
+                echo "## Missing Artifacts"
+                printf '%b' "${missing_files}"
+              fi
+            } >"${report_path}"
+          fi
+          cat "${report_path}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${report_failed}" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Upload nightly summary artifact
         if: always()

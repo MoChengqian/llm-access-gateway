@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,10 +91,19 @@ func main() {
 		fmt.Print(report)
 		return
 	}
-	if err := os.WriteFile(cfg.OutputPath, []byte(report), 0o644); err != nil {
+	if err := writeReportFile(cfg.OutputPath, report); err != nil {
 		fmt.Fprintf(os.Stderr, "write report: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func writeReportFile(path string, report string) error {
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, []byte(report), 0o644)
 }
 
 func parseFlags(args []string) (config, error) {
