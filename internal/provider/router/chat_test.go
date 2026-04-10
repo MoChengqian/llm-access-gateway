@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,6 +82,44 @@ func TestStreamCompletionFallsBackWhenPrimaryErrorsBeforeFirstChunk(t *testing.T
 	first := <-events
 	if first.Err != nil || first.Chunk.Model != "secondary" {
 		t.Fatalf("expected fallback chunk from secondary, got %#v", first)
+	}
+}
+
+func TestStreamCompletionFallsBackWhenPrimaryTimesOutBeforeFirstChunk(t *testing.T) {
+	var primaryCanceled atomic.Bool
+	primary := &stubProvider{
+		streamFunc: func(ctx context.Context, _ provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
+			events := make(chan provider.ChatCompletionStreamEvent)
+			go func() {
+				defer close(events)
+				<-ctx.Done()
+				primaryCanceled.Store(true)
+			}()
+			return events, nil
+		},
+	}
+	secondary := &stubProvider{
+		streamChunks: []provider.ChatCompletionStreamEvent{
+			{Chunk: provider.ChatCompletionChunk{Model: "secondary"}},
+		},
+	}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary, FirstEventTimeout: 10 * time.Millisecond},
+		{Name: "secondary", Provider: secondary},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini", Stream: true})
+	if err != nil {
+		t.Fatalf("stream completion: %v", err)
+	}
+
+	first := <-events
+	if first.Err != nil || first.Chunk.Model != "secondary" {
+		t.Fatalf("expected fallback chunk from secondary, got %#v", first)
+	}
+	if !primaryCanceled.Load() {
+		t.Fatal("expected primary stream attempt to be canceled after first-event timeout")
 	}
 }
 
@@ -218,6 +257,70 @@ func TestCreateCompletionFallsBackFromMatchedBackendToGenericBackend(t *testing.
 	}
 	if nonMatching.createCalled {
 		t.Fatal("expected non-matching backend to remain last resort")
+	}
+}
+
+func TestCreateCompletionFallbackPropagatesBackendNameToAttemptRecorder(t *testing.T) {
+	recorder := &attemptRecorderStub{}
+	primary := &stubProvider{
+		createFunc: func(ctx context.Context, req provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
+			handle, err := provider.AttemptRecorderFromContext(ctx).BeginAttempt(ctx, provider.AttemptMetadata{
+				Backend:      provider.AttemptBackendFromContext(ctx),
+				Model:        req.Model,
+				PromptTokens: 2,
+				CreatedAt:    time.Unix(123, 0),
+			})
+			if err != nil {
+				return provider.ChatCompletionResponse{}, err
+			}
+			if err := handle.Complete(ctx, provider.AttemptResult{Model: req.Model, Status: "failed"}); err != nil {
+				return provider.ChatCompletionResponse{}, err
+			}
+			return provider.ChatCompletionResponse{}, errors.New("primary failed")
+		},
+	}
+	secondary := &stubProvider{
+		createFunc: func(ctx context.Context, req provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
+			handle, err := provider.AttemptRecorderFromContext(ctx).BeginAttempt(ctx, provider.AttemptMetadata{
+				Backend:      provider.AttemptBackendFromContext(ctx),
+				Model:        req.Model,
+				PromptTokens: 2,
+				CreatedAt:    time.Unix(124, 0),
+			})
+			if err != nil {
+				return provider.ChatCompletionResponse{}, err
+			}
+			if err := handle.Complete(ctx, provider.AttemptResult{
+				Model:            req.Model,
+				Status:           "succeeded",
+				PromptTokens:     2,
+				CompletionTokens: 1,
+				TotalTokens:      3,
+			}); err != nil {
+				return provider.ChatCompletionResponse{}, err
+			}
+			return provider.ChatCompletionResponse{Model: "secondary"}, nil
+		},
+	}
+
+	routed := New([]Backend{
+		{Name: "primary", Provider: primary},
+		{Name: "secondary", Provider: secondary},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	ctx := provider.WithAttemptRecorder(context.Background(), recorder)
+	resp, err := routed.CreateChatCompletion(ctx, provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	if err != nil {
+		t.Fatalf("create completion: %v", err)
+	}
+	if resp.Model != "secondary" {
+		t.Fatalf("expected fallback response, got %#v", resp)
+	}
+	if len(recorder.records) != 2 {
+		t.Fatalf("expected 2 recorded attempts, got %#v", recorder.records)
+	}
+	if recorder.records[0].metadata.Backend != "primary" || recorder.records[1].metadata.Backend != "secondary" {
+		t.Fatalf("unexpected recorded backends %#v", recorder.records)
 	}
 }
 
@@ -381,18 +484,26 @@ type stubProvider struct {
 	response     provider.ChatCompletionResponse
 	streamChunks []provider.ChatCompletionStreamEvent
 	models       []provider.Model
+	createFunc   func(context.Context, provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error)
+	streamFunc   func(context.Context, provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error)
 }
 
-func (s *stubProvider) CreateChatCompletion(context.Context, provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
+func (s *stubProvider) CreateChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (provider.ChatCompletionResponse, error) {
 	s.createCalled = true
+	if s.createFunc != nil {
+		return s.createFunc(ctx, req)
+	}
 	if s.createErr != nil {
 		return provider.ChatCompletionResponse{}, s.createErr
 	}
 	return s.response, nil
 }
 
-func (s *stubProvider) StreamChatCompletion(context.Context, provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
+func (s *stubProvider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
 	s.streamCalled = true
+	if s.streamFunc != nil {
+		return s.streamFunc(ctx, req)
+	}
 	if s.streamErr != nil {
 		return nil, s.streamErr
 	}
@@ -428,4 +539,34 @@ func (o *stubObserver) contains(eventType string) bool {
 		}
 	}
 	return false
+}
+
+type attemptRecorderStub struct {
+	records []*attemptRecord
+}
+
+type attemptRecord struct {
+	metadata provider.AttemptMetadata
+	result   provider.AttemptResult
+}
+
+func (r *attemptRecorderStub) BeginAttempt(_ context.Context, metadata provider.AttemptMetadata) (provider.AttemptHandle, error) {
+	record := &attemptRecord{metadata: metadata}
+	r.records = append(r.records, record)
+	return attemptHandleStub{record: record}, nil
+}
+
+type attemptHandleStub struct {
+	record *attemptRecord
+}
+
+func (h attemptHandleStub) Complete(_ context.Context, result provider.AttemptResult) error {
+	if result.PromptTokens == 0 {
+		result.PromptTokens = h.record.metadata.PromptTokens
+	}
+	if result.TotalTokens == 0 {
+		result.TotalTokens = result.PromptTokens + result.CompletionTokens
+	}
+	h.record.result = result
+	return nil
 }

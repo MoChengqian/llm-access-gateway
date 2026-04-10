@@ -227,10 +227,12 @@ func TestModelsListRejectsMissingAPIKey(t *testing.T) {
 
 func TestUsageReturnsTenantSummaryAndRecentRecords(t *testing.T) {
 	governanceStore := &stubGovernanceStore{
-		insertID:           1,
-		tokensTotal:        140,
-		requestsLastMinute: 2,
-		tokensLastMinute:   42,
+		insertID:                1,
+		tokensTotal:             140,
+		attemptTokensTotal:      140,
+		requestsLastMinute:      2,
+		tokensLastMinute:        42,
+		attemptTokensLastMinute: 42,
 		recentUsageRecords: []usageservice.RecentUsageRecord{
 			{
 				RequestID:        "req-1",
@@ -728,19 +730,27 @@ func (s stubAuthStore) LookupAPIKey(_ context.Context, _ string) (auth.APIKeyRec
 }
 
 type stubGovernanceStore struct {
-	tokensTotal          int
-	insertID             uint64
-	inserted             governance.UsageRecord
-	updated              governance.UsageUpdate
-	err                  error
-	requestsLastMinute   int
-	tokensLastMinute     int
-	recentUsageRecords   []usageservice.RecentUsageRecord
-	lastRecentUsageLimit int
+	tokensTotal             int
+	attemptTokensTotal      int
+	insertID                uint64
+	inserted                governance.UsageRecord
+	attemptInserted         governance.AttemptUsageRecord
+	updated                 governance.UsageUpdate
+	attemptUpdated          governance.AttemptUsageUpdate
+	err                     error
+	requestsLastMinute      int
+	tokensLastMinute        int
+	attemptTokensLastMinute int
+	recentUsageRecords      []usageservice.RecentUsageRecord
+	lastRecentUsageLimit    int
 }
 
 func (s *stubGovernanceStore) SumTotalTokens(context.Context, uint64) (int, error) {
 	return s.tokensTotal, s.err
+}
+
+func (s *stubGovernanceStore) SumTotalAttemptTokens(context.Context, uint64) (int, error) {
+	return s.attemptTokensTotal, s.err
 }
 
 func (s *stubGovernanceStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
@@ -749,6 +759,10 @@ func (s *stubGovernanceStore) CountRequestsSince(context.Context, uint64, time.T
 
 func (s *stubGovernanceStore) SumTotalTokensSince(context.Context, uint64, time.Time) (int, error) {
 	return s.tokensLastMinute, s.err
+}
+
+func (s *stubGovernanceStore) SumTotalAttemptTokensSince(context.Context, uint64, time.Time) (int, error) {
+	return s.attemptTokensLastMinute, s.err
 }
 
 func (s *stubGovernanceStore) ListRecentUsageRecords(_ context.Context, _ uint64, limit int) ([]usageservice.RecentUsageRecord, error) {
@@ -764,8 +778,21 @@ func (s *stubGovernanceStore) InsertUsageRecord(_ context.Context, record govern
 	return s.insertID, nil
 }
 
+func (s *stubGovernanceStore) InsertAttemptUsageRecord(_ context.Context, record governance.AttemptUsageRecord) (uint64, error) {
+	s.attemptInserted = record
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.insertID, nil
+}
+
 func (s *stubGovernanceStore) UpdateUsageRecord(_ context.Context, update governance.UsageUpdate) error {
 	s.updated = update
+	return s.err
+}
+
+func (s *stubGovernanceStore) UpdateAttemptUsageRecord(_ context.Context, update governance.AttemptUsageUpdate) error {
+	s.attemptUpdated = update
 	return s.err
 }
 

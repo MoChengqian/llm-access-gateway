@@ -74,10 +74,14 @@ func (h ChatHandler) CreateCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.CreateCompletion(ctx, req)
+	resp, err := h.service.CreateCompletion(tracker.BindContext(ctx), req)
 	if err != nil {
 		traceErr = err
 		_ = tracker.Fail(ctx)
+		if isGovernanceError(err) {
+			writeGovernanceErrorWithMetrics(w, err, h.metrics)
+			return
+		}
 		writeServiceError(w, err)
 		return
 	}
@@ -111,10 +115,14 @@ func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 
-	events, err := h.service.StreamCompletion(ctx, req)
+	events, err := h.service.StreamCompletion(tracker.BindContext(ctx), req)
 	if err != nil {
 		traceErr = err
 		_ = tracker.Fail(ctx)
+		if isGovernanceError(err) {
+			writeGovernanceErrorWithMetrics(w, err, h.metrics)
+			return
+		}
 		writeServiceError(w, err)
 		return
 	}
@@ -126,6 +134,10 @@ func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, re
 			traceErr = event.Err
 			_ = tracker.Fail(ctx)
 			if !headersWritten {
+				if isGovernanceError(event.Err) {
+					writeGovernanceErrorWithMetrics(w, event.Err, h.metrics)
+					return
+				}
 				writeServiceError(w, event.Err)
 			}
 			return
@@ -224,4 +236,10 @@ func recordGovernanceRejection(metrics MetricsRecorder, reason string) {
 		return
 	}
 	metrics.RecordGovernanceRejection(reason)
+}
+
+func isGovernanceError(err error) bool {
+	return errors.Is(err, governance.ErrRateLimitExceeded) ||
+		errors.Is(err, governance.ErrTokenLimitExceeded) ||
+		errors.Is(err, governance.ErrBudgetExceeded)
 }

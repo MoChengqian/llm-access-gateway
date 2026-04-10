@@ -22,6 +22,8 @@ type Store interface {
 	CountRequestsSince(ctx context.Context, tenantID uint64, since time.Time) (int, error)
 	SumTotalTokensSince(ctx context.Context, tenantID uint64, since time.Time) (int, error)
 	SumTotalTokens(ctx context.Context, tenantID uint64) (int, error)
+	SumTotalAttemptTokensSince(ctx context.Context, tenantID uint64, since time.Time) (int, error)
+	SumTotalAttemptTokens(ctx context.Context, tenantID uint64) (int, error)
 	ListRecentUsageRecords(ctx context.Context, tenantID uint64, limit int) ([]RecentUsageRecord, error)
 }
 
@@ -47,14 +49,16 @@ type Tenant struct {
 }
 
 type Summary struct {
-	WindowSeconds        int `json:"window_seconds"`
-	RequestsLastMinute   int `json:"requests_last_minute"`
-	TokensLastMinute     int `json:"tokens_last_minute"`
-	TotalTokensUsed      int `json:"total_tokens_used"`
-	RPMLimit             int `json:"rpm_limit"`
-	TPMLimit             int `json:"tpm_limit"`
-	TokenBudget          int `json:"token_budget"`
-	RemainingTokenBudget int `json:"remaining_token_budget"`
+	WindowSeconds           int `json:"window_seconds"`
+	RequestsLastMinute      int `json:"requests_last_minute"`
+	TokensLastMinute        int `json:"tokens_last_minute"`
+	TotalTokensUsed         int `json:"total_tokens_used"`
+	LogicalTokensLastMinute int `json:"logical_tokens_last_minute"`
+	LogicalTotalTokensUsed  int `json:"logical_total_tokens_used"`
+	RPMLimit                int `json:"rpm_limit"`
+	TPMLimit                int `json:"tpm_limit"`
+	TokenBudget             int `json:"token_budget"`
+	RemainingTokenBudget    int `json:"remaining_token_budget"`
 }
 
 type UsageRecord struct {
@@ -107,12 +111,22 @@ func (s service) GetTenantUsage(ctx context.Context, limit int) (Response, error
 		return Response{}, err
 	}
 
-	tokensLastMinute, err := s.store.SumTotalTokensSince(ctx, principal.Tenant.ID, windowStart)
+	logicalTokensLastMinute, err := s.store.SumTotalTokensSince(ctx, principal.Tenant.ID, windowStart)
 	if err != nil {
 		return Response{}, err
 	}
 
-	totalTokensUsed, err := s.store.SumTotalTokens(ctx, principal.Tenant.ID)
+	tokensLastMinute, err := s.store.SumTotalAttemptTokensSince(ctx, principal.Tenant.ID, windowStart)
+	if err != nil {
+		return Response{}, err
+	}
+
+	logicalTotalTokensUsed, err := s.store.SumTotalTokens(ctx, principal.Tenant.ID)
+	if err != nil {
+		return Response{}, err
+	}
+
+	totalTokensUsed, err := s.store.SumTotalAttemptTokens(ctx, principal.Tenant.ID)
 	if err != nil {
 		return Response{}, err
 	}
@@ -153,14 +167,16 @@ func (s service) GetTenantUsage(ctx context.Context, limit int) (Response, error
 			Name: principal.Tenant.Name,
 		},
 		Summary: Summary{
-			WindowSeconds:        60,
-			RequestsLastMinute:   requestsLastMinute,
-			TokensLastMinute:     tokensLastMinute,
-			TotalTokensUsed:      totalTokensUsed,
-			RPMLimit:             principal.Tenant.RPMLimit,
-			TPMLimit:             principal.Tenant.TPMLimit,
-			TokenBudget:          principal.Tenant.TokenBudget,
-			RemainingTokenBudget: remainingBudget,
+			WindowSeconds:           60,
+			RequestsLastMinute:      requestsLastMinute,
+			TokensLastMinute:        tokensLastMinute,
+			TotalTokensUsed:         totalTokensUsed,
+			LogicalTokensLastMinute: logicalTokensLastMinute,
+			LogicalTotalTokensUsed:  logicalTotalTokensUsed,
+			RPMLimit:                principal.Tenant.RPMLimit,
+			TPMLimit:                principal.Tenant.TPMLimit,
+			TokenBudget:             principal.Tenant.TokenBudget,
+			RemainingTokenBudget:    remainingBudget,
 		},
 		Data: data,
 	}, nil

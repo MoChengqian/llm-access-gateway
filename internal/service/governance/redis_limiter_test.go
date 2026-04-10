@@ -20,15 +20,18 @@ func TestRedisLimiterMapsRPMExceeded(t *testing.T) {
 	}
 }
 
-func TestRedisLimiterFallsBackOnRedisFailure(t *testing.T) {
+func TestRedisLimiterReturnsUnavailableOnRedisFailure(t *testing.T) {
 	fallback := &stubLimiter{admitErr: ErrTokenLimitExceeded}
 	limiter := NewRedisLimiter(&stubRedisClient{evalErr: errors.New("dial tcp redis: connection refused")}, fallback)
 
 	err := limiter.Admit(context.Background(), auth.Principal{
 		Tenant: auth.Tenant{ID: 1, TPMLimit: 10},
 	}, 2, time.Unix(123, 0))
-	if !errors.Is(err, ErrTokenLimitExceeded) {
-		t.Fatalf("expected fallback ErrTokenLimitExceeded, got %v", err)
+	if !errors.Is(err, ErrLimiterUnavailable) {
+		t.Fatalf("expected ErrLimiterUnavailable, got %v", err)
+	}
+	if fallback.admitCalls != 0 {
+		t.Fatalf("expected fallback admit not to run, got %d calls", fallback.admitCalls)
 	}
 }
 
@@ -49,9 +52,9 @@ func TestRedisLimiterRecordsCompletionTokens(t *testing.T) {
 }
 
 type stubRedisClient struct {
-	evalErr      error
-	incrErr      error
-	lastIncrKey  string
+	evalErr       error
+	incrErr       error
+	lastIncrKey   string
 	lastIncrDelta int64
 }
 

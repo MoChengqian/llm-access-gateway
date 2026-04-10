@@ -11,9 +11,11 @@ import (
 func TestGetTenantUsageBuildsSummaryAndRecentRecords(t *testing.T) {
 	now := time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC)
 	store := &stubStore{
-		requestsLastMinute: 3,
-		tokensLastMinute:   120,
-		totalTokens:        860,
+		requestsLastMinute:      3,
+		tokensLastMinute:        90,
+		attemptTokensLastMinute: 120,
+		totalTokens:             800,
+		attemptTokensTotal:      860,
 		recent: []RecentUsageRecord{
 			{
 				RequestID:        "req-1",
@@ -60,6 +62,9 @@ func TestGetTenantUsageBuildsSummaryAndRecentRecords(t *testing.T) {
 	}
 	if resp.Summary.TotalTokensUsed != 860 || resp.Summary.RemainingTokenBudget != 140 {
 		t.Fatalf("unexpected budget summary %#v", resp.Summary)
+	}
+	if resp.Summary.LogicalTokensLastMinute != 90 || resp.Summary.LogicalTotalTokensUsed != 800 {
+		t.Fatalf("unexpected logical summary %#v", resp.Summary)
 	}
 	if len(resp.Data) != 1 || resp.Data[0].RequestID != "req-1" {
 		t.Fatalf("unexpected recent records %#v", resp.Data)
@@ -109,11 +114,13 @@ func TestGetTenantUsageRejectsMissingPrincipalAndInvalidLimit(t *testing.T) {
 }
 
 type stubStore struct {
-	requestsLastMinute int
-	tokensLastMinute   int
-	totalTokens        int
-	recent             []RecentUsageRecord
-	lastListLimit      int
+	requestsLastMinute      int
+	tokensLastMinute        int
+	totalTokens             int
+	attemptTokensLastMinute int
+	attemptTokensTotal      int
+	recent                  []RecentUsageRecord
+	lastListLimit           int
 }
 
 func (s *stubStore) CountRequestsSince(context.Context, uint64, time.Time) (int, error) {
@@ -126,6 +133,14 @@ func (s *stubStore) SumTotalTokensSince(context.Context, uint64, time.Time) (int
 
 func (s *stubStore) SumTotalTokens(context.Context, uint64) (int, error) {
 	return s.totalTokens, nil
+}
+
+func (s *stubStore) SumTotalAttemptTokensSince(context.Context, uint64, time.Time) (int, error) {
+	return s.attemptTokensLastMinute, nil
+}
+
+func (s *stubStore) SumTotalAttemptTokens(context.Context, uint64) (int, error) {
+	return s.attemptTokensTotal, nil
 }
 
 func (s *stubStore) ListRecentUsageRecords(_ context.Context, _ uint64, limit int) ([]RecentUsageRecord, error) {

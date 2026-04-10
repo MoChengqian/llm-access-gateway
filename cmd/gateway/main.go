@@ -254,9 +254,10 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 		}
 
 		return providerrouter.Backend{
-			Name:     name,
-			Priority: cfg.Priority,
-			Models:   models,
+			Name:              name,
+			Priority:          cfg.Priority,
+			Models:            models,
+			FirstEventTimeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
 			Provider: provideropenai.New(provideropenai.Config{
 				BaseURL:      cfg.BaseURL,
 				APIKey:       cfg.APIKey,
@@ -272,9 +273,10 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 		}
 
 		return providerrouter.Backend{
-			Name:     name,
-			Priority: cfg.Priority,
-			Models:   models,
+			Name:              name,
+			Priority:          cfg.Priority,
+			Models:            models,
+			FirstEventTimeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
 			Provider: provideranthropic.New(provideranthropic.Config{
 				BaseURL:      cfg.BaseURL,
 				APIKey:       cfg.APIKey,
@@ -291,9 +293,10 @@ func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaul
 		}
 
 		return providerrouter.Backend{
-			Name:     name,
-			Priority: cfg.Priority,
-			Models:   models,
+			Name:              name,
+			Priority:          cfg.Priority,
+			Models:            models,
+			FirstEventTimeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
 			Provider: providerollama.New(providerollama.Config{
 				BaseURL:      cfg.BaseURL,
 				APIKey:       cfg.APIKey,

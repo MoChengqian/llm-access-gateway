@@ -50,9 +50,6 @@ func NewRedisLimiter(client redisCounterClient, fallback Limiter) RedisLimiter {
 
 func (l RedisLimiter) Admit(ctx context.Context, principal auth.Principal, promptTokens int, now time.Time) error {
 	if principal.Tenant.RPMLimit <= 0 && principal.Tenant.TPMLimit <= 0 {
-		if l.fallback != nil {
-			return l.fallback.Admit(ctx, principal, promptTokens, now)
-		}
 		return nil
 	}
 
@@ -74,10 +71,7 @@ func (l RedisLimiter) Admit(ctx context.Context, principal auth.Principal, promp
 		case strings.Contains(err.Error(), "TPM_EXCEEDED"):
 			return ErrTokenLimitExceeded
 		default:
-			if l.fallback != nil {
-				return l.fallback.Admit(ctx, principal, promptTokens, now)
-			}
-			return err
+			return ErrLimiterUnavailable
 		}
 	}
 

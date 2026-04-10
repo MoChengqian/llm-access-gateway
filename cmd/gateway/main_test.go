@@ -38,13 +38,14 @@ func TestBuildProviderBackendSupportsMock(t *testing.T) {
 
 func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
-		Type:     "openai",
-		Name:     "openai-primary",
-		BaseURL:  "https://example.com/v1",
-		APIKey:   "key",
-		Model:    "gpt-4.1-mini",
-		Priority: 10,
-		Models:   []string{"gpt-4.1-mini"},
+		Type:           "openai",
+		Name:           "openai-primary",
+		BaseURL:        "https://example.com/v1",
+		APIKey:         "key",
+		Model:          "gpt-4.1-mini",
+		Priority:       10,
+		Models:         []string{"gpt-4.1-mini"},
+		TimeoutSeconds: 7,
 	}, "gpt-4o-mini", providermock.Config{})
 	if err != nil {
 		t.Fatalf("build openai backend: %v", err)
@@ -56,6 +57,9 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 	if backend.Priority != 10 {
 		t.Fatalf("expected priority 10, got %d", backend.Priority)
 	}
+	if backend.FirstEventTimeout != 7*time.Second {
+		t.Fatalf("expected first event timeout 7s, got %s", backend.FirstEventTimeout)
+	}
 	if len(backend.Models) != 1 || backend.Models[0] != "gpt-4.1-mini" {
 		t.Fatalf("expected configured models, got %#v", backend.Models)
 	}
@@ -66,14 +70,15 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 
 func TestBuildProviderBackendSupportsAnthropic(t *testing.T) {
 	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
-		Type:      "anthropic",
-		Name:      "anthropic-primary",
-		BaseURL:   "https://api.anthropic.com/v1",
-		APIKey:    "test-key",
-		Model:     "claude-3-5-sonnet-latest",
-		MaxTokens: 2048,
-		Priority:  15,
-		Models:    []string{"claude-3-5-sonnet-latest"},
+		Type:           "anthropic",
+		Name:           "anthropic-primary",
+		BaseURL:        "https://api.anthropic.com/v1",
+		APIKey:         "test-key",
+		Model:          "claude-3-5-sonnet-latest",
+		MaxTokens:      2048,
+		Priority:       15,
+		Models:         []string{"claude-3-5-sonnet-latest"},
+		TimeoutSeconds: 9,
 	}, "gpt-4o-mini", providermock.Config{})
 	if err != nil {
 		t.Fatalf("build anthropic backend: %v", err)
@@ -85,6 +90,9 @@ func TestBuildProviderBackendSupportsAnthropic(t *testing.T) {
 	if backend.Priority != 15 {
 		t.Fatalf("expected priority 15, got %d", backend.Priority)
 	}
+	if backend.FirstEventTimeout != 9*time.Second {
+		t.Fatalf("expected first event timeout 9s, got %s", backend.FirstEventTimeout)
+	}
 	if len(backend.Models) != 1 || backend.Models[0] != "claude-3-5-sonnet-latest" {
 		t.Fatalf("expected configured models, got %#v", backend.Models)
 	}
@@ -95,12 +103,13 @@ func TestBuildProviderBackendSupportsAnthropic(t *testing.T) {
 
 func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
-		Type:     "ollama",
-		Name:     "ollama-primary",
-		BaseURL:  "http://127.0.0.1:11434",
-		Model:    "llama3.1:8b",
-		Priority: 20,
-		Models:   []string{"llama3.1:8b"},
+		Type:           "ollama",
+		Name:           "ollama-primary",
+		BaseURL:        "http://127.0.0.1:11434",
+		Model:          "llama3.1:8b",
+		Priority:       20,
+		Models:         []string{"llama3.1:8b"},
+		TimeoutSeconds: 11,
 	}, "gpt-4o-mini", providermock.Config{})
 	if err != nil {
 		t.Fatalf("build ollama backend: %v", err)
@@ -111,6 +120,9 @@ func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 	}
 	if backend.Priority != 20 {
 		t.Fatalf("expected priority 20, got %d", backend.Priority)
+	}
+	if backend.FirstEventTimeout != 11*time.Second {
+		t.Fatalf("expected first event timeout 11s, got %s", backend.FirstEventTimeout)
 	}
 	if len(backend.Models) != 1 || backend.Models[0] != "llama3.1:8b" {
 		t.Fatalf("expected configured models, got %#v", backend.Models)

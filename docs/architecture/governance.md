@@ -248,16 +248,16 @@ func (l RedisLimiter) RecordCompletionTokens(ctx context.Context, principal auth
 
 Token budget is enforced differently from RPM/TPM:
 
-1. Budget is checked against the `request_usages` table (all-time sum)
-2. Check happens before the request is admitted
-3. Uses estimated prompt tokens for the check
-4. Actual tokens are recorded after completion
+1. Budget is checked against provider-attempt usage, not only logical request records
+2. Check happens before the request is admitted and again before each upstream retry or fallback attempt
+3. Uses estimated prompt tokens for admission and attempt reservation
+4. Actual tokens are recorded after completion when the provider reports them or when stream usage is finalized
 
 **Budget Check Query**
 
 ```sql
 SELECT COALESCE(SUM(total_tokens), 0)
-FROM request_usages
+FROM request_attempt_usages
 WHERE tenant_id = ?
 ```
 
@@ -275,7 +275,7 @@ The response includes an error message indicating which limit was hit.
 
 ### Request Usage Records
 
-Every request creates a usage record in the `request_usages` table:
+Every logical client request creates a usage record in the `request_usages` table:
 
 ```sql
 CREATE TABLE request_usages (
@@ -300,6 +300,10 @@ CREATE TABLE request_usages (
         FOREIGN KEY (api_key_id) REFERENCES api_keys (id)
 );
 ```
+
+### Provider Attempt Usage Records
+
+Every upstream provider attempt creates a record in `request_attempt_usages`. This includes adapter retries and router fallback attempts, so long-term budget enforcement and usage summary totals reflect actual provider work rather than only the final successful response.
 
 ### Usage Record Lifecycle
 

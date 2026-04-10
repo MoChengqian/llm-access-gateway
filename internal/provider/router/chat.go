@@ -14,10 +14,11 @@ import (
 )
 
 type Backend struct {
-	Name     string
-	Provider provider.ChatCompletionProvider
-	Priority int
-	Models   []string
+	Name              string
+	Provider          provider.ChatCompletionProvider
+	Priority          int
+	Models            []string
+	FirstEventTimeout time.Duration
 }
 
 type BackendStatus struct {
@@ -115,6 +116,7 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 			zap.String("backend", backend.Name),
 			zap.Int("attempt", index+1),
 		)
+		attemptCtx = provider.WithAttemptBackend(attemptCtx, backend.Name)
 		resp, err := backend.Provider.CreateChatCompletion(attemptCtx, req)
 		duration := time.Since(startedAt)
 		attemptSpan.End(err)
@@ -146,6 +148,10 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 			}
 			traceErr = nil
 			return resp, nil
+		}
+		if provider.IsAttemptAccountingError(err) {
+			traceErr = err
+			return provider.ChatCompletionResponse{}, err
 		}
 
 		lastErr = err
@@ -182,13 +188,20 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 	var lastErr error
 	for index, backend := range candidates {
 		startedAt := time.Now()
-		attemptCtx, attemptSpan := tracing.StartSpan(ctx, "provider.backend.stream",
+		attemptTraceCtx, attemptSpan := tracing.StartSpan(ctx, "provider.backend.stream",
 			zap.String("backend", backend.Name),
 			zap.Int("attempt", index+1),
 		)
+		attemptCtx, cancel := context.WithCancel(attemptTraceCtx)
+		attemptCtx = provider.WithAttemptBackend(attemptCtx, backend.Name)
 		events, err := backend.Provider.StreamChatCompletion(attemptCtx, req)
 		if err != nil {
+			cancel()
 			attemptSpan.End(err)
+			if provider.IsAttemptAccountingError(err) {
+				span.End(err)
+				return nil, err
+			}
 
 			lastErr = err
 			failures, unhealthyUntil := p.markFailure(backend.Name)
@@ -205,9 +218,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 			continue
 		}
 
-		firstEvent, err := p.awaitFirstStreamEvent(attemptCtx, events)
+		firstEvent, err := p.awaitFirstStreamEvent(attemptCtx, events, backend.FirstEventTimeout)
 		duration := time.Since(startedAt)
 		if err != nil {
+			cancel()
 			attemptSpan.End(err)
 
 			lastErr = err
@@ -250,7 +264,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 				Attempt:   index + 1,
 			})
 		}
-		return p.wrapStream(ctx, events, firstEvent, span, attemptSpan, backend.Name, index+1), nil
+		return p.wrapStream(ctx, events, firstEvent, span, attemptSpan, backend.Name, index+1, cancel), nil
 	}
 
 	span.End(lastErr)
@@ -304,7 +318,7 @@ func (p *Provider) Probe(ctx context.Context) {
 	}
 }
 
-func (p *Provider) wrapStream(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent, first provider.ChatCompletionStreamEvent, routerSpan *tracing.Span, backendSpan *tracing.Span, backend string, attempt int) <-chan provider.ChatCompletionStreamEvent {
+func (p *Provider) wrapStream(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent, first provider.ChatCompletionStreamEvent, routerSpan *tracing.Span, backendSpan *tracing.Span, backend string, attempt int, cancel context.CancelFunc) <-chan provider.ChatCompletionStreamEvent {
 	wrapped := make(chan provider.ChatCompletionStreamEvent)
 
 	go func() {
@@ -312,6 +326,7 @@ func (p *Provider) wrapStream(ctx context.Context, events <-chan provider.ChatCo
 		chunkCount := 0
 		streamStartedAt := time.Now()
 		defer close(wrapped)
+		defer cancel()
 		defer func() {
 			backendSpan.End(traceErr, zap.Int("chunk_count", chunkCount))
 			routerSpan.End(traceErr, zap.String("backend", backend), zap.Int("attempt", attempt), zap.Int("chunk_count", chunkCount))
@@ -340,7 +355,31 @@ func (p *Provider) wrapStream(ctx context.Context, events <-chan provider.ChatCo
 	return wrapped
 }
 
-func (p *Provider) awaitFirstStreamEvent(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent) (provider.ChatCompletionStreamEvent, error) {
+func (p *Provider) awaitFirstStreamEvent(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent, timeout time.Duration) (provider.ChatCompletionStreamEvent, error) {
+	if timeout <= 0 {
+		return awaitStreamEvent(ctx, events)
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return provider.ChatCompletionStreamEvent{}, ctx.Err()
+	case <-timer.C:
+		return provider.ChatCompletionStreamEvent{}, context.DeadlineExceeded
+	case event, ok := <-events:
+		if !ok {
+			return provider.ChatCompletionStreamEvent{}, errors.New("upstream stream closed before first chunk")
+		}
+		if event.Err != nil {
+			return provider.ChatCompletionStreamEvent{}, event.Err
+		}
+		return event, nil
+	}
+}
+
+func awaitStreamEvent(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent) (provider.ChatCompletionStreamEvent, error) {
 	select {
 	case <-ctx.Done():
 		return provider.ChatCompletionStreamEvent{}, ctx.Err()

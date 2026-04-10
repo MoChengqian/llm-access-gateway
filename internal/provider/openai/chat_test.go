@@ -161,6 +161,48 @@ func TestCreateChatCompletionRetriesRetryableStatus(t *testing.T) {
 	}
 }
 
+func TestCreateChatCompletionRetryRecordsAttemptUsage(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"temporary failure"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+	}))
+	defer server.Close()
+
+	recorder := &attemptRecorderStub{}
+	ctx := provider.WithAttemptRecorder(context.Background(), recorder)
+
+	p := New(Config{
+		BaseURL:      server.URL,
+		DefaultModel: "gpt-4.1-mini",
+		MaxRetries:   1,
+		RetryBackoff: time.Millisecond,
+	})
+
+	if _, err := p.CreateChatCompletion(ctx, provider.ChatCompletionRequest{
+		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("create chat completion: %v", err)
+	}
+
+	if len(recorder.records) != 2 {
+		t.Fatalf("expected 2 recorded attempts, got %#v", recorder.records)
+	}
+	if recorder.records[0].metadata.PromptTokens != 2 || recorder.records[0].result.Status != "failed" || recorder.records[0].result.TotalTokens != 2 {
+		t.Fatalf("unexpected first attempt record %#v", recorder.records[0])
+	}
+	if recorder.records[1].result.Status != "succeeded" || recorder.records[1].result.TotalTokens != 4 {
+		t.Fatalf("unexpected second attempt record %#v", recorder.records[1])
+	}
+}
+
 func TestStreamChatCompletionRetriesBeforeOpen(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,4 +311,34 @@ func TestStreamChatCompletionPropagatesMidstreamError(t *testing.T) {
 	if second.Err == nil || !strings.Contains(second.Err.Error(), "before [DONE]") {
 		t.Fatalf("expected terminal midstream error, got %#v", second)
 	}
+}
+
+type attemptRecorderStub struct {
+	records []*attemptRecord
+}
+
+type attemptRecord struct {
+	metadata provider.AttemptMetadata
+	result   provider.AttemptResult
+}
+
+func (r *attemptRecorderStub) BeginAttempt(_ context.Context, metadata provider.AttemptMetadata) (provider.AttemptHandle, error) {
+	record := &attemptRecord{metadata: metadata}
+	r.records = append(r.records, record)
+	return attemptHandleStub{record: record}, nil
+}
+
+type attemptHandleStub struct {
+	record *attemptRecord
+}
+
+func (h attemptHandleStub) Complete(_ context.Context, result provider.AttemptResult) error {
+	if result.TotalTokens == 0 {
+		result.TotalTokens = h.record.metadata.PromptTokens + result.CompletionTokens
+	}
+	if result.PromptTokens == 0 {
+		result.PromptTokens = h.record.metadata.PromptTokens
+	}
+	h.record.result = result
+	return nil
 }

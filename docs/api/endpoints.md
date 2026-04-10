@@ -274,6 +274,8 @@ Authorization: Bearer <your-api-key>
     "requests_last_minute": 0,
     "tokens_last_minute": 0,
     "total_tokens_used": 47,
+    "logical_tokens_last_minute": 42,
+    "logical_total_tokens_used": 42,
     "rpm_limit": 60,
     "tpm_limit": 4000,
     "token_budget": 1000000,
@@ -298,8 +300,9 @@ Authorization: Bearer <your-api-key>
 
 ### Behavior
 
-- **Window Summary**: `summary.requests_last_minute` and `summary.tokens_last_minute` cover the last 60 seconds.
-- **Budget View**: `remaining_token_budget` is derived from the tenant budget minus total recorded usage.
+- **Window Summary**: `summary.requests_last_minute` covers logical client requests in the last 60 seconds, while `summary.tokens_last_minute` covers provider-attempt token usage in the same window.
+- **Dual Token Views**: `summary.logical_tokens_last_minute` and `summary.logical_total_tokens_used` reflect logical request records from `request_usages`; `summary.tokens_last_minute` and `summary.total_tokens_used` include retry and fallback attempt usage.
+- **Budget View**: `remaining_token_budget` is derived from the tenant budget minus provider-attempt token usage.
 - **Recent History**: `data` returns recent `request_usages` records for the authenticated tenant only.
 - **Limit Handling**: `limit=0` is treated as the default, negative or non-integer values are rejected, and values above `100` are capped.
 

@@ -145,11 +145,16 @@ func (s stubChatService) StreamCompletion(context.Context, chat.CompletionReques
 }
 
 type stubGovernanceStore struct {
-	insertID uint64
-	updated  governance.UsageUpdate
+	insertID       uint64
+	updated        governance.UsageUpdate
+	attemptUpdated governance.AttemptUsageUpdate
 }
 
 func (s *stubGovernanceStore) SumTotalTokens(context.Context, uint64) (int, error) {
+	return 0, nil
+}
+
+func (s *stubGovernanceStore) SumTotalAttemptTokens(context.Context, uint64) (int, error) {
 	return 0, nil
 }
 
@@ -157,8 +162,17 @@ func (s *stubGovernanceStore) InsertUsageRecord(context.Context, governance.Usag
 	return s.insertID, nil
 }
 
+func (s *stubGovernanceStore) InsertAttemptUsageRecord(context.Context, governance.AttemptUsageRecord) (uint64, error) {
+	return s.insertID, nil
+}
+
 func (s *stubGovernanceStore) UpdateUsageRecord(_ context.Context, update governance.UsageUpdate) error {
 	s.updated = update
+	return nil
+}
+
+func (s *stubGovernanceStore) UpdateAttemptUsageRecord(_ context.Context, update governance.AttemptUsageUpdate) error {
+	s.attemptUpdated = update
 	return nil
 }
 

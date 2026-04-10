@@ -130,7 +130,7 @@ func (p Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCom
 }
 
 func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
-	resp, err := p.openStream(ctx, requestPayload{
+	resp, attemptHandle, err := p.openStream(ctx, requestPayload{
 		Model:    p.resolveModel(req.Model),
 		Messages: req.Messages,
 		Stream:   true,
@@ -156,10 +156,12 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 
 			var payload responsePayload
 			if err := json.Unmarshal([]byte(line), &payload); err != nil {
+				_ = failAttempt(ctx, attemptHandle, p.resolveModel(req.Model))
 				publishStreamError(ctx, events, err)
 				return
 			}
 			if payload.Error != "" {
+				_ = failAttempt(ctx, attemptHandle, p.resolveModel(req.Model))
 				publishStreamError(ctx, events, errors.New(payload.Error))
 				return
 			}
@@ -189,6 +191,7 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 
 			select {
 			case <-ctx.Done():
+				_ = failAttempt(ctx, attemptHandle, model)
 				publishStreamError(ctx, events, ctx.Err())
 				return
 			case events <- event:
@@ -200,6 +203,7 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 		}
 
 		if err := scanner.Err(); err != nil {
+			_ = failAttempt(ctx, attemptHandle, p.resolveModel(req.Model))
 			publishStreamError(ctx, events, err)
 		}
 	}()
@@ -211,7 +215,7 @@ func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
 	ctx, cancel := p.withTimeout(ctx)
 	defer cancel()
 
-	resp, err := p.doRequest(ctx, http.MethodGet, p.modelsEndpointURL(), nil, "")
+	resp, _, err := p.doRequest(ctx, nil, http.MethodGet, p.modelsEndpointURL(), nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +257,15 @@ func (p Provider) doChatRequest(ctx context.Context, payload requestPayload) (re
 		return responsePayload{}, err
 	}
 
-	resp, err := p.doRequest(ctx, http.MethodPost, p.chatEndpointURL(), reqBody, "")
+	attemptMetadata := &provider.AttemptMetadata{
+		Backend:      provider.AttemptBackendFromContext(ctx),
+		Model:        payload.Model,
+		Stream:       false,
+		PromptTokens: provider.EstimatePromptTokens(payload.Messages),
+		CreatedAt:    time.Now(),
+	}
+
+	resp, attemptHandle, err := p.doRequest(ctx, attemptMetadata, http.MethodPost, p.chatEndpointURL(), reqBody, "")
 	if err != nil {
 		return responsePayload{}, err
 	}
@@ -263,21 +275,50 @@ func (p Provider) doChatRequest(ctx context.Context, payload requestPayload) (re
 
 	var result responsePayload
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if completeErr := failAttempt(ctx, attemptHandle, payload.Model); completeErr != nil {
+			return responsePayload{}, completeErr
+		}
 		return responsePayload{}, err
 	}
 	if result.Error != "" {
+		if completeErr := failAttempt(ctx, attemptHandle, payload.Model); completeErr != nil {
+			return responsePayload{}, completeErr
+		}
 		return responsePayload{}, errors.New(result.Error)
+	}
+	if attemptHandle != nil {
+		if err := attemptHandle.Complete(ctx, provider.AttemptResult{
+			Model:            result.Model,
+			Status:           "succeeded",
+			PromptTokens:     result.PromptEvalCount,
+			CompletionTokens: result.EvalCount,
+			TotalTokens:      result.PromptEvalCount + result.EvalCount,
+		}); err != nil {
+			return responsePayload{}, provider.WrapAttemptAccountingError(err)
+		}
 	}
 	return result, nil
 }
 
-func (p Provider) openStream(ctx context.Context, payload requestPayload) (*http.Response, error) {
+func (p Provider) openStream(ctx context.Context, payload requestPayload) (*http.Response, provider.AttemptHandle, error) {
 	reqBody, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return p.doRequest(ctx, http.MethodPost, p.chatEndpointURL(), reqBody, "application/x-ndjson")
+	attemptMetadata := &provider.AttemptMetadata{
+		Backend:      provider.AttemptBackendFromContext(ctx),
+		Model:        payload.Model,
+		Stream:       true,
+		PromptTokens: provider.EstimatePromptTokens(payload.Messages),
+		CreatedAt:    time.Now(),
+	}
+
+	resp, attemptHandle, err := p.doRequest(ctx, attemptMetadata, http.MethodPost, p.chatEndpointURL(), reqBody, "application/x-ndjson")
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp, attemptHandle, nil
 }
 
 func (p Provider) chatEndpointURL() string {
@@ -343,24 +384,32 @@ func readHTTPError(resp *http.Response) error {
 	return fmt.Errorf("upstream status %d: %s", resp.StatusCode, text)
 }
 
-func (p Provider) doRequest(ctx context.Context, method string, url string, body []byte, accept string) (*http.Response, error) {
+func (p Provider) doRequest(ctx context.Context, metadata *provider.AttemptMetadata, method string, url string, body []byte, accept string) (*http.Response, provider.AttemptHandle, error) {
 	var lastErr error
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
+		attemptHandle, err := beginAttempt(ctx, metadata)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		resp, err := p.doRequestOnce(ctx, method, url, body, accept)
 		if err == nil {
-			return resp, nil
+			return resp, attemptHandle, nil
+		}
+		if completeErr := failAttempt(ctx, attemptHandle, metadataModel(metadata)); completeErr != nil {
+			return nil, nil, completeErr
 		}
 
 		lastErr = err
 		if attempt == p.maxRetries || !shouldRetryRequest(ctx, err) {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := p.waitRetry(ctx, attempt); err != nil {
-			return nil, lastErr
+			return nil, nil, lastErr
 		}
 	}
 
-	return nil, lastErr
+	return nil, nil, lastErr
 }
 
 func (p Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -448,6 +497,37 @@ func shouldRetryRequest(ctx context.Context, err error) bool {
 
 func shouldRetryHTTPStatus(status int) bool {
 	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
+func beginAttempt(ctx context.Context, metadata *provider.AttemptMetadata) (provider.AttemptHandle, error) {
+	if metadata == nil {
+		return nil, nil
+	}
+	recorder := provider.AttemptRecorderFromContext(ctx)
+	if recorder == nil {
+		return nil, nil
+	}
+	return recorder.BeginAttempt(ctx, *metadata)
+}
+
+func failAttempt(ctx context.Context, handle provider.AttemptHandle, model string) error {
+	if handle == nil {
+		return nil
+	}
+	if err := handle.Complete(ctx, provider.AttemptResult{
+		Model:  model,
+		Status: "failed",
+	}); err != nil {
+		return provider.WrapAttemptAccountingError(err)
+	}
+	return nil
+}
+
+func metadataModel(metadata *provider.AttemptMetadata) string {
+	if metadata == nil {
+		return ""
+	}
+	return metadata.Model
 }
 
 func publishStreamError(ctx context.Context, events chan<- provider.ChatCompletionStreamEvent, err error) {
