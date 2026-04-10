@@ -23,7 +23,7 @@ So `server.address` becomes `APP_SERVER_ADDRESS`, and `provider.primary.max_retr
 - server timeouts and request body size
 - log level
 - MySQL and Redis connection settings
-- gateway routing/health defaults
+- gateway health defaults plus fallback timing
 - provider definitions for `primary` and `secondary`
 - optional multi-backend routing definitions under `provider.backends`
 
@@ -219,6 +219,45 @@ Routing semantics:
 - `ollama`
 
 `buildProviderBackend()` defaults empty provider types to `mock`. For `openai`, `base_url` is required and should already include the upstream `/v1` base path. For `anthropic`, `base_url` should point at the Anthropic API root such as `https://api.anthropic.com/v1`; the adapter automatically sends `x-api-key` and `anthropic-version` headers, translates OpenAI-style `system` messages into Anthropic's top-level `system` field, and requires `max_tokens` (default `1024`). For `ollama`, `base_url` should point at the Ollama server root such as `http://127.0.0.1:11434`.
+
+## Persisted Route Rules
+
+Configured providers define which backends exist and how to reach them. If the
+database table `route_rules` contains enabled rows, those rows become the
+effective backend selection policy at gateway startup.
+
+`route_rules` columns:
+
+- `backend_name`: must match a configured backend name
+- `model`: exact request model match, or empty string for a generic fallback rule
+- `priority`: lower values are attempted first
+- `enabled`: disabled rows are ignored
+
+Authoritative behavior when enabled `route_rules` exist:
+
+- only configured backends referenced by `route_rules` participate in routing
+- exact model rules beat generic rules
+- backends with no matching exact or generic rule for a request model are excluded
+- provider credentials, timeouts, and retry settings still come from YAML or `APP_*`
+
+Example:
+
+```sql
+INSERT INTO route_rules (backend_name, model, priority, enabled) VALUES
+  ('fast-gpt4o', 'gpt-4o-mini', 10, TRUE),
+  ('generic-fallback', '', 20, TRUE);
+```
+
+For the local development path, `go run ./cmd/devinit` seeds `route_rules`
+from the current provider config so the default repo path already exercises the
+database-driven policy layer.
+
+Operational workflow:
+
+- inspect current policy with `go run ./cmd/routerulectl list`
+- sync DB policy back to the configured provider set with `go run ./cmd/routerulectl sync-from-config`
+- replace policy explicitly with repeated `-rule 'backend_name,model,priority'` flags
+- restart the gateway process after changing persisted route rules so the new policy becomes active
 
 ## Example Configurations
 

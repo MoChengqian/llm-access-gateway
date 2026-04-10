@@ -12,14 +12,20 @@ type ProviderHealthReader interface {
 }
 
 type ProviderBackendStatus struct {
-	Name                string    `json:"name"`
-	Priority            int       `json:"priority"`
-	Models              []string  `json:"models,omitempty"`
-	Healthy             bool      `json:"healthy"`
-	ConsecutiveFailures int       `json:"consecutive_failures"`
-	UnhealthyUntil      time.Time `json:"unhealthy_until,omitempty"`
-	LastProbeAt         time.Time `json:"last_probe_at,omitempty"`
-	LastProbeError      string    `json:"last_probe_error,omitempty"`
+	Name                string      `json:"name"`
+	Priority            int         `json:"priority"`
+	Models              []string    `json:"models,omitempty"`
+	RouteRules          []RouteRule `json:"route_rules,omitempty"`
+	Healthy             bool        `json:"healthy"`
+	ConsecutiveFailures int         `json:"consecutive_failures"`
+	UnhealthyUntil      time.Time   `json:"unhealthy_until,omitempty"`
+	LastProbeAt         time.Time   `json:"last_probe_at,omitempty"`
+	LastProbeError      string      `json:"last_probe_error,omitempty"`
+}
+
+type RouteRule struct {
+	Model    string `json:"model,omitempty"`
+	Priority int    `json:"priority"`
 }
 
 type HealthHandler struct {

@@ -97,6 +97,20 @@ CREATE TABLE IF NOT EXISTS request_attempt_usages (
         ON UPDATE RESTRICT
 )`
 
+	createRouteRulesTableSQL = `
+CREATE TABLE IF NOT EXISTS route_rules (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    backend_name VARCHAR(255) NOT NULL,
+    model VARCHAR(255) NOT NULL DEFAULT '',
+    priority INT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_route_rules_backend_model (backend_name, model),
+    KEY idx_route_rules_enabled_priority (enabled, priority, backend_name)
+)`
+
 	developmentTenantName = "local-dev"
 	developmentAPIKey     = "lag-local-dev-key"
 )
@@ -114,6 +128,7 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 		createAPIKeysTableSQL,
 		createRequestUsagesTableSQL,
 		createRequestAttemptUsagesTableSQL,
+		createRouteRulesTableSQL,
 	}
 
 	for _, statement := range statements {

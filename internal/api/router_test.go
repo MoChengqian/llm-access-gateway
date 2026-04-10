@@ -104,7 +104,14 @@ func TestDebugProviders(t *testing.T) {
 	}, nil, nil, providerHealthStub{
 		ready: true,
 		statuses: []handlers.ProviderBackendStatus{
-			{Name: "mock-primary", Healthy: false, ConsecutiveFailures: 1},
+			{
+				Name:                "mock-primary",
+				Healthy:             false,
+				ConsecutiveFailures: 1,
+				RouteRules: []handlers.RouteRule{
+					{Model: "gpt-4o-mini", Priority: 10},
+				},
+			},
 			{Name: "mock-secondary", Healthy: true, ConsecutiveFailures: 0},
 		},
 	}, nil)
@@ -121,6 +128,9 @@ func TestDebugProviders(t *testing.T) {
 	bodyText := rec.Body.String()
 	if !strings.Contains(bodyText, "\"ready\":true") || !strings.Contains(bodyText, "\"mock-primary\"") {
 		t.Fatalf("expected provider status payload, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "\"route_rules\"") || !strings.Contains(bodyText, "\"model\":\"gpt-4o-mini\"") {
+		t.Fatalf("expected route rule payload, got %s", bodyText)
 	}
 }
 

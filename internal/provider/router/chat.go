@@ -18,18 +18,25 @@ type Backend struct {
 	Provider          provider.ChatCompletionProvider
 	Priority          int
 	Models            []string
+	RouteRules        []RouteRule
 	FirstEventTimeout time.Duration
 }
 
+type RouteRule struct {
+	Model    string `json:"model,omitempty"`
+	Priority int    `json:"priority"`
+}
+
 type BackendStatus struct {
-	Name                string    `json:"name"`
-	Priority            int       `json:"priority"`
-	Models              []string  `json:"models,omitempty"`
-	Healthy             bool      `json:"healthy"`
-	ConsecutiveFailures int       `json:"consecutive_failures"`
-	UnhealthyUntil      time.Time `json:"unhealthy_until,omitempty"`
-	LastProbeAt         time.Time `json:"last_probe_at,omitempty"`
-	LastProbeError      string    `json:"last_probe_error,omitempty"`
+	Name                string      `json:"name"`
+	Priority            int         `json:"priority"`
+	Models              []string    `json:"models,omitempty"`
+	RouteRules          []RouteRule `json:"route_rules,omitempty"`
+	Healthy             bool        `json:"healthy"`
+	ConsecutiveFailures int         `json:"consecutive_failures"`
+	UnhealthyUntil      time.Time   `json:"unhealthy_until,omitempty"`
+	LastProbeAt         time.Time   `json:"last_probe_at,omitempty"`
+	LastProbeError      string      `json:"last_probe_error,omitempty"`
 }
 
 type Config struct {
@@ -104,7 +111,7 @@ func (p *Provider) CreateChatCompletion(ctx context.Context, req provider.ChatCo
 
 	candidates, skipped := p.candidates(req.Model)
 	if len(candidates) == 0 {
-		traceErr = errors.New("no provider backends configured")
+		traceErr = noCandidatesError(len(p.backends))
 		return provider.ChatCompletionResponse{}, traceErr
 	}
 	p.observeSkipped("create", skipped)
@@ -179,7 +186,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 	)
 	candidates, skipped := p.candidates(req.Model)
 	if len(candidates) == 0 {
-		err := errors.New("no provider backends configured")
+		err := noCandidatesError(len(p.backends))
 		span.End(err)
 		return nil, err
 	}
@@ -525,6 +532,7 @@ func (p *Provider) BackendStatuses() []BackendStatus {
 			Name:                backend.Name,
 			Priority:            backend.Priority,
 			Models:              append([]string(nil), backend.Models...),
+			RouteRules:          append([]RouteRule(nil), backend.RouteRules...),
 			Healthy:             healthy,
 			ConsecutiveFailures: state.consecutiveFailures,
 			UnhealthyUntil:      state.unhealthyUntil,
@@ -554,35 +562,102 @@ func (p *Provider) observe(event Event) {
 }
 
 func rankBackends(backends []Backend, model string) []Backend {
-	ranked := append([]Backend(nil), backends...)
-	if len(ranked) <= 1 {
-		return ranked
+	normalizedModel := strings.TrimSpace(strings.ToLower(model))
+	type rankedBackend struct {
+		backend  Backend
+		score    int
+		priority int
 	}
 
-	normalizedModel := strings.TrimSpace(strings.ToLower(model))
+	ranked := make([]rankedBackend, 0, len(backends))
+	for _, backend := range backends {
+		score, priority, applicable := backendPreference(backend, normalizedModel)
+		if !applicable {
+			continue
+		}
+		ranked = append(ranked, rankedBackend{
+			backend:  backend,
+			score:    score,
+			priority: priority,
+		})
+	}
+	if len(ranked) <= 1 {
+		result := make([]Backend, 0, len(ranked))
+		for _, item := range ranked {
+			result = append(result, item.backend)
+		}
+		return result
+	}
+
 	sort.SliceStable(ranked, func(i, j int) bool {
-		leftScore := backendModelScore(ranked[i], normalizedModel)
-		rightScore := backendModelScore(ranked[j], normalizedModel)
+		leftScore := ranked[i].score
+		rightScore := ranked[j].score
 		if leftScore != rightScore {
 			return leftScore > rightScore
 		}
-		return ranked[i].Priority < ranked[j].Priority
+		if ranked[i].priority != ranked[j].priority {
+			return ranked[i].priority < ranked[j].priority
+		}
+		return ranked[i].backend.Priority < ranked[j].backend.Priority
 	})
 
-	return ranked
+	result := make([]Backend, 0, len(ranked))
+	for _, item := range ranked {
+		result = append(result, item.backend)
+	}
+	return result
 }
 
-func backendModelScore(backend Backend, normalizedModel string) int {
+func backendPreference(backend Backend, normalizedModel string) (int, int, bool) {
+	if len(backend.RouteRules) > 0 {
+		return routeRulePreference(backend.RouteRules, normalizedModel)
+	}
+
 	if normalizedModel == "" {
-		return 1
+		return 1, backend.Priority, true
 	}
 	if len(backend.Models) == 0 {
-		return 1
+		return 1, backend.Priority, true
 	}
 	for _, candidate := range backend.Models {
 		if strings.EqualFold(strings.TrimSpace(candidate), normalizedModel) {
-			return 2
+			return 2, backend.Priority, true
 		}
 	}
-	return 0
+	return 0, backend.Priority, true
+}
+
+func routeRulePreference(rules []RouteRule, normalizedModel string) (int, int, bool) {
+	const maxInt = int(^uint(0) >> 1)
+
+	exactPriority := maxInt
+	genericPriority := maxInt
+	for _, rule := range rules {
+		model := strings.TrimSpace(strings.ToLower(rule.Model))
+		switch {
+		case model == "":
+			if rule.Priority < genericPriority {
+				genericPriority = rule.Priority
+			}
+		case model == normalizedModel:
+			if rule.Priority < exactPriority {
+				exactPriority = rule.Priority
+			}
+		}
+	}
+
+	if normalizedModel != "" && exactPriority != maxInt {
+		return 2, exactPriority, true
+	}
+	if genericPriority != maxInt {
+		return 1, genericPriority, true
+	}
+	return 0, 0, false
+}
+
+func noCandidatesError(configuredBackends int) error {
+	if configuredBackends == 0 {
+		return errors.New("no provider backends configured")
+	}
+	return errors.New("no provider backends matched routing policy")
 }

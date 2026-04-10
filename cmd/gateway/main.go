@@ -85,9 +85,23 @@ func main() {
 	governanceService := governance.NewService(governanceStore, limiter)
 	usageService := usageservice.NewService(governanceStore)
 	metricsRegistry := metrics.NewRegistry()
-	backends, modelSources, err := buildProviderBackends(cfg)
+	backends, _, err := buildProviderBackends(cfg)
 	if err != nil {
 		logger.Fatal("provider setup failed", zap.Error(err))
+	}
+	routeRules, err := mysqlstore.NewRoutingStore(db).ListRouteRules(context.Background())
+	if err != nil {
+		logger.Fatal("route rule load failed", zap.Error(err))
+	}
+	backends, routeRulesEnabled, err := applyRouteRules(backends, routeRules)
+	if err != nil {
+		logger.Fatal("route rule setup failed", zap.Error(err))
+	}
+	if routeRulesEnabled {
+		logger.Info("database route rules enabled",
+			zap.Int("route_rule_count", len(routeRules)),
+			zap.Int("routed_backend_count", len(backends)),
+		)
 	}
 	chatProvider := providerrouter.New(backends, providerrouter.Config{
 		FailureThreshold: cfg.Gateway.ProviderFailureThreshold,
@@ -100,6 +114,7 @@ func main() {
 		},
 	})
 	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
+	modelSources := collectModelSources(backends)
 	modelsService := modelsservice.NewService(modelSources)
 
 	probeCtx, stopProbe := context.WithCancel(context.Background())
@@ -215,6 +230,58 @@ func collectModelSources(backends []providerrouter.Backend) []modelsservice.Sour
 		}
 	}
 	return sources
+}
+
+func applyRouteRules(backends []providerrouter.Backend, rules []mysqlstore.RouteRuleRecord) ([]providerrouter.Backend, bool, error) {
+	if len(rules) == 0 {
+		return backends, false, nil
+	}
+
+	byBackend := make(map[string][]providerrouter.RouteRule, len(rules))
+	minPriority := make(map[string]int, len(rules))
+	for _, rule := range rules {
+		backendName := strings.TrimSpace(rule.BackendName)
+		if backendName == "" {
+			return nil, false, errors.New("route rule backend_name is required")
+		}
+
+		normalizedModel := strings.TrimSpace(strings.ToLower(rule.Model))
+		byBackend[backendName] = append(byBackend[backendName], providerrouter.RouteRule{
+			Model:    normalizedModel,
+			Priority: rule.Priority,
+		})
+		if current, ok := minPriority[backendName]; !ok || rule.Priority < current {
+			minPriority[backendName] = rule.Priority
+		}
+	}
+
+	filtered := make([]providerrouter.Backend, 0, len(byBackend))
+	seen := make(map[string]struct{}, len(byBackend))
+	for _, backend := range backends {
+		routedRules, ok := byBackend[backend.Name]
+		if !ok {
+			continue
+		}
+
+		backend.RouteRules = append([]providerrouter.RouteRule(nil), routedRules...)
+		backend.Models = nil
+		backend.Priority = minPriority[backend.Name]
+		filtered = append(filtered, backend)
+		seen[backend.Name] = struct{}{}
+	}
+
+	for backendName := range byBackend {
+		if _, ok := seen[backendName]; ok {
+			continue
+		}
+		return nil, false, fmt.Errorf("route rule references unknown backend %q", backendName)
+	}
+
+	if len(filtered) == 0 {
+		return nil, false, errors.New("route rules configured but no routed backends remained")
+	}
+
+	return filtered, true, nil
 }
 
 func buildProviderBackend(role string, cfg config.ProviderEndpointConfig, defaultModel string, mockCfg providermock.Config) (providerrouter.Backend, error) {
@@ -403,11 +470,27 @@ func (a providerHealthAdapter) BackendStatuses() []handlers.ProviderBackendStatu
 			Name:                status.Name,
 			Priority:            status.Priority,
 			Models:              append([]string(nil), status.Models...),
+			RouteRules:          toHandlerRouteRules(status.RouteRules),
 			Healthy:             status.Healthy,
 			ConsecutiveFailures: status.ConsecutiveFailures,
 			UnhealthyUntil:      status.UnhealthyUntil,
 			LastProbeAt:         status.LastProbeAt,
 			LastProbeError:      status.LastProbeError,
+		})
+	}
+	return result
+}
+
+func toHandlerRouteRules(rules []providerrouter.RouteRule) []handlers.RouteRule {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	result := make([]handlers.RouteRule, 0, len(rules))
+	for _, rule := range rules {
+		result = append(result, handlers.RouteRule{
+			Model:    rule.Model,
+			Priority: rule.Priority,
 		})
 	}
 	return result

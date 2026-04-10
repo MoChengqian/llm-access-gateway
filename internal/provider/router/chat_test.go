@@ -260,6 +260,72 @@ func TestCreateCompletionFallsBackFromMatchedBackendToGenericBackend(t *testing.
 	}
 }
 
+func TestCreateCompletionRouteRulesPreferExactAndGenericFallback(t *testing.T) {
+	matched := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "matched"},
+	}
+	generic := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "generic"},
+	}
+	unrelated := &stubProvider{
+		response: provider.ChatCompletionResponse{Model: "unrelated"},
+	}
+
+	routed := New([]Backend{
+		{
+			Name:       "generic",
+			Priority:   200,
+			RouteRules: []RouteRule{{Priority: 20}},
+			Provider:   generic,
+		},
+		{
+			Name:       "matched",
+			Priority:   100,
+			RouteRules: []RouteRule{{Model: "gpt-4o-mini", Priority: 10}},
+			Provider:   matched,
+		},
+		{
+			Name:       "unrelated",
+			Priority:   1,
+			RouteRules: []RouteRule{{Model: "claude-3-7-sonnet", Priority: 1}},
+			Provider:   unrelated,
+		},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	if err != nil {
+		t.Fatalf("create completion: %v", err)
+	}
+
+	if resp.Model != "matched" {
+		t.Fatalf("expected matched route-rule response, got %#v", resp)
+	}
+	if !matched.createCalled {
+		t.Fatal("expected matched backend to be attempted")
+	}
+	if generic.createCalled {
+		t.Fatal("expected generic backend to stay unused after exact-match success")
+	}
+	if unrelated.createCalled {
+		t.Fatal("expected unrelated backend to be filtered out by route rules")
+	}
+}
+
+func TestCreateCompletionRouteRulesRejectWhenNoRuleMatches(t *testing.T) {
+	routed := New([]Backend{
+		{
+			Name:       "specialized",
+			RouteRules: []RouteRule{{Model: "claude-3-7-sonnet", Priority: 10}},
+			Provider:   &stubProvider{response: provider.ChatCompletionResponse{Model: "specialized"}},
+		},
+	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
+
+	_, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	if err == nil || err.Error() != "no provider backends matched routing policy" {
+		t.Fatalf("expected routing-policy error, got %v", err)
+	}
+}
+
 func TestCreateCompletionFallbackPropagatesBackendNameToAttemptRecorder(t *testing.T) {
 	recorder := &attemptRecorderStub{}
 	primary := &stubProvider{

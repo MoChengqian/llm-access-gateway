@@ -8,6 +8,8 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
+	providerrouter "github.com/MoChengqian/llm-access-gateway/internal/provider/router"
+	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
 )
 
 func TestBuildProviderBackendSupportsMock(t *testing.T) {
@@ -192,6 +194,48 @@ func TestBuildProviderBackendsSupportsConfiguredList(t *testing.T) {
 	}
 	if len(sources) != 2 {
 		t.Fatalf("expected model sources for both mock backends, got %d", len(sources))
+	}
+}
+
+func TestApplyRouteRulesFiltersBackendsAndOverridesRoutingMetadata(t *testing.T) {
+	backends := []providerrouter.Backend{
+		{Name: "generic-fallback", Priority: 200, Models: []string{"legacy-model"}, Provider: providermock.New()},
+		{Name: "fast-gpt4o", Priority: 50, Models: []string{"gpt-4o-mini"}, Provider: providermock.New()},
+		{Name: "unused", Priority: 10, Provider: providermock.New()},
+	}
+
+	routed, enabled, err := applyRouteRules(backends, []mysqlstore.RouteRuleRecord{
+		{BackendName: "fast-gpt4o", Model: "gpt-4o-mini", Priority: 10},
+		{BackendName: "generic-fallback", Priority: 20},
+	})
+	if err != nil {
+		t.Fatalf("apply route rules: %v", err)
+	}
+	if !enabled {
+		t.Fatal("expected route rules to be enabled")
+	}
+	if len(routed) != 2 {
+		t.Fatalf("expected 2 routed backends, got %#v", routed)
+	}
+	if routed[0].Name != "generic-fallback" || routed[0].Priority != 20 || len(routed[0].Models) != 0 || len(routed[0].RouteRules) != 1 {
+		t.Fatalf("expected generic backend to be rewritten with route rule metadata, got %#v", routed[0])
+	}
+	if routed[1].Name != "fast-gpt4o" || routed[1].Priority != 10 || len(routed[1].RouteRules) != 1 {
+		t.Fatalf("expected matched backend to be rewritten with route rule metadata, got %#v", routed[1])
+	}
+}
+
+func TestApplyRouteRulesRejectsUnknownBackend(t *testing.T) {
+	_, _, err := applyRouteRules([]providerrouter.Backend{
+		{Name: "known", Provider: providermock.New()},
+	}, []mysqlstore.RouteRuleRecord{
+		{BackendName: "unknown", Priority: 10},
+	})
+	if err == nil {
+		t.Fatalf("expected unknown backend error, got %v", err)
+	}
+	if got := err.Error(); got != `route rule references unknown backend "unknown"` {
+		t.Fatalf("unexpected error %q", got)
 	}
 }
 
