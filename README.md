@@ -6,6 +6,7 @@ LLM Access Gateway is a Go service that exposes an OpenAI-compatible
 - API key authentication backed by MySQL
 - Redis-backed RPM / TPM limiting with MySQL fallback
 - tenant resolution from API key
+- MySQL-backed `route_rules` control for backend selection and model-specific priority
 - provider routing with model-aware priority and configurable OpenAI-compatible, Anthropic, Ollama, or mock backends
 - active provider probing via the models endpoint
 - mock non-streaming chat completions
@@ -47,6 +48,7 @@ cmd/
   devinit/     Initialize local MySQL schema and seed one development tenant/key
   gateway/     Start the HTTP gateway
   loadtest/    Run a built-in load test against chat completions
+  routerulectl/ Manage persisted route_rules from the command line
 
 configs/
   config.yaml  Default app configuration
@@ -71,7 +73,7 @@ internal/
   store/redis/ Minimal Redis client for limiter counters
 
 migrations/
-  001_init.sql Initial tenants/api_keys schema
+  001_init.sql Initial tenants, API keys, request usage, attempt usage, and route rule schema
 ```
 
 ## Quick Start
@@ -106,12 +108,26 @@ api_key=lag-local-dev-key
 rpm_limit=60
 tpm_limit=4000
 token_budget=1000000
+route_rules=2
 
 # go run ./cmd/gateway
 INFO gateway starting address=:8080
 ```
 
 For a full walkthrough, see [docs/local-development.md](docs/local-development.md).
+
+To inspect or update persisted routing policy:
+
+```bash
+go run ./cmd/routerulectl list
+go run ./cmd/routerulectl sync-from-config
+go run ./cmd/routerulectl replace \
+  -rule 'fast-gpt4o,gpt-4o-mini,10' \
+  -rule 'generic-fallback,,20'
+```
+
+Route rule changes are persisted immediately, and the current gateway process
+applies them on the next start.
 
 ## Documentation
 
@@ -248,7 +264,7 @@ Expected results:
 - if an upstream stream is interrupted after the first chunk, the gateway closes the stream without a false `[DONE]`, and fallback is not attempted after output has started
 - with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
 - if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
-- `GET /debug/providers` shows backend health, failure count, and cooldown state
+- `GET /debug/providers` shows backend health, failure count, cooldown state, and effective `route_rules`
 - `GET /metrics` exposes request count, provider failures, fallback count, and readyz failures
 - `/metrics` also exposes governance rejection counts, stream request/chunk/TTFT counters, HTTP request latency, provider operation latency, and probe success/failure totals
 - every request returns `X-Trace-Id`, and logs now include `trace_id`, `span_id`, and provider span events for request -> handler -> provider correlation

@@ -11,7 +11,9 @@ All commands below are based on the current code and current repo layout:
 - local init command: `go run ./cmd/devinit`
 - gateway command: `go run ./cmd/gateway`
 - load test command: `go run ./cmd/loadtest`
+- route rule admin command: `go run ./cmd/routerulectl`
 - models endpoint: `GET /v1/models`
+- route policy table: `route_rules`
 
 ## Verified Local Path
 
@@ -46,6 +48,8 @@ The expected API results are:
 - if an upstream stream is interrupted after output starts, the gateway ends the stream without emitting a false `[DONE]`
 - forced primary provider failure still falls back to `200`
 - provider health can be inspected from `/debug/providers`
+- `cmd/devinit` seeds default `route_rules` from the current provider config, so local routing already runs from MySQL policy data
+- `cmd/routerulectl list|replace|sync-from-config` is the operator workflow for inspecting and updating persisted route rules
 - metrics can be inspected from `/metrics`
 - every response includes `X-Trace-Id` for log correlation
 - primary / secondary providers can be configured as `mock`, `openai`, `anthropic`, or `ollama`
@@ -244,7 +248,21 @@ api_key=lag-local-dev-key
 rpm_limit=60
 tpm_limit=4000
 token_budget=1000000
+route_rules=2
 ```
+
+If you want to inspect or replace route rules manually:
+
+```bash
+go run ./cmd/routerulectl list
+go run ./cmd/routerulectl replace \
+  -rule 'primary,gpt-4o-mini,10' \
+  -rule 'secondary,,20'
+go run ./cmd/gateway
+```
+
+The gateway reads route rules during startup, so restart the process after
+changing persisted policy.
 
 What this command does:
 

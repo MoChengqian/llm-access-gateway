@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
+	"github.com/MoChengqian/llm-access-gateway/internal/routingpolicy"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -61,6 +62,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "update tenant limits: %v\n", err)
 		os.Exit(1)
 	}
+	routeRules := routingpolicy.DesiredRouteRuleSeeds(cfg)
+	if err := mysqlstore.NewRoutingStore(db).ReplaceRouteRules(ctx, routeRules); err != nil {
+		fmt.Fprintf(os.Stderr, "replace route rules: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Println("development auth seed ready")
 	fmt.Printf("tenant=%s\n", seed.TenantName)
@@ -68,6 +74,7 @@ func main() {
 	fmt.Printf("rpm_limit=%d\n", limits.RPMLimit)
 	fmt.Printf("tpm_limit=%d\n", limits.TPMLimit)
 	fmt.Printf("token_budget=%d\n", limits.TokenBudget)
+	fmt.Printf("route_rules=%d\n", len(routeRules))
 }
 
 func parseFlags(args []string) (seedLimits, error) {

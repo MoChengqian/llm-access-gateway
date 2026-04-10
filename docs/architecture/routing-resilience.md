@@ -8,10 +8,10 @@ The LLM Access Gateway routes chat requests through an ordered set of provider b
 2. router-level fallback across backends
 3. passive health tracking plus active probing
 
-The current implementation is intentionally simple and evidence-based: it is a deterministic failover router, not a weighted load balancer. Backend choice now comes from process configuration plus two routing hints:
+The current implementation is intentionally simple and evidence-based: it is a deterministic failover router, not a weighted load balancer. Provider endpoint definitions still come from process configuration, but backend choice now has two possible policy sources:
 
-1. exact model matches are preferred over generic backends
-2. lower numeric `priority` values are attempted before higher values
+1. persisted MySQL `route_rules`, when enabled rows exist
+2. configuration-local `models[]` plus backend `priority`, as a fallback when no `route_rules` are present
 
 After candidate ranking, unhealthy backends are skipped during cooldown when healthy alternatives exist, and streaming fallback still stops once the first chunk has been accepted from an upstream provider.
 
@@ -24,7 +24,16 @@ The gateway now supports two configuration shapes:
 - legacy `provider.primary` plus `provider.secondary`
 - preferred `provider.backends[]` for any number of backends
 
-In both cases, `buildProviderBackends()` produces an ordered backend slice. The router then ranks that slice with `rankBackends()`:
+In both cases, `buildProviderBackends()` produces the configured backend registry. The gateway then optionally applies persisted `route_rules` before the router ranks backends for a request.
+
+When `route_rules` exist:
+
+- only referenced backends stay in the routed set
+- a row with `model=''` becomes a generic fallback rule
+- a row with an exact `model` becomes a model-specific preference rule
+- lower numeric `priority` values are attempted first
+
+When `route_rules` do not exist, the router falls back to the older config-local ranking behavior:
 
 - model-scoped backends whose `models[]` list contains the request model get the highest score
 - generic backends with an empty `models[]` list stay eligible for all requests
@@ -48,10 +57,34 @@ func rankBackends(backends []Backend, model string) []Backend {
 This means:
 
 - a backend can be made request-specific without hard-coding router branches
+- routing policy can move into MySQL without moving provider credentials there
 - a generic backend can still act as a safety net when the preferred model-specific backend fails
 - there is still no weight field, percentage split, or random selection in the current code path
 
 Legacy primary/secondary configs still work unchanged. They are converted into two ranked backends with default priorities so existing environments keep their original behavior.
+
+### `route_rules` are authoritative when present
+
+If enabled `route_rules` exist, a backend with no matching exact rule and no
+generic fallback rule is excluded from the candidate set for that request.
+
+This is stricter than the legacy config-only path, where non-matching
+specialized backends remained a last-resort candidate. The stricter behavior is
+intentional: persisted route policy should be explicit rather than accidental.
+
+### Policy management workflow
+
+The repository now includes a small operator command:
+
+```bash
+go run ./cmd/routerulectl list
+go run ./cmd/routerulectl sync-from-config
+go run ./cmd/routerulectl replace -rule 'fast-gpt4o,gpt-4o-mini,10' -rule 'generic-fallback,,20'
+```
+
+That workflow manages the persisted `route_rules` table directly. The gateway
+loads those rules at startup, so policy changes become active on the next
+process start.
 
 ### Candidate selection is health-aware
 
@@ -233,8 +266,10 @@ The HTTP handler maps that state to:
   "providers": [
     {
       "name": "primary",
-      "priority": 100,
-      "models": [],
+      "priority": 20,
+      "route_rules": [
+        {"model":"","priority":20}
+      ],
       "healthy": false,
       "consecutive_failures": 1,
       "unhealthy_until": "2026-04-07T10:00:30Z",
@@ -245,7 +280,7 @@ The HTTP handler maps that state to:
 }
 ```
 
-This endpoint is the most direct way to understand why `/readyz` changed and which backend is cooling down.
+This endpoint is the most direct way to understand why `/readyz` changed, which backend is cooling down, and which persisted route rules are active for each backend.
 
 ### Reproducible inspection commands
 
