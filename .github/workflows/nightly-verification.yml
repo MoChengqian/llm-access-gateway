@@ -179,6 +179,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
+          go run ./cmd/routerulectl sync-from-config
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-adapter.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
@@ -357,6 +358,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
+          go run ./cmd/routerulectl sync-from-config
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
@@ -489,6 +491,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
+          go run ./cmd/routerulectl sync-from-config
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
@@ -669,6 +672,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
+          go run ./cmd/routerulectl sync-from-config
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-system.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
@@ -803,6 +807,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
+          go run ./cmd/routerulectl sync-from-config
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
@@ -938,6 +943,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
+          go run ./cmd/routerulectl sync-from-config
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 

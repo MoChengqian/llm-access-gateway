@@ -166,6 +166,7 @@ jobs:
           APP_PROVIDER_PRIMARY_MAX_RETRIES: "1"
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
+          go run ./cmd/routerulectl sync-from-config
           nohup "${GATEWAY_BIN}" >/tmp/gateway-fallback.log 2>&1 &
           echo $! >/tmp/gateway.pid
 
