@@ -17,11 +17,16 @@ OTEL_COLLECTOR_SERVICE = "otel-collector"
 OTEL_COLLECTOR_CONFIG = "otel collector config"
 OTEL_COLLECTOR_METRICS_TARGET = "#{OTEL_COLLECTOR_SERVICE}:8888"
 PRODUCTION_NETWORK_POLICY_NAME = "llm-access-gateway-boundary"
+GATEWAY_CONFIG_NAME = "llm-access-gateway-config"
+GATEWAY_SECRET_NAME = "llm-access-gateway-secrets"
+DEVINIT_JOB_NAME = "llm-access-gateway-devinit"
 PRODUCTION_DEPLOYMENT_LABEL = "production Deployment"
 PRODUCTION_DEPLOYMENT_TEMPLATE_LABEL = "#{PRODUCTION_DEPLOYMENT_LABEL} template"
 PRODUCTION_JOB_LABEL = "production Job"
 PRODUCTION_JOB_TEMPLATE_LABEL = "#{PRODUCTION_JOB_LABEL} template"
 PRODUCTION_PDB_LABEL = "production PodDisruptionBudget"
+PRODUCTION_NETWORK_POLICY_LABEL = "production NetworkPolicy"
+PRODUCTION_HPA_LABEL = "production HorizontalPodAutoscaler"
 PRODUCTION_GATEWAY_IMAGE = "ghcr.io/example/llm-access-gateway:v1.0.0"
 
 def main
@@ -203,7 +208,7 @@ end
 
 def validate_configmap(doc)
   validate_kind(doc, "ConfigMap")
-  validate_metadata_name(doc, "llm-access-gateway-config")
+  validate_metadata_name(doc, GATEWAY_CONFIG_NAME)
   validate_metadata_namespace(doc)
   data = fetch_hash!(doc, "data", "ConfigMap")
   %w[
@@ -224,7 +229,7 @@ end
 
 def validate_secret(doc)
   validate_kind(doc, "Secret")
-  validate_metadata_name(doc, "llm-access-gateway-secrets")
+  validate_metadata_name(doc, GATEWAY_SECRET_NAME)
   validate_metadata_namespace(doc)
   string_data = fetch_hash!(doc, "stringData", "Secret")
   abort("Secret missing APP_MYSQL_DSN") unless string_data.key?("APP_MYSQL_DSN")
@@ -232,7 +237,7 @@ end
 
 def validate_job(doc)
   validate_kind(doc, "Job")
-  validate_metadata_name(doc, "llm-access-gateway-devinit")
+  validate_metadata_name(doc, DEVINIT_JOB_NAME)
   validate_metadata_namespace(doc)
   template_spec = fetch_hash!(fetch_hash!(fetch_hash!(doc, "spec", "Job"), "template", "Job template"), "spec", "Job template spec")
   abort("Job restartPolicy must be OnFailure") unless template_spec["restartPolicy"] == "OnFailure"
@@ -300,7 +305,7 @@ end
 
 def validate_production_configmap(doc)
   validate_kind(doc, "ConfigMap")
-  validate_metadata_name(doc, "llm-access-gateway-config")
+  validate_metadata_name(doc, GATEWAY_CONFIG_NAME)
   validate_metadata_namespace(doc)
   data = fetch_hash!(doc, "data", "production ConfigMap")
 
@@ -317,7 +322,7 @@ end
 
 def validate_production_secret(doc)
   validate_kind(doc, "Secret")
-  validate_metadata_name(doc, "llm-access-gateway-secrets")
+  validate_metadata_name(doc, GATEWAY_SECRET_NAME)
   validate_metadata_namespace(doc)
   string_data = fetch_hash!(doc, "stringData", "production Secret")
   %w[
@@ -370,7 +375,7 @@ end
 
 def validate_production_job(doc, patch: false)
   validate_kind(doc, "Job")
-  validate_metadata_name(doc, "llm-access-gateway-devinit")
+  validate_metadata_name(doc, DEVINIT_JOB_NAME)
   validate_metadata_namespace(doc)
   spec = fetch_hash!(doc, "spec", PRODUCTION_JOB_LABEL)
   abort("production Job ttlSecondsAfterFinished must be 3600") unless spec["ttlSecondsAfterFinished"].to_i == 3600
@@ -411,8 +416,8 @@ def validate_production_networkpolicy(doc)
   validate_kind(doc, "NetworkPolicy")
   validate_metadata_name(doc, PRODUCTION_NETWORK_POLICY_NAME)
   validate_metadata_namespace(doc)
-  spec = fetch_hash!(doc, "spec", "production NetworkPolicy")
-  selector = fetch_hash!(fetch_hash!(spec, "podSelector", "production NetworkPolicy"), "matchLabels", "production NetworkPolicy")
+  spec = fetch_hash!(doc, "spec", PRODUCTION_NETWORK_POLICY_LABEL)
+  selector = fetch_hash!(fetch_hash!(spec, "podSelector", PRODUCTION_NETWORK_POLICY_LABEL), "matchLabels", PRODUCTION_NETWORK_POLICY_LABEL)
   abort("production NetworkPolicy selector mismatch") unless selector["app"] == "llm-access-gateway"
 
   policy_types = Array(spec["policyTypes"])
@@ -458,8 +463,8 @@ def validate_production_hpa(doc)
   validate_kind(doc, "HorizontalPodAutoscaler")
   validate_metadata_name(doc, "llm-access-gateway")
   validate_metadata_namespace(doc)
-  spec = fetch_hash!(doc, "spec", "production HorizontalPodAutoscaler")
-  target = fetch_hash!(spec, "scaleTargetRef", "production HorizontalPodAutoscaler")
+  spec = fetch_hash!(doc, "spec", PRODUCTION_HPA_LABEL)
+  target = fetch_hash!(spec, "scaleTargetRef", PRODUCTION_HPA_LABEL)
   abort("production HPA target kind mismatch") unless target["kind"] == "Deployment"
   abort("production HPA target name mismatch") unless target["name"] == "llm-access-gateway"
   abort("production HPA minReplicas must be 2") unless spec["minReplicas"].to_i == 2
@@ -473,7 +478,7 @@ def validate_production_hpa(doc)
   abort("production HPA CPU target type mismatch") unless target_metric["type"] == "Utilization"
   abort("production HPA CPU averageUtilization must be 70") unless target_metric["averageUtilization"].to_i == 70
 
-  behavior = fetch_hash!(spec, "behavior", "production HorizontalPodAutoscaler")
+  behavior = fetch_hash!(spec, "behavior", PRODUCTION_HPA_LABEL)
   abort("production HPA missing scaleUp behavior") unless behavior.key?("scaleUp")
   abort("production HPA missing scaleDown behavior") unless behavior.key?("scaleDown")
 end
@@ -484,12 +489,12 @@ def validate_production_render
 
   docs = safe_load_stream(stdout, "production overlay render").compact
   validate_namespace(find_doc!(docs, "Namespace", EXPECTED_NAMESPACE))
-  validate_configmap(find_doc!(docs, "ConfigMap", "llm-access-gateway-config"))
-  validate_production_configmap(find_doc!(docs, "ConfigMap", "llm-access-gateway-config"))
-  validate_production_secret(find_doc!(docs, "Secret", "llm-access-gateway-secrets"))
+  validate_configmap(find_doc!(docs, "ConfigMap", GATEWAY_CONFIG_NAME))
+  validate_production_configmap(find_doc!(docs, "ConfigMap", GATEWAY_CONFIG_NAME))
+  validate_production_secret(find_doc!(docs, "Secret", GATEWAY_SECRET_NAME))
   validate_service(find_doc!(docs, "Service", "llm-access-gateway"))
   validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
-  validate_production_job(find_doc!(docs, "Job", "llm-access-gateway-devinit"))
+  validate_production_job(find_doc!(docs, "Job", DEVINIT_JOB_NAME))
   validate_production_ingress(find_doc!(docs, "Ingress", "llm-access-gateway"))
   validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", PRODUCTION_NETWORK_POLICY_NAME))
   validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
@@ -635,10 +640,10 @@ end
 
 def validate_env_from_refs(container)
   refs = Array(container["envFrom"])
-  configmap_ok = refs.any? { |entry| entry.is_a?(Hash) && entry.dig("configMapRef", "name") == "llm-access-gateway-config" }
-  secret_ok = refs.any? { |entry| entry.is_a?(Hash) && entry.dig("secretRef", "name") == "llm-access-gateway-secrets" }
-  abort("container envFrom missing llm-access-gateway-config") unless configmap_ok
-  abort("container envFrom missing llm-access-gateway-secrets") unless secret_ok
+  configmap_ok = refs.any? { |entry| entry.is_a?(Hash) && entry.dig("configMapRef", "name") == GATEWAY_CONFIG_NAME }
+  secret_ok = refs.any? { |entry| entry.is_a?(Hash) && entry.dig("secretRef", "name") == GATEWAY_SECRET_NAME }
+  abort("container envFrom missing #{GATEWAY_CONFIG_NAME}") unless configmap_ok
+  abort("container envFrom missing #{GATEWAY_SECRET_NAME}") unless secret_ok
 end
 
 def validate_pod_security_context(security_context)

@@ -21,6 +21,7 @@ fail() {
   local message="$1"
   printf 'ERROR: %s\n' "${message}" >&2
   exit 1
+  return 1
 }
 
 wait_for_http() {
@@ -41,6 +42,7 @@ cleanup() {
     kill "${stub_pid}" >/dev/null 2>&1 || true
     wait "${stub_pid}" 2>/dev/null || true
   fi
+  return 0
 }
 
 trap cleanup EXIT
