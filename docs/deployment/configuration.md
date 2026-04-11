@@ -22,6 +22,7 @@ So `server.address` becomes `APP_SERVER_ADDRESS`, and `provider.primary.max_retr
 
 - server timeouts and request body size
 - log level
+- optional OTLP trace export
 - MySQL and Redis connection settings
 - gateway health defaults plus fallback timing
 - provider definitions for `primary` and `secondary`
@@ -70,6 +71,40 @@ log:
 - `APP_LOG_LEVEL`
 
 The level is applied to the zap production logger at startup.
+
+## Observability Configuration
+
+### YAML
+
+```yaml
+observability:
+  service_name: llm-access-gateway
+  otlp_traces_endpoint: ""
+  otlp_traces_insecure: false
+  otlp_export_timeout_seconds: 5
+```
+
+### Environment variables
+
+- `APP_OBSERVABILITY_SERVICE_NAME`
+- `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
+- `APP_OBSERVABILITY_OTLP_TRACES_INSECURE`
+- `APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS`
+
+OTLP trace export is disabled until `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT` is
+set. The recommended local collector format is:
+
+```bash
+export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://otel-collector:4318/v1/traces'
+```
+
+If you provide a full `http://` or `https://` URL, the scheme controls whether
+the exporter uses plaintext or TLS and the URL path is passed to the OTLP HTTP
+exporter. If you provide a bare `host:port`, set
+`APP_OBSERVABILITY_OTLP_TRACES_INSECURE=true` for plaintext collectors.
+
+The gateway continues to emit structured span logs even when OTLP export is
+disabled.
 
 ## MySQL and Redis
 
@@ -304,6 +339,7 @@ go run ./cmd/gateway
 ## Configuration Caveats
 
 - Secrets such as upstream API keys and MySQL DSNs should come from environment variables or Kubernetes Secrets, not committed YAML.
+- OTLP endpoints are operational configuration. Keep collector credentials and network policy outside committed YAML if your collector requires auth.
 - The provider router is deterministic failover. It now supports exact model matching plus explicit numeric priority, but it still does not implement weighted balancing.
 - Mock failure toggles are useful for drills and local verification but should not be enabled in normal production environments.
 - `gateway.primary_mock_fail_*` only affects the legacy `provider.primary` path, not `provider.backends[]`.
@@ -315,6 +351,7 @@ go run ./cmd/gateway
 - [Kubernetes Deployment](kubernetes.md)
 - [Production Considerations](production-considerations.md)
 - [Routing and Resilience](../architecture/routing-resilience.md)
+- [Observability Design](../architecture/observability.md)
 
 ## Code References
 

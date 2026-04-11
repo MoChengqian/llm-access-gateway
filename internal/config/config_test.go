@@ -47,3 +47,28 @@ func TestLoadParsesProviderMaxTokensFromEnvironment(t *testing.T) {
 		t.Fatalf("expected primary max tokens 2048, got %d", cfg.Provider.Primary.MaxTokens)
 	}
 }
+
+func TestLoadParsesObservabilityFromEnvironment(t *testing.T) {
+	t.Setenv("APP_OBSERVABILITY_SERVICE_NAME", "lag-test")
+	t.Setenv("APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT", "http://otel-collector:4318/v1/traces")
+	t.Setenv("APP_OBSERVABILITY_OTLP_TRACES_INSECURE", "true")
+	t.Setenv("APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS", "7")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Observability.ServiceName != "lag-test" {
+		t.Fatalf("expected service name lag-test, got %q", cfg.Observability.ServiceName)
+	}
+	if cfg.Observability.OTLPTracesEndpoint != "http://otel-collector:4318/v1/traces" {
+		t.Fatalf("unexpected traces endpoint %q", cfg.Observability.OTLPTracesEndpoint)
+	}
+	if !cfg.Observability.OTLPTracesInsecure {
+		t.Fatal("expected insecure traces flag")
+	}
+	if cfg.Observability.OTLPExportTimeoutSeconds != 7 {
+		t.Fatalf("expected export timeout 7, got %d", cfg.Observability.OTLPExportTimeoutSeconds)
+	}
+}

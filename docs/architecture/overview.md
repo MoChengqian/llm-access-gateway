@@ -68,7 +68,7 @@ The gateway is responsible for:
 - **SSE Streaming Proxy**: Proxying Server-Sent Events streams from providers to clients
 - **Provider Routing**: Selecting between multiple provider backends with health tracking
 - **Resilience**: Retry logic and fallback to secondary providers (before first chunk only for streams)
-- **Observability**: Request/trace ID propagation, structured logging, Prometheus metrics, and log-based trace correlation
+- **Observability**: Request/trace ID propagation, structured logging, Prometheus metrics, log-based trace correlation, optional OTLP trace export
 - **Deployment Support**: Docker Compose and Kubernetes deployment configurations
 
 ## What the Gateway Does Not Do
@@ -369,8 +369,9 @@ For performance benchmarks, see [../verification/benchmarks/](../verification/be
 The gateway provides comprehensive observability:
 
 - **Metrics**: Prometheus-style metrics on `/metrics` (request counts, latencies, failures)
-- **Tracing**: Request and trace ID propagation with log-based spans
+- **Tracing**: Request and trace ID propagation with log-based spans plus optional OTLP/HTTP export
 - **Logging**: Structured JSON logs with request/trace/tenant context
+- **Dashboards**: Importable Grafana dashboard under `deployments/grafana/dashboards`
 
 For observability details, see [observability.md](observability.md).
 

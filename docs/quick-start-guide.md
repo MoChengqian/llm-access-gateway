@@ -197,11 +197,12 @@ For `POST /v1/chat/completions`:
 ### Observability Stack
 
 - **Metrics**: Prometheus-style metrics on `/metrics` endpoint
-  - Request counts, latency histograms
+  - Request counts and count/sum latency pairs
   - Provider failure and fallback counts
   - Governance rejection counts
   - Streaming metrics (TTFT, chunk counts)
-- **Tracing**: Request and trace ID propagation through all layers
+- **Tracing**: Request and trace ID propagation through all layers, with optional OTLP/HTTP export
+- **Dashboard**: Importable Grafana dashboard under `deployments/grafana/dashboards`
 - **Logging**: Structured JSON logs with correlation fields
 
 ## Deployment Options

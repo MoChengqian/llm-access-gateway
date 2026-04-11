@@ -41,13 +41,16 @@ When quoting logs:
 
 ## Traces and Correlation
 
-The repo uses log-based tracing. When documenting trace evidence, refer to:
+The repo uses log-based tracing by default, with optional OTLP trace export. When documenting trace evidence, refer to:
 
 - `X-Request-Id`
 - `X-Trace-Id`
 - `trace span finished` logs
+- `lag.trace_id`, `lag.span_id`, and `lag.request_id` OTel span attributes when OTLP export is enabled
 
-Do not describe Jaeger, OTLP, or other tracing backends as if they are configured.
+Do not describe Jaeger, Tempo, or other tracing storage backends as if they are
+provided by this repository. The repo provides the exporter path; the backend is
+environment-owned.
 
 ## Benchmarks
 

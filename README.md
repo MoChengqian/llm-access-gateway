@@ -268,6 +268,8 @@ Expected results:
 - `GET /metrics` exposes request count, provider failures, fallback count, and readyz failures
 - `/metrics` also exposes governance rejection counts, stream request/chunk/TTFT counters, HTTP request latency, provider operation latency, and probe success/failure totals
 - every request returns `X-Trace-Id`, and logs now include `trace_id`, `span_id`, and provider span events for request -> handler -> provider correlation
+- optional OTLP/HTTP trace export is available through `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
+- the Grafana dashboard asset lives at `deployments/grafana/dashboards/llm-access-gateway.json`
 
 ## Local Development Entry
 
@@ -293,6 +295,10 @@ export APP_SERVER_READ_TIMEOUT_SECONDS='15'
 export APP_SERVER_WRITE_TIMEOUT_SECONDS='60'
 export APP_SERVER_IDLE_TIMEOUT_SECONDS='60'
 export APP_SERVER_MAX_REQUEST_BODY_BYTES='1048576'
+export APP_OBSERVABILITY_SERVICE_NAME='llm-access-gateway'
+export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT=''
+export APP_OBSERVABILITY_OTLP_TRACES_INSECURE='false'
+export APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS='5'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
 export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
 export APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS='30'

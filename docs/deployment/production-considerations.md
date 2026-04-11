@@ -106,10 +106,16 @@ The gateway also returns:
 - `X-Request-Id`
 - `X-Trace-Id`
 
-and emits structured logs with:
+and emits structured logs plus optional OTLP spans with:
 
 - `request_id`
 - `trace_id`
+
+Enable OTLP trace export by setting
+`APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT` to an OTLP/HTTP collector URL such as
+`http://otel-collector:4318/v1/traces`. Import
+`deployments/grafana/dashboards/llm-access-gateway.json` when a Prometheus
+scrape path for `/metrics` is available.
 - `span_id`
 - provider routing events
 

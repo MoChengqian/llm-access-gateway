@@ -7,12 +7,13 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server" json:"server"`
-	Log      LogConfig      `mapstructure:"log" json:"log"`
-	MySQL    MySQLConfig    `mapstructure:"mysql" json:"mysql"`
-	Redis    RedisConfig    `mapstructure:"redis" json:"redis"`
-	Gateway  GatewayConfig  `mapstructure:"gateway" json:"gateway"`
-	Provider ProviderConfig `mapstructure:"provider" json:"provider"`
+	Server        ServerConfig        `mapstructure:"server" json:"server"`
+	Log           LogConfig           `mapstructure:"log" json:"log"`
+	MySQL         MySQLConfig         `mapstructure:"mysql" json:"mysql"`
+	Redis         RedisConfig         `mapstructure:"redis" json:"redis"`
+	Gateway       GatewayConfig       `mapstructure:"gateway" json:"gateway"`
+	Provider      ProviderConfig      `mapstructure:"provider" json:"provider"`
+	Observability ObservabilityConfig `mapstructure:"observability" json:"observability"`
 }
 
 type ServerConfig struct {
@@ -65,6 +66,13 @@ type ProviderEndpointConfig struct {
 	TimeoutSeconds           int      `mapstructure:"timeout_seconds" json:"timeout_seconds"`
 	MaxRetries               int      `mapstructure:"max_retries" json:"max_retries"`
 	RetryBackoffMilliseconds int      `mapstructure:"retry_backoff_milliseconds" json:"retry_backoff_milliseconds"`
+}
+
+type ObservabilityConfig struct {
+	ServiceName              string `mapstructure:"service_name" json:"service_name"`
+	OTLPTracesEndpoint       string `mapstructure:"otlp_traces_endpoint" json:"otlp_traces_endpoint"`
+	OTLPTracesInsecure       bool   `mapstructure:"otlp_traces_insecure" json:"otlp_traces_insecure"`
+	OTLPExportTimeoutSeconds int    `mapstructure:"otlp_export_timeout_seconds" json:"otlp_export_timeout_seconds"`
 }
 
 func Load() (Config, error) {
@@ -132,4 +140,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("provider.secondary.timeout_seconds", 15)
 	v.SetDefault("provider.secondary.max_retries", 1)
 	v.SetDefault("provider.secondary.retry_backoff_milliseconds", 200)
+	v.SetDefault("observability.service_name", "llm-access-gateway")
+	v.SetDefault("observability.otlp_traces_endpoint", "")
+	v.SetDefault("observability.otlp_traces_insecure", false)
+	v.SetDefault("observability.otlp_export_timeout_seconds", 5)
 }
