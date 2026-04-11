@@ -12,13 +12,19 @@ import (
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
 )
 
+const (
+	testDefaultModel   = "gpt-4o-mini"
+	testGenericBackend = "generic-fallback"
+	testFastBackend    = "fast-gpt4o"
+)
+
 func TestBuildProviderBackendSupportsMock(t *testing.T) {
 	backend, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type:     "mock",
 		Name:     "mock-primary",
 		Priority: 90,
-		Models:   []string{"gpt-4o-mini", "GPT-4O-MINI"},
-	}, "gpt-4o-mini", providermock.Config{})
+		Models:   []string{testDefaultModel, "GPT-4O-MINI"},
+	}, testDefaultModel, providermock.Config{})
 	if err != nil {
 		t.Fatalf("build mock backend: %v", err)
 	}
@@ -29,7 +35,7 @@ func TestBuildProviderBackendSupportsMock(t *testing.T) {
 	if backend.Priority != 90 {
 		t.Fatalf("expected priority 90, got %d", backend.Priority)
 	}
-	if len(backend.Models) != 1 || backend.Models[0] != "gpt-4o-mini" {
+	if len(backend.Models) != 1 || backend.Models[0] != testDefaultModel {
 		t.Fatalf("expected normalized models, got %#v", backend.Models)
 	}
 	_, ok := backend.Provider.(provider.ModelProvider)
@@ -48,7 +54,7 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 		Priority:       10,
 		Models:         []string{"gpt-4.1-mini"},
 		TimeoutSeconds: 7,
-	}, "gpt-4o-mini", providermock.Config{})
+	}, testDefaultModel, providermock.Config{})
 	if err != nil {
 		t.Fatalf("build openai backend: %v", err)
 	}
@@ -81,7 +87,7 @@ func TestBuildProviderBackendSupportsAnthropic(t *testing.T) {
 		Priority:       15,
 		Models:         []string{"claude-3-5-sonnet-latest"},
 		TimeoutSeconds: 9,
-	}, "gpt-4o-mini", providermock.Config{})
+	}, testDefaultModel, providermock.Config{})
 	if err != nil {
 		t.Fatalf("build anthropic backend: %v", err)
 	}
@@ -112,7 +118,7 @@ func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 		Priority:       20,
 		Models:         []string{"llama3.1:8b"},
 		TimeoutSeconds: 11,
-	}, "gpt-4o-mini", providermock.Config{})
+	}, testDefaultModel, providermock.Config{})
 	if err != nil {
 		t.Fatalf("build ollama backend: %v", err)
 	}
@@ -137,7 +143,7 @@ func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 func TestBuildProviderBackendRejectsMissingOpenAIBaseURL(t *testing.T) {
 	_, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type: "openai",
-	}, "gpt-4o-mini", providermock.Config{})
+	}, testDefaultModel, providermock.Config{})
 	if err == nil {
 		t.Fatal("expected missing base url error")
 	}
@@ -146,7 +152,7 @@ func TestBuildProviderBackendRejectsMissingOpenAIBaseURL(t *testing.T) {
 func TestBuildProviderBackendRejectsMissingAnthropicBaseURL(t *testing.T) {
 	_, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type: "anthropic",
-	}, "gpt-4o-mini", providermock.Config{})
+	}, testDefaultModel, providermock.Config{})
 	if err == nil {
 		t.Fatal("expected missing base url error")
 	}
@@ -155,7 +161,7 @@ func TestBuildProviderBackendRejectsMissingAnthropicBaseURL(t *testing.T) {
 func TestBuildProviderBackendRejectsMissingOllamaBaseURL(t *testing.T) {
 	_, err := buildProviderBackend("primary", config.ProviderEndpointConfig{
 		Type: "ollama",
-	}, "gpt-4o-mini", providermock.Config{})
+	}, testDefaultModel, providermock.Config{})
 	if err == nil {
 		t.Fatal("expected missing base url error")
 	}
@@ -164,20 +170,20 @@ func TestBuildProviderBackendRejectsMissingOllamaBaseURL(t *testing.T) {
 func TestBuildProviderBackendsSupportsConfiguredList(t *testing.T) {
 	backends, sources, err := buildProviderBackends(config.Config{
 		Gateway: config.GatewayConfig{
-			DefaultModel: "gpt-4o-mini",
+			DefaultModel: testDefaultModel,
 		},
 		Provider: config.ProviderConfig{
 			Backends: []config.ProviderEndpointConfig{
 				{
 					Type:     "mock",
-					Name:     "generic-fallback",
+					Name:     testGenericBackend,
 					Priority: 200,
 				},
 				{
 					Type:     "mock",
-					Name:     "fast-gpt4o",
+					Name:     testFastBackend,
 					Priority: 50,
-					Models:   []string{"gpt-4o-mini"},
+					Models:   []string{testDefaultModel},
 				},
 			},
 		},
@@ -199,14 +205,14 @@ func TestBuildProviderBackendsSupportsConfiguredList(t *testing.T) {
 
 func TestApplyRouteRulesFiltersBackendsAndOverridesRoutingMetadata(t *testing.T) {
 	backends := []providerrouter.Backend{
-		{Name: "generic-fallback", Priority: 200, Models: []string{"legacy-model"}, Provider: providermock.New()},
-		{Name: "fast-gpt4o", Priority: 50, Models: []string{"gpt-4o-mini"}, Provider: providermock.New()},
+		{Name: testGenericBackend, Priority: 200, Models: []string{"legacy-model"}, Provider: providermock.New()},
+		{Name: testFastBackend, Priority: 50, Models: []string{testDefaultModel}, Provider: providermock.New()},
 		{Name: "unused", Priority: 10, Provider: providermock.New()},
 	}
 
 	routed, enabled, err := applyRouteRules(backends, []mysqlstore.RouteRuleRecord{
-		{BackendName: "fast-gpt4o", Model: "gpt-4o-mini", Priority: 10},
-		{BackendName: "generic-fallback", Priority: 20},
+		{BackendName: testFastBackend, Model: testDefaultModel, Priority: 10},
+		{BackendName: testGenericBackend, Priority: 20},
 	})
 	if err != nil {
 		t.Fatalf("apply route rules: %v", err)
@@ -217,10 +223,10 @@ func TestApplyRouteRulesFiltersBackendsAndOverridesRoutingMetadata(t *testing.T)
 	if len(routed) != 2 {
 		t.Fatalf("expected 2 routed backends, got %#v", routed)
 	}
-	if routed[0].Name != "generic-fallback" || routed[0].Priority != 20 || len(routed[0].Models) != 0 || len(routed[0].RouteRules) != 1 {
+	if routed[0].Name != testGenericBackend || routed[0].Priority != 20 || len(routed[0].Models) != 0 || len(routed[0].RouteRules) != 1 {
 		t.Fatalf("expected generic backend to be rewritten with route rule metadata, got %#v", routed[0])
 	}
-	if routed[1].Name != "fast-gpt4o" || routed[1].Priority != 10 || len(routed[1].RouteRules) != 1 {
+	if routed[1].Name != testFastBackend || routed[1].Priority != 10 || len(routed[1].RouteRules) != 1 {
 		t.Fatalf("expected matched backend to be rewritten with route rule metadata, got %#v", routed[1])
 	}
 }

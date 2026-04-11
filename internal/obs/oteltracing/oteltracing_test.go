@@ -12,13 +12,15 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
+const collectorEndpoint = "otel-collector:4318"
+
 func TestNormalizeEndpointAcceptsFullHTTPURL(t *testing.T) {
-	cfg, err := normalizeEndpoint("http://otel-collector:4318/v1/traces", false)
+	cfg, err := normalizeEndpoint("http://"+collectorEndpoint+"/v1/traces", false)
 	if err != nil {
 		t.Fatalf("normalize endpoint: %v", err)
 	}
 
-	if cfg.endpoint != "otel-collector:4318" {
+	if cfg.endpoint != collectorEndpoint {
 		t.Fatalf("expected collector endpoint, got %q", cfg.endpoint)
 	}
 	if cfg.path != "/v1/traces" {
@@ -30,12 +32,12 @@ func TestNormalizeEndpointAcceptsFullHTTPURL(t *testing.T) {
 }
 
 func TestNormalizeEndpointAcceptsHostPortWithInsecureFlag(t *testing.T) {
-	cfg, err := normalizeEndpoint("otel-collector:4318", true)
+	cfg, err := normalizeEndpoint(collectorEndpoint, true)
 	if err != nil {
 		t.Fatalf("normalize endpoint: %v", err)
 	}
 
-	if cfg.endpoint != "otel-collector:4318" {
+	if cfg.endpoint != collectorEndpoint {
 		t.Fatalf("expected host:port endpoint, got %q", cfg.endpoint)
 	}
 	if cfg.path != "" {
@@ -47,7 +49,7 @@ func TestNormalizeEndpointAcceptsHostPortWithInsecureFlag(t *testing.T) {
 }
 
 func TestNormalizeEndpointRejectsUnsupportedScheme(t *testing.T) {
-	if _, err := normalizeEndpoint("ftp://otel-collector:4318/v1/traces", false); err == nil {
+	if _, err := normalizeEndpoint("ftp://"+collectorEndpoint+"/v1/traces", false); err == nil {
 		t.Fatal("expected unsupported scheme error")
 	}
 }

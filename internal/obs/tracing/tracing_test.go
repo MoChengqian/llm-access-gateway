@@ -12,8 +12,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const requestSpanName = "http.request"
+
 func TestStartRequestSpanAndChildShareTraceID(t *testing.T) {
-	rootCtx, rootSpan := StartRequestSpan(context.Background(), zap.NewNop(), "req-123", "http.request")
+	rootCtx, rootSpan := StartRequestSpan(context.Background(), zap.NewNop(), "req-123", requestSpanName)
 	defer rootSpan.End(nil)
 
 	rootTraceID := TraceIDFromContext(rootCtx)
@@ -37,7 +39,7 @@ func TestStartRequestSpanAndChildShareTraceID(t *testing.T) {
 }
 
 func TestStartRequestSpanGeneratesTraceIDWhenRequestIDMissing(t *testing.T) {
-	ctx, span := StartRequestSpan(context.Background(), zap.NewNop(), "", "http.request")
+	ctx, span := StartRequestSpan(context.Background(), zap.NewNop(), "", requestSpanName)
 	defer span.End(nil)
 
 	if got := TraceIDFromContext(ctx); got == "" {
@@ -58,7 +60,7 @@ func TestSpansAreExportedToOpenTelemetryProvider(t *testing.T) {
 		otel.SetTracerProvider(previousProvider)
 	})
 
-	rootCtx, rootSpan := StartRequestSpan(context.Background(), zap.NewNop(), "req-otel", "http.request",
+	rootCtx, rootSpan := StartRequestSpan(context.Background(), zap.NewNop(), "req-otel", requestSpanName,
 		zap.String("method", "GET"),
 	)
 	_, childSpan := StartSpan(rootCtx, "provider.backend.create", zap.String("backend", "primary"))
@@ -71,7 +73,7 @@ func TestSpansAreExportedToOpenTelemetryProvider(t *testing.T) {
 		t.Fatalf("expected two exported spans, got %d", len(spans))
 	}
 
-	root := findSpan(spans, "http.request")
+	root := findSpan(spans, requestSpanName)
 	if root == nil {
 		t.Fatal("expected exported root span")
 	}

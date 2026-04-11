@@ -9,24 +9,32 @@ PRODUCTION_OVERLAY="${REPO_ROOT}/deployments/k8s-overlays/production"
 PRODUCTION_HPA_OVERLAY="${REPO_ROOT}/deployments/k8s-overlays/production-hpa"
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local section_title="$1"
+  printf '\n== %s ==\n' "${section_title}"
+  return 0
 }
 
 fail() {
-  printf 'ERROR: %s\n' "$1" >&2
+  local message="$1"
+  printf 'ERROR: %s\n' "${message}" >&2
   exit 1
 }
 
 warn() {
-  printf 'WARN: %s\n' "$1" >&2
+  local message="$1"
+  printf 'WARN: %s\n' "${message}" >&2
+  return 0
 }
 
 require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "$1 is required"
+  local command_name="$1"
+  command -v "${command_name}" >/dev/null 2>&1 || fail "${command_name} is required"
+  return 0
 }
 
 overlay_dir() {
-  case "$1" in
+  local target="$1"
+  case "${target}" in
     production)
       printf '%s\n' "${PRODUCTION_OVERLAY}"
       ;;
@@ -34,13 +42,15 @@ overlay_dir() {
       printf '%s\n' "${PRODUCTION_HPA_OVERLAY}"
       ;;
     *)
-      fail "unknown overlay target: $1"
+      fail "unknown overlay target: ${target}"
       ;;
   esac
+  return 0
 }
 
 selected_targets() {
-  case "${TARGET}" in
+  local selected_target="${TARGET}"
+  case "${selected_target}" in
     production)
       printf '%s\n' production
       ;;
@@ -54,6 +64,7 @@ selected_targets() {
       fail "usage: $0 [local|server-dry-run|checklist] [production|production-hpa|all]"
       ;;
   esac
+  return 0
 }
 
 assert_render_contains() {
@@ -64,6 +75,7 @@ assert_render_contains() {
   if ! grep -Eq "^kind: ${kind}$" "${rendered_file}" || ! grep -Eq "^  name: ${name}$" "${rendered_file}"; then
     fail "rendered overlay missing ${kind}/${name}"
   fi
+  return 0
 }
 
 render_overlay() {
@@ -75,7 +87,7 @@ render_overlay() {
 
   print_section "render ${target} overlay"
   kubectl kustomize "${dir}" >"${rendered_file}"
-  test -s "${rendered_file}" || fail "rendered overlay is empty: ${rendered_file}"
+  [[ -s "${rendered_file}" ]] || fail "rendered overlay is empty: ${rendered_file}"
 
   assert_render_contains "${rendered_file}" Namespace llm-access-gateway
   assert_render_contains "${rendered_file}" Deployment llm-access-gateway
@@ -89,6 +101,7 @@ render_overlay() {
   fi
 
   printf 'rendered %s\n' "${rendered_file}"
+  return 0
 }
 
 require_cluster_api() {
@@ -97,12 +110,14 @@ require_cluster_api() {
   kubectl api-resources --api-group=networking.k8s.io | grep -q '^networkpolicies' || fail "cluster does not expose networking.k8s.io NetworkPolicy"
   kubectl api-resources --api-group=policy | grep -q '^poddisruptionbudgets' || fail "cluster does not expose policy PodDisruptionBudget"
   kubectl api-resources --api-group=autoscaling | grep -q '^horizontalpodautoscalers' || fail "cluster does not expose autoscaling HorizontalPodAutoscaler"
+  return 0
 }
 
 check_hpa_metrics_api() {
   print_section "hpa metrics api"
   kubectl get --raw /apis/metrics.k8s.io/v1beta1 >/dev/null || fail "metrics.k8s.io is unavailable; install metrics-server before applying production-hpa"
   printf 'metrics.k8s.io available\n'
+  return 0
 }
 
 server_dry_run_overlay() {
@@ -112,8 +127,9 @@ server_dry_run_overlay() {
 
   print_section "server-side dry-run ${target} overlay"
   kubectl apply --server-side --dry-run=server -k "${dir}" >/tmp/lag-${target}-server-dry-run.txt
-  test -s "/tmp/lag-${target}-server-dry-run.txt" || fail "server-side dry-run produced no output for ${target}"
+  [[ -s "/tmp/lag-${target}-server-dry-run.txt" ]] || fail "server-side dry-run produced no output for ${target}"
   printf 'server-side dry-run passed for %s\n' "${target}"
+  return 0
 }
 
 print_checklist() {
@@ -129,6 +145,7 @@ print_checklist() {
 - Confirm metrics-server is installed before applying production-hpa.
 - Run rollout and post-apply smoke checks after real apply.
 CHECKLIST
+  return 0
 }
 
 run_local() {
@@ -138,6 +155,7 @@ run_local() {
     render_overlay "${target}"
   done < <(selected_targets)
   print_checklist
+  return 0
 }
 
 run_server_dry_run() {
@@ -152,6 +170,7 @@ run_server_dry_run() {
     fi
   done < <(selected_targets)
   print_checklist
+  return 0
 }
 
 case "${MODE}" in

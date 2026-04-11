@@ -12,11 +12,14 @@ START_STUB="${START_STUB:-true}"
 WAIT_SECONDS="${WAIT_SECONDS:-15}"
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local section_title="$1"
+  printf '\n== %s ==\n' "${section_title}"
+  return 0
 }
 
 fail() {
-  printf 'ERROR: %s\n' "$1" >&2
+  local message="$1"
+  printf 'ERROR: %s\n' "${message}" >&2
   exit 1
 }
 

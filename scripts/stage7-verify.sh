@@ -6,11 +6,14 @@ MODE="${1:-static}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local section_title="$1"
+  printf '\n== %s ==\n' "${section_title}"
+  return 0
 }
 
 fail() {
-  printf 'ERROR: %s\n' "$1" >&2
+  local message="$1"
+  printf 'ERROR: %s\n' "${message}" >&2
   exit 1
 }
 
@@ -19,6 +22,7 @@ require_file() {
   if [[ ! -f "${path}" ]]; then
     fail "required Stage 7 asset missing: ${path}"
   fi
+  return 0
 }
 
 run_static_contract() {
@@ -81,6 +85,7 @@ run_static_contract() {
     require_file "${asset}"
   done
   printf 'Stage 7 static contract passed\n'
+  return 0
 }
 
 run_runtime_contract() {
@@ -89,6 +94,7 @@ run_runtime_contract() {
   print_section "runtime smoke and built-in load contract"
   ASSERT=true ./scripts/gateway-smoke-check.sh
   printf 'Stage 7 runtime contract passed\n'
+  return 0
 }
 
 case "${MODE}" in

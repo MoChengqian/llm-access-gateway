@@ -11,6 +11,18 @@ K8S_PRODUCTION_OVERLAY_DIR = File.join(REPO_ROOT, "deployments", "k8s-overlays",
 K8S_PRODUCTION_HPA_OVERLAY_DIR = File.join(REPO_ROOT, "deployments", "k8s-overlays", "production-hpa")
 OBSERVABILITY_DIR = File.join(REPO_ROOT, "deployments", "observability")
 EXPECTED_NAMESPACE = "llm-access-gateway"
+KUSTOMIZATION_FILE = "kustomization.yaml"
+DEVINIT_COMMAND = "/app/devinit"
+OTEL_COLLECTOR_SERVICE = "otel-collector"
+OTEL_COLLECTOR_CONFIG = "otel collector config"
+OTEL_COLLECTOR_METRICS_TARGET = "#{OTEL_COLLECTOR_SERVICE}:8888"
+PRODUCTION_NETWORK_POLICY_NAME = "llm-access-gateway-boundary"
+PRODUCTION_DEPLOYMENT_LABEL = "production Deployment"
+PRODUCTION_DEPLOYMENT_TEMPLATE_LABEL = "#{PRODUCTION_DEPLOYMENT_LABEL} template"
+PRODUCTION_JOB_LABEL = "production Job"
+PRODUCTION_JOB_TEMPLATE_LABEL = "#{PRODUCTION_JOB_LABEL} template"
+PRODUCTION_PDB_LABEL = "production PodDisruptionBudget"
+PRODUCTION_GATEWAY_IMAGE = "ghcr.io/example/llm-access-gateway:v1.0.0"
 
 def main
   validate_compose(load_compose_config(COMPOSE_FILE))
@@ -55,17 +67,17 @@ def validate_compose(compose)
   validate_healthcheck_contains(redis, "redis-cli")
 
   command = Array(devinit["command"])
-  abort("compose devinit command missing /app/devinit") unless command.include?("/app/devinit")
+  abort("compose devinit command missing #{DEVINIT_COMMAND}") unless command.include?(DEVINIT_COMMAND)
 end
 
 def validate_observability_stack(compose)
   services = fetch_hash!(compose, "services", "observability compose config")
-  expected_services = ["otel-collector", "prometheus", "grafana"]
+  expected_services = [OTEL_COLLECTOR_SERVICE, "prometheus", "grafana"]
   expected_services.each do |service|
     abort("observability compose config missing service #{service}") unless services.key?(service)
   end
 
-  collector = services.fetch("otel-collector")
+  collector = services.fetch(OTEL_COLLECTOR_SERVICE)
   prometheus = services.fetch("prometheus")
   grafana = services.fetch("grafana")
 
@@ -74,7 +86,7 @@ def validate_observability_stack(compose)
   validate_port_mapping(collector, 8888)
   abort("otel collector command missing config path") unless Array(collector["command"]).include?("--config=/etc/otelcol-contrib/config.yaml")
 
-  validate_compose_dependency(prometheus, "otel-collector", "service_started")
+  validate_compose_dependency(prometheus, OTEL_COLLECTOR_SERVICE, "service_started")
   validate_port_mapping(prometheus, 9090)
   abort("prometheus command missing config.file") unless Array(prometheus["command"]).include?("--config.file=/etc/prometheus/prometheus.yml")
   extra_hosts = Array(prometheus["extra_hosts"])
@@ -111,7 +123,7 @@ def validate_healthcheck_contains(service, expected_fragment)
 end
 
 def validate_kubernetes_manifests
-  validate_kustomization(load_manifest("kustomization.yaml"))
+  validate_kustomization(load_manifest(KUSTOMIZATION_FILE))
   validate_namespace(load_manifest("namespace.yaml"))
   validate_configmap(load_manifest("configmap.yaml"))
   validate_secret(load_manifest("secret.example.yaml"))
@@ -121,7 +133,7 @@ def validate_kubernetes_manifests
 end
 
 def validate_kubernetes_production_overlay
-  validate_production_kustomization(load_overlay_manifest("kustomization.yaml"))
+  validate_production_kustomization(load_overlay_manifest(KUSTOMIZATION_FILE))
   validate_production_configmap(load_overlay_manifest("configmap.patch.yaml"))
   validate_production_secret(load_overlay_manifest("secret.patch.yaml"))
   validate_production_deployment(load_overlay_manifest("deployment.patch.yaml"), patch: true)
@@ -138,7 +150,7 @@ def validate_kubernetes_production_overlay
 end
 
 def validate_kubernetes_production_hpa_overlay
-  validate_production_hpa_kustomization(load_hpa_overlay_manifest("kustomization.yaml"))
+  validate_production_hpa_kustomization(load_hpa_overlay_manifest(KUSTOMIZATION_FILE))
   validate_production_hpa(load_hpa_overlay_manifest("horizontalpodautoscaler.yaml"))
 
   if command_available?("kubectl")
@@ -225,7 +237,7 @@ def validate_job(doc)
   template_spec = fetch_hash!(fetch_hash!(fetch_hash!(doc, "spec", "Job"), "template", "Job template"), "spec", "Job template spec")
   abort("Job restartPolicy must be OnFailure") unless template_spec["restartPolicy"] == "OnFailure"
   container = first_container(template_spec, "Job")
-  abort("Job container command missing /app/devinit") unless Array(container["command"]).include?("/app/devinit")
+  abort("Job container command missing #{DEVINIT_COMMAND}") unless Array(container["command"]).include?(DEVINIT_COMMAND)
   validate_env_from_refs(container)
 end
 
@@ -292,9 +304,10 @@ def validate_production_configmap(doc)
   validate_metadata_namespace(doc)
   data = fetch_hash!(doc, "data", "production ConfigMap")
 
-  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT", "otel-collector")
+  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT", OTEL_COLLECTOR_SERVICE)
   require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT", ".svc.cluster.local")
-  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_INSECURE", "true")
+  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT", "https://")
+  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_INSECURE", "false")
   require_data_value(data, "APP_REDIS_ADDRESS", "redis.production.svc.cluster.local")
   require_data_value(data, "APP_PROVIDER_PRIMARY_TYPE", "openai")
   require_data_value(data, "APP_PROVIDER_SECONDARY_TYPE", "anthropic")
@@ -325,30 +338,30 @@ def validate_production_deployment(doc, patch: false)
   validate_metadata_name(doc, "llm-access-gateway")
   validate_metadata_namespace(doc)
 
-  spec = fetch_hash!(doc, "spec", "production Deployment")
+  spec = fetch_hash!(doc, "spec", PRODUCTION_DEPLOYMENT_LABEL)
   abort("production Deployment replicas must be 2") unless spec["replicas"].to_i == 2
-  strategy = fetch_hash!(spec, "strategy", "production Deployment")
+  strategy = fetch_hash!(spec, "strategy", PRODUCTION_DEPLOYMENT_LABEL)
   abort("production Deployment strategy must be RollingUpdate") unless strategy["type"] == "RollingUpdate"
   rolling = fetch_hash!(strategy, "rollingUpdate", "production Deployment strategy")
   abort("production Deployment maxUnavailable must be 0") unless rolling["maxUnavailable"].to_i == 0
 
-  template = fetch_hash!(spec, "template", "production Deployment")
-  metadata = fetch_hash!(template, "metadata", "production Deployment template")
-  annotations = fetch_hash!(metadata, "annotations", "production Deployment template")
+  template = fetch_hash!(spec, "template", PRODUCTION_DEPLOYMENT_LABEL)
+  metadata = fetch_hash!(template, "metadata", PRODUCTION_DEPLOYMENT_TEMPLATE_LABEL)
+  annotations = fetch_hash!(metadata, "annotations", PRODUCTION_DEPLOYMENT_TEMPLATE_LABEL)
   require_data_value(annotations, "prometheus.io/scrape", "true")
   require_data_value(annotations, "prometheus.io/path", "/metrics")
   require_data_value(annotations, "prometheus.io/port", "8080")
 
-  template_spec = fetch_hash!(template, "spec", "production Deployment template")
+  template_spec = fetch_hash!(template, "spec", PRODUCTION_DEPLOYMENT_TEMPLATE_LABEL)
   validate_pod_security_context(fetch_hash!(template_spec, "securityContext", "production Deployment pod"))
-  container = first_container(template_spec, "production Deployment")
+  container = first_container(template_spec, PRODUCTION_DEPLOYMENT_LABEL)
   abort("production Deployment imagePullPolicy must be Always") unless container["imagePullPolicy"] == "Always"
   validate_container_security_context(fetch_hash!(container, "securityContext", "production Deployment container"))
   validate_resource_contract(fetch_hash!(container, "resources", "production Deployment container"))
 
   return if patch
 
-  abort("production Deployment image mismatch") unless container["image"] == "ghcr.io/example/llm-access-gateway:v1.0.0"
+  abort("production Deployment image mismatch") unless container["image"] == PRODUCTION_GATEWAY_IMAGE
   validate_container_port(container, 8080)
   validate_probe_path(container, "readinessProbe", "/readyz")
   validate_probe_path(container, "livenessProbe", "/healthz")
@@ -359,11 +372,11 @@ def validate_production_job(doc, patch: false)
   validate_kind(doc, "Job")
   validate_metadata_name(doc, "llm-access-gateway-devinit")
   validate_metadata_namespace(doc)
-  spec = fetch_hash!(doc, "spec", "production Job")
+  spec = fetch_hash!(doc, "spec", PRODUCTION_JOB_LABEL)
   abort("production Job ttlSecondsAfterFinished must be 3600") unless spec["ttlSecondsAfterFinished"].to_i == 3600
-  template_spec = fetch_hash!(fetch_hash!(spec, "template", "production Job"), "spec", "production Job template")
+  template_spec = fetch_hash!(fetch_hash!(spec, "template", PRODUCTION_JOB_LABEL), "spec", PRODUCTION_JOB_TEMPLATE_LABEL)
   validate_pod_security_context(fetch_hash!(template_spec, "securityContext", "production Job pod"))
-  container = first_container(template_spec, "production Job")
+  container = first_container(template_spec, PRODUCTION_JOB_LABEL)
   abort("production Job imagePullPolicy must be Always") unless container["imagePullPolicy"] == "Always"
   validate_container_security_context(fetch_hash!(container, "securityContext", "production Job container"))
   validate_resource_contract(fetch_hash!(container, "resources", "production Job container"))
@@ -371,8 +384,8 @@ def validate_production_job(doc, patch: false)
   return if patch
 
   abort("production Job restartPolicy must be OnFailure") unless template_spec["restartPolicy"] == "OnFailure"
-  abort("production Job image mismatch") unless container["image"] == "ghcr.io/example/llm-access-gateway:v1.0.0"
-  abort("production Job container command missing /app/devinit") unless Array(container["command"]).include?("/app/devinit")
+  abort("production Job image mismatch") unless container["image"] == PRODUCTION_GATEWAY_IMAGE
+  abort("production Job container command missing #{DEVINIT_COMMAND}") unless Array(container["command"]).include?(DEVINIT_COMMAND)
   validate_env_from_refs(container)
 end
 
@@ -396,7 +409,7 @@ end
 
 def validate_production_networkpolicy(doc)
   validate_kind(doc, "NetworkPolicy")
-  validate_metadata_name(doc, "llm-access-gateway-boundary")
+  validate_metadata_name(doc, PRODUCTION_NETWORK_POLICY_NAME)
   validate_metadata_namespace(doc)
   spec = fetch_hash!(doc, "spec", "production NetworkPolicy")
   selector = fetch_hash!(fetch_hash!(spec, "podSelector", "production NetworkPolicy"), "matchLabels", "production NetworkPolicy")
@@ -435,9 +448,9 @@ def validate_production_poddisruptionbudget(doc)
   validate_kind(doc, "PodDisruptionBudget")
   validate_metadata_name(doc, "llm-access-gateway")
   validate_metadata_namespace(doc)
-  spec = fetch_hash!(doc, "spec", "production PodDisruptionBudget")
+  spec = fetch_hash!(doc, "spec", PRODUCTION_PDB_LABEL)
   abort("production PodDisruptionBudget minAvailable must be 1") unless spec["minAvailable"].to_i == 1
-  selector = fetch_hash!(fetch_hash!(spec, "selector", "production PodDisruptionBudget"), "matchLabels", "production PodDisruptionBudget")
+  selector = fetch_hash!(fetch_hash!(spec, "selector", PRODUCTION_PDB_LABEL), "matchLabels", PRODUCTION_PDB_LABEL)
   abort("production PodDisruptionBudget selector mismatch") unless selector["app"] == "llm-access-gateway"
 end
 
@@ -478,7 +491,7 @@ def validate_production_render
   validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
   validate_production_job(find_doc!(docs, "Job", "llm-access-gateway-devinit"))
   validate_production_ingress(find_doc!(docs, "Ingress", "llm-access-gateway"))
-  validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", "llm-access-gateway-boundary"))
+  validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", PRODUCTION_NETWORK_POLICY_NAME))
   validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
 end
 
@@ -489,7 +502,7 @@ def validate_production_hpa_render
   docs = safe_load_stream(stdout, "production HPA overlay render").compact
   validate_namespace(find_doc!(docs, "Namespace", EXPECTED_NAMESPACE))
   validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
-  validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", "llm-access-gateway-boundary"))
+  validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", PRODUCTION_NETWORK_POLICY_NAME))
   validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
   validate_production_hpa(find_doc!(docs, "HorizontalPodAutoscaler", "llm-access-gateway"))
 end
@@ -504,20 +517,20 @@ end
 def validate_otel_collector_config
   path = File.join(OBSERVABILITY_DIR, "otelcol", "config.yaml")
   doc = load_yaml(path)
-  extensions = fetch_hash!(doc, "extensions", "otel collector config")
+  extensions = fetch_hash!(doc, "extensions", OTEL_COLLECTOR_CONFIG)
   health_check = fetch_hash!(extensions, "health_check", "otel collector extensions")
   abort("otel collector health endpoint mismatch") unless health_check["endpoint"] == "0.0.0.0:13133"
 
-  receivers = fetch_hash!(doc, "receivers", "otel collector config")
+  receivers = fetch_hash!(doc, "receivers", OTEL_COLLECTOR_CONFIG)
   otlp = fetch_hash!(receivers, "otlp", "otel collector receivers")
   protocols = fetch_hash!(otlp, "protocols", "otel collector otlp receiver")
   http = fetch_hash!(protocols, "http", "otel collector otlp protocols")
   abort("otel collector http receiver endpoint mismatch") unless http["endpoint"] == "0.0.0.0:4318"
 
-  exporters = fetch_hash!(doc, "exporters", "otel collector config")
+  exporters = fetch_hash!(doc, "exporters", OTEL_COLLECTOR_CONFIG)
   abort("otel collector missing debug exporter") unless exporters.key?("debug")
 
-  service = fetch_hash!(doc, "service", "otel collector config")
+  service = fetch_hash!(doc, "service", OTEL_COLLECTOR_CONFIG)
   telemetry = fetch_hash!(service, "telemetry", "otel collector service")
   metrics = fetch_hash!(telemetry, "metrics", "otel collector telemetry")
   readers = Array(metrics["readers"])
@@ -550,10 +563,10 @@ def validate_prometheus_config
   gateway_targets = Array(Array(gateway_job["static_configs"]).first&.fetch("targets", []))
   abort("prometheus gateway target mismatch") unless gateway_targets.include?("host.docker.internal:8080")
 
-  collector_job = scrape_configs.find { |entry| entry.is_a?(Hash) && entry["job_name"] == "otel-collector" }
-  abort("prometheus config missing otel-collector job") unless collector_job
+  collector_job = scrape_configs.find { |entry| entry.is_a?(Hash) && entry["job_name"] == OTEL_COLLECTOR_SERVICE }
+  abort("prometheus config missing #{OTEL_COLLECTOR_SERVICE} job") unless collector_job
   collector_targets = Array(Array(collector_job["static_configs"]).first&.fetch("targets", []))
-  abort("prometheus collector target mismatch") unless collector_targets.include?("otel-collector:8888")
+  abort("prometheus collector target mismatch") unless collector_targets.include?(OTEL_COLLECTOR_METRICS_TARGET)
 end
 
 def validate_grafana_datasource_config

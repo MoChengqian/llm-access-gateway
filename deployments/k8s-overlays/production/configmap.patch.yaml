@@ -6,8 +6,8 @@ metadata:
 data:
   APP_LOG_LEVEL: "info"
   APP_OBSERVABILITY_SERVICE_NAME: "llm-access-gateway"
-  APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4318/v1/traces"
-  APP_OBSERVABILITY_OTLP_TRACES_INSECURE: "true"
+  APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT: "https://otel-collector.observability.svc.cluster.local:4318/v1/traces"
+  APP_OBSERVABILITY_OTLP_TRACES_INSECURE: "false"
   APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS: "5"
   APP_REDIS_ADDRESS: "redis.production.svc.cluster.local:6379"
   APP_REDIS_DB: "0"

@@ -12,11 +12,14 @@ OTEL_COLLECTOR_METRICS_URL="${OTEL_COLLECTOR_METRICS_URL:-http://127.0.0.1:8888/
 WAIT_SECONDS="${WAIT_SECONDS:-30}"
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local section_title="$1"
+  printf '\n== %s ==\n' "${section_title}"
+  return 0
 }
 
 fail() {
-  printf 'ERROR: %s\n' "$1" >&2
+  local message="$1"
+  printf 'ERROR: %s\n' "${message}" >&2
   exit 1
 }
 
@@ -41,6 +44,7 @@ query_prometheus() {
 grafana_api() {
   local path="$1"
   curl -fsS -u "${GRAFANA_USERNAME}:${GRAFANA_PASSWORD}" "${GRAFANA_URL}${path}"
+  return 0
 }
 
 wait_for_command_output() {
