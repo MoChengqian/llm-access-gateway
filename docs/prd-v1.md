@@ -69,6 +69,7 @@ It is not a general AI product, agent platform, or frontend application.
 - baseline Kubernetes manifests
 - built-in load test command
 - documented failure drills and benchmark reports
+- standardized Stage 7 verification entrypoint through `scripts/stage7-verify.sh`
 
 ## Explicitly Out of Scope
 

@@ -23,6 +23,12 @@ The benchmark strategy intentionally separated three questions:
 
 ## Benchmark Commands
 
+`cmd/loadtest` is the canonical Stage 7 load tool. `k6` is intentionally not
+part of the v1 contract because the built-in command already covers the gateway's
+auth header, OpenAI-compatible request shape, JSON response validation, SSE
+stream validation, machine-readable output, and threshold checks used by nightly
+automation.
+
 ### Headline Non-Stream Run
 
 ```bash
@@ -146,10 +152,23 @@ The repository now keeps a persisted nightly benchmark reference in:
 
 That baseline is derived from the verified local evidence captured on `2026-04-07`. The nightly workflow compares current benchmark artifacts against threshold checks, then renders a markdown delta summary so regressions are visible without manually opening each JSON file.
 
+The Stage 7 entrypoint for static verification is:
+
+```bash
+./scripts/stage7-verify.sh static
+```
+
+Runtime smoke and load verification against a live gateway is:
+
+```bash
+./scripts/stage7-verify.sh runtime
+```
+
 ## Related Documentation
 
 - [Non-Streaming Benchmarks](non-streaming.md)
 - [Streaming Benchmarks](streaming.md)
+- [Stage 7 Delivery Contract](../stage7-delivery-contract.md)
 - [Performance Benchmarking Article](../../blog/005-performance.md)
 - [Local Development](../../local-development.md)
 

@@ -113,14 +113,14 @@ Rough status:
 - Stage 4: complete
 - Stage 5: complete in baseline form, with persisted `route_rules` now driving backend selection
 - Stage 6: complete for v1; lightweight metrics remain, and trace export/dashboard assets are now present
-- Stage 7: initial delivery assets exist, but not yet fully standardized against the full plan
+- Stage 7: complete for v1; delivery, load, drill, and nightly assets now share a standard verification contract
 
 Current known gaps that still matter operationally:
 
 - `docs/prd-v1.md` still describes a much earlier mock-only scope
 - `migrations/001_init.sql` does not yet reflect all runtime tables used by the current code path
 - production metrics backends, tracing storage, and Grafana provisioning remain environment-owned
-- load testing exists through `cmd/loadtest`, but the planned `k6`-style external load assets are not yet present
+- external load tools such as `k6` remain intentionally deferred unless they add coverage beyond `cmd/loadtest`
 
 When in doubt, treat this roadmap as the target contract and the current codebase as the moving baseline.
 
@@ -513,11 +513,24 @@ Push the project from "development complete" toward "operationally demonstrable 
 
 ### Current Delta In This Repo
 
-This stage already has meaningful assets, but execution engineers should still consider these follow-up items:
+Stage 7 is complete for the v1 repository contract:
 
-- standardize the final load-test contract across built-in tooling and any future `tests/load` assets
-- decide whether `k6` is actually needed or whether `cmd/loadtest` remains the canonical tool
-- keep deployment assets, nightly verification, and failure drills aligned so they prove the same system contract
+- Docker Compose remains the canonical local stack
+- Kubernetes manifests remain the baseline delivery assets
+- `cmd/devinit` is the repeatable schema and seed-data bootstrap command
+- `cmd/loadtest` is the canonical load tool for both stream and non-stream paths
+- failure drills are documented and mapped to scripts or nightly checks
+- `.github/workflows/runtime-ci.yml` and `.github/workflows/nightly-verification.yml`
+  protect the runtime contract
+- `scripts/stage7-verify.sh` standardizes static and runtime verification
+
+Remaining future hardening is intentionally outside Stage 7:
+
+- add `k6` only if it proves materially different coverage from `cmd/loadtest`
+- add production environment overlays for ingress, secret management, and
+  managed observability stacks
+- add long-duration resource trend collection when the project needs sustained
+  soak evidence
 
 ## Recommended Execution Order
 

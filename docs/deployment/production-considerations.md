@@ -147,9 +147,8 @@ Because health state is kept in-process today, multiple replicas will not share 
 ### Pre-rollout checks
 
 ```bash
-go test ./...
-docker compose -f deployments/docker/docker-compose.yml config
-./scripts/validate-deployments.rb
+./scripts/stage7-verify.sh static
+make stage7-static
 ```
 
 If you have cluster access, also verify the Kubernetes apply flow in your target environment before the first rollout.
@@ -163,6 +162,7 @@ curl -i http://127.0.0.1:8080/debug/providers
 curl -i http://127.0.0.1:8080/metrics
 ./scripts/gateway-smoke-check.sh
 ASSERT=true ./scripts/gateway-smoke-check.sh
+./scripts/stage7-verify.sh runtime
 ```
 
 For resilience drills:

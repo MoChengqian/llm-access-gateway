@@ -155,9 +155,14 @@ For repository-level structural checks that do not depend on cluster access, use
 
 ```bash
 ./scripts/validate-deployments.rb
+./scripts/stage7-verify.sh static
 ```
 
-That validator confirms the manifest kinds, namespace wiring, Deployment probes, Service port, bootstrap Job command, and the Compose expansion model used in local delivery.
+The Stage 7 static contract wraps that validator and also checks Go tests, vet,
+dashboard JSON syntax, and required delivery/drill/nightly assets. The
+deployment validator itself confirms the manifest kinds, namespace wiring,
+Deployment probes, Service port, bootstrap Job command, and the Compose expansion
+model used in local delivery.
 
 ## Operational Checks After Apply
 

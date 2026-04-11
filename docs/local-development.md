@@ -220,6 +220,8 @@ go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -json
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -min-success-rate 1.0
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -json
+go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -min-success-rate 1.0 -max-ttft-p95 2s
 ```
 
 Expected output includes:
@@ -499,6 +501,8 @@ You can also use the helper script:
 ./scripts/gateway-smoke-check.sh
 ASSERT=true ./scripts/gateway-smoke-check.sh
 make verify
+make stage7-static
+make stage7-runtime
 ```
 
 The smoke script now covers:
@@ -517,6 +521,17 @@ acceptance check and exits non-zero on:
 - wrong HTTP status
 - missing response markers such as `X-Trace-Id`, `object`, or `[DONE]`
 - failed built-in load test thresholds
+
+For the full Stage 7 contract, use:
+
+```bash
+./scripts/stage7-verify.sh static
+./scripts/stage7-verify.sh runtime
+./scripts/stage7-verify.sh all
+```
+
+The static mode does not require a running gateway. Runtime and all modes expect
+the gateway to be up and `lag-local-dev-key` to be seeded.
 
 To force the primary mock provider to fail before streaming starts:
 
