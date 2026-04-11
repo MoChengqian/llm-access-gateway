@@ -7,6 +7,7 @@ log_file=""
 
 usage() {
   echo "usage: $0 --pid-file PATH --log-file PATH -- command [args...]" >&2
+  return 0
 }
 
 while [[ $# -gt 0 ]]; do
@@ -48,3 +49,4 @@ fi
 pid=$!
 printf '%s\n' "${pid}" >"${pid_file}"
 printf 'started pid=%s cmd=%s\n' "${pid}" "$1"
+exit 0

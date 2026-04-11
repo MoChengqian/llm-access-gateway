@@ -16,10 +16,14 @@ FROM alpine:3.22
 
 WORKDIR /app
 
-COPY --from=builder /out/gateway /app/gateway
-COPY --from=builder /out/devinit /app/devinit
-COPY configs /app/configs
+RUN addgroup -S gateway && adduser -S -G gateway -H -D gateway
+
+COPY --from=builder --chown=gateway:gateway /out/gateway /app/gateway
+COPY --from=builder --chown=gateway:gateway /out/devinit /app/devinit
+COPY --chown=gateway:gateway configs /app/configs
 
 EXPOSE 8080
+
+USER gateway
 
 CMD ["/app/gateway"]
