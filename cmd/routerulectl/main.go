@@ -13,6 +13,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	"github.com/MoChengqian/llm-access-gateway/internal/routingpolicy"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
+	// Register the MySQL driver for database/sql.
 	_ "github.com/go-sql-driver/mysql"
 )
 

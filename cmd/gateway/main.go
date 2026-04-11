@@ -33,12 +33,41 @@ import (
 	"go.uber.org/zap"
 )
 
+type gatewayApp struct {
+	authService       auth.Service
+	governanceService governance.Service
+	usageService      usageservice.Service
+	chatService       chat.Service
+	modelsService     modelsservice.Service
+	chatProvider      *providerrouter.Provider
+	metricsRegistry   *metrics.Registry
+}
+
 func main() {
+	cfg := mustLoadConfig()
+	logger := mustBuildLogger(cfg)
+	defer syncLogger(logger)
+
+	traceShutdown := mustConfigureTracing(cfg, logger)
+	defer shutdownTracing(traceShutdown, logger)
+
+	db := mustOpenDatabase(cfg, logger)
+	defer closeDatabase(db)
+
+	app := mustBuildGatewayApp(cfg, db, logger)
+	server := newGatewayServer(cfg, logger, app)
+	runGatewayServer(cfg, logger, server, app.chatProvider)
+}
+
+func mustLoadConfig() config.Config {
 	cfg, err := config.Load()
 	if err != nil {
 		panic(err)
 	}
+	return cfg
+}
 
+func mustBuildLogger(cfg config.Config) *zap.Logger {
 	loggerConfig := zap.NewProductionConfig()
 	loggerConfig.Level = cfg.Log.Level
 
@@ -46,10 +75,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		_ = logger.Sync()
-	}()
+	return logger
+}
 
+func syncLogger(logger *zap.Logger) {
+	if logger == nil {
+		return
+	}
+	_ = logger.Sync()
+}
+
+func mustConfigureTracing(cfg config.Config, logger *zap.Logger) func(context.Context) error {
 	traceShutdown, err := oteltracing.Configure(context.Background(), oteltracing.Config{
 		ServiceName:    cfg.Observability.ServiceName,
 		TracesEndpoint: cfg.Observability.OTLPTracesEndpoint,
@@ -59,14 +95,22 @@ func main() {
 	if err != nil {
 		logger.Fatal("otel tracing setup failed", zap.Error(err))
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := traceShutdown(shutdownCtx); err != nil {
-			logger.Error("otel tracing shutdown failed", zap.Error(err))
-		}
-	}()
+	return traceShutdown
+}
 
+func shutdownTracing(traceShutdown func(context.Context) error, logger *zap.Logger) {
+	if traceShutdown == nil {
+		return
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := traceShutdown(shutdownCtx); err != nil {
+		logger.Error("otel tracing shutdown failed", zap.Error(err))
+	}
+}
+
+func mustOpenDatabase(cfg config.Config, logger *zap.Logger) *sql.DB {
 	if cfg.MySQL.DSN == "" {
 		logger.Fatal("mysql dsn is required", zap.String("field", "mysql.dsn"))
 	}
@@ -75,52 +119,26 @@ func main() {
 	if err != nil {
 		logger.Fatal("mysql open failed", zap.Error(err))
 	}
-	defer func() {
-		_ = db.Close()
-	}()
-
 	if err := db.PingContext(context.Background()); err != nil {
+		_ = db.Close()
 		logger.Fatal("mysql ping failed", zap.Error(err))
 	}
+	return db
+}
 
-	authStore := mysqlstore.NewAuthStore(db)
-	authService := auth.NewService(authStore)
+func closeDatabase(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	_ = db.Close()
+}
+
+func mustBuildGatewayApp(cfg config.Config, db *sql.DB, logger *zap.Logger) gatewayApp {
+	authService := auth.NewService(mysqlstore.NewAuthStore(db))
 	governanceStore := mysqlstore.NewGovernanceStore(db)
-	limiter := governance.Limiter(governance.NewMySQLLimiter(governanceStore))
-	if cfg.Redis.Address != "" {
-		redisClient := redisstore.NewClient(redisstore.Config{
-			Address:  cfg.Redis.Address,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
-		})
-		if err := redisClient.Ping(context.Background()); err != nil {
-			logger.Error("redis ping failed, falling back to mysql limiter", zap.Error(err))
-		} else {
-			limiter = governance.NewRedisLimiter(redisClient, limiter)
-			logger.Info("redis limiter enabled", zap.String("address", cfg.Redis.Address), zap.Int("db", cfg.Redis.DB))
-		}
-	}
-	governanceService := governance.NewService(governanceStore, limiter)
-	usageService := usageservice.NewService(governanceStore)
+	limiter := buildLimiter(cfg, governanceStore, logger)
 	metricsRegistry := metrics.NewRegistry()
-	backends, _, err := buildProviderBackends(cfg)
-	if err != nil {
-		logger.Fatal("provider setup failed", zap.Error(err))
-	}
-	routeRules, err := mysqlstore.NewRoutingStore(db).ListRouteRules(context.Background())
-	if err != nil {
-		logger.Fatal("route rule load failed", zap.Error(err))
-	}
-	backends, routeRulesEnabled, err := applyRouteRules(backends, routeRules)
-	if err != nil {
-		logger.Fatal("route rule setup failed", zap.Error(err))
-	}
-	if routeRulesEnabled {
-		logger.Info("database route rules enabled",
-			zap.Int("route_rule_count", len(routeRules)),
-			zap.Int("routed_backend_count", len(backends)),
-		)
-	}
+	backends := mustLoadProviderBackends(cfg, db, logger)
 	chatProvider := providerrouter.New(backends, providerrouter.Config{
 		FailureThreshold: cfg.Gateway.ProviderFailureThreshold,
 		Cooldown:         time.Duration(cfg.Gateway.ProviderCooldownSeconds) * time.Second,
@@ -131,23 +149,89 @@ func main() {
 			},
 		},
 	})
-	chatService := chat.NewService(cfg.Gateway.DefaultModel, chatProvider)
-	modelSources := collectModelSources(backends)
-	modelsService := modelsservice.NewService(modelSources)
 
-	probeCtx, stopProbe := context.WithCancel(context.Background())
-	defer stopProbe()
-	if cfg.Gateway.ProviderProbeIntervalSeconds > 0 {
-		startProviderProbeLoop(probeCtx, logger, chatProvider, time.Duration(cfg.Gateway.ProviderProbeIntervalSeconds)*time.Second)
+	return gatewayApp{
+		authService:       authService,
+		governanceService: governance.NewService(governanceStore, limiter),
+		usageService:      usageservice.NewService(governanceStore),
+		chatService:       chat.NewService(cfg.Gateway.DefaultModel, chatProvider),
+		modelsService:     modelsservice.NewService(collectModelSources(backends)),
+		chatProvider:      chatProvider,
+		metricsRegistry:   metricsRegistry,
+	}
+}
+
+func buildLimiter(cfg config.Config, governanceStore mysqlstore.GovernanceStore, logger *zap.Logger) governance.Limiter {
+	limiter := governance.Limiter(governance.NewMySQLLimiter(governanceStore))
+	if cfg.Redis.Address == "" {
+		return limiter
 	}
 
-	server := &http.Server{
-		Addr:              cfg.Server.Address,
-		Handler:           api.NewRouter(logger, chatService, modelsService, usageService, authService, governanceService, providerHealthAdapter{provider: chatProvider}, metricsRegistry, metricsRegistry, cfg.Server.MaxRequestBodyBytes),
+	redisClient := redisstore.NewClient(redisstore.Config{
+		Address:  cfg.Redis.Address,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+	if err := redisClient.Ping(context.Background()); err != nil {
+		logger.Error("redis ping failed, falling back to mysql limiter", zap.Error(err))
+		return limiter
+	}
+
+	logger.Info("redis limiter enabled", zap.String("address", cfg.Redis.Address), zap.Int("db", cfg.Redis.DB))
+	return governance.NewRedisLimiter(redisClient, limiter)
+}
+
+func mustLoadProviderBackends(cfg config.Config, db *sql.DB, logger *zap.Logger) []providerrouter.Backend {
+	backends, _, err := buildProviderBackends(cfg)
+	if err != nil {
+		logger.Fatal("provider setup failed", zap.Error(err))
+	}
+
+	routeRules, err := mysqlstore.NewRoutingStore(db).ListRouteRules(context.Background())
+	if err != nil {
+		logger.Fatal("route rule load failed", zap.Error(err))
+	}
+
+	backends, routeRulesEnabled, err := applyRouteRules(backends, routeRules)
+	if err != nil {
+		logger.Fatal("route rule setup failed", zap.Error(err))
+	}
+	if routeRulesEnabled {
+		logger.Info("database route rules enabled",
+			zap.Int("route_rule_count", len(routeRules)),
+			zap.Int("routed_backend_count", len(backends)),
+		)
+	}
+	return backends
+}
+
+func newGatewayServer(cfg config.Config, logger *zap.Logger, app gatewayApp) *http.Server {
+	return &http.Server{
+		Addr: cfg.Server.Address,
+		Handler: api.NewRouter(
+			logger,
+			app.chatService,
+			app.modelsService,
+			app.usageService,
+			app.authService,
+			app.governanceService,
+			providerHealthAdapter{provider: app.chatProvider},
+			app.metricsRegistry,
+			app.metricsRegistry,
+			cfg.Server.MaxRequestBodyBytes,
+		),
 		ReadHeaderTimeout: time.Duration(cfg.Server.ReadHeaderTimeoutSeconds) * time.Second,
 		ReadTimeout:       time.Duration(cfg.Server.ReadTimeoutSeconds) * time.Second,
 		WriteTimeout:      time.Duration(cfg.Server.WriteTimeoutSeconds) * time.Second,
 		IdleTimeout:       time.Duration(cfg.Server.IdleTimeoutSeconds) * time.Second,
+	}
+}
+
+func runGatewayServer(cfg config.Config, logger *zap.Logger, server *http.Server, chatProvider *providerrouter.Provider) {
+	probeCtx, stopProbe := context.WithCancel(context.Background())
+	defer stopProbe()
+	if cfg.Gateway.ProviderProbeIntervalSeconds > 0 {
+		startProviderProbeLoop(probeCtx, logger, chatProvider, time.Duration(cfg.Gateway.ProviderProbeIntervalSeconds)*time.Second)
 	}
 
 	go func() {
@@ -166,7 +250,6 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", zap.Error(err))
 	}

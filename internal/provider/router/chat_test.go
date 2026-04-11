@@ -10,6 +10,11 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
 
+const (
+	routerDefaultModel = "gpt-4o-mini"
+	routerOtherModel   = "claude-3-7-sonnet"
+)
+
 func TestCreateCompletionFallsBackToSecondary(t *testing.T) {
 	primary := &stubProvider{createErr: errors.New("primary failed")}
 	secondary := &stubProvider{
@@ -21,7 +26,7 @@ func TestCreateCompletionFallsBackToSecondary(t *testing.T) {
 		{Name: "secondary", Provider: secondary},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
 		t.Fatalf("create completion: %v", err)
 	}
@@ -46,7 +51,7 @@ func TestStreamCompletionFallsBackBeforeFirstChunk(t *testing.T) {
 		{Name: "secondary", Provider: secondary},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	chunks, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini", Stream: true})
+	chunks, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
 		t.Fatalf("stream completion: %v", err)
 	}
@@ -74,7 +79,7 @@ func TestStreamCompletionFallsBackWhenPrimaryErrorsBeforeFirstChunk(t *testing.T
 		{Name: "secondary", Provider: secondary},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini", Stream: true})
+	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
 		t.Fatalf("stream completion: %v", err)
 	}
@@ -109,7 +114,7 @@ func TestStreamCompletionFallsBackWhenPrimaryTimesOutBeforeFirstChunk(t *testing
 		{Name: "secondary", Provider: secondary},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini", Stream: true})
+	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
 		t.Fatalf("stream completion: %v", err)
 	}
@@ -141,7 +146,7 @@ func TestStreamCompletionDoesNotFallbackAfterFirstChunk(t *testing.T) {
 		{Name: "secondary", Provider: secondary},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini", Stream: true})
+	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
 		t.Fatalf("stream completion: %v", err)
 	}
@@ -173,14 +178,14 @@ func TestUnhealthyPrimaryIsSkippedDuringCooldown(t *testing.T) {
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 	routed.now = func() time.Time { return now }
 
-	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
 		t.Fatalf("first create completion: %v", err)
 	}
 
 	primary.createCalled = false
 	secondary.createCalled = false
 
-	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
 		t.Fatalf("second create completion: %v", err)
 	}
 
@@ -206,11 +211,11 @@ func TestCreateCompletionPrefersModelMatchedHigherPriorityBackend(t *testing.T) 
 
 	routed := New([]Backend{
 		{Name: "generic", Priority: 200, Provider: generic},
-		{Name: "other", Priority: 10, Models: []string{"claude-3-7-sonnet"}, Provider: nonMatching},
-		{Name: "matched", Priority: 50, Models: []string{"gpt-4o-mini"}, Provider: matched},
+		{Name: "other", Priority: 10, Models: []string{routerOtherModel}, Provider: nonMatching},
+		{Name: "matched", Priority: 50, Models: []string{routerDefaultModel}, Provider: matched},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
 		t.Fatalf("create completion: %v", err)
 	}
@@ -239,12 +244,12 @@ func TestCreateCompletionFallsBackFromMatchedBackendToGenericBackend(t *testing.
 	}
 
 	routed := New([]Backend{
-		{Name: "non-matching", Priority: 1, Models: []string{"claude-3-7-sonnet"}, Provider: nonMatching},
+		{Name: "non-matching", Priority: 1, Models: []string{routerOtherModel}, Provider: nonMatching},
 		{Name: "generic", Priority: 100, Provider: generic},
-		{Name: "matched", Priority: 50, Models: []string{"gpt-4o-mini"}, Provider: matched},
+		{Name: "matched", Priority: 50, Models: []string{routerDefaultModel}, Provider: matched},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
 		t.Fatalf("create completion: %v", err)
 	}
@@ -281,18 +286,18 @@ func TestCreateCompletionRouteRulesPreferExactAndGenericFallback(t *testing.T) {
 		{
 			Name:       "matched",
 			Priority:   100,
-			RouteRules: []RouteRule{{Model: "gpt-4o-mini", Priority: 10}},
+			RouteRules: []RouteRule{{Model: routerDefaultModel, Priority: 10}},
 			Provider:   matched,
 		},
 		{
 			Name:       "unrelated",
 			Priority:   1,
-			RouteRules: []RouteRule{{Model: "claude-3-7-sonnet", Priority: 1}},
+			RouteRules: []RouteRule{{Model: routerOtherModel, Priority: 1}},
 			Provider:   unrelated,
 		},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
 		t.Fatalf("create completion: %v", err)
 	}
@@ -315,12 +320,12 @@ func TestCreateCompletionRouteRulesRejectWhenNoRuleMatches(t *testing.T) {
 	routed := New([]Backend{
 		{
 			Name:       "specialized",
-			RouteRules: []RouteRule{{Model: "claude-3-7-sonnet", Priority: 10}},
+			RouteRules: []RouteRule{{Model: routerOtherModel, Priority: 10}},
 			Provider:   &stubProvider{response: provider.ChatCompletionResponse{Model: "specialized"}},
 		},
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
-	_, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	_, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err == nil || err.Error() != "no provider backends matched routing policy" {
 		t.Fatalf("expected routing-policy error, got %v", err)
 	}

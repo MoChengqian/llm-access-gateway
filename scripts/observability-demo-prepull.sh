@@ -10,11 +10,14 @@ PULL_RETRIES="${PULL_RETRIES:-3}"
 PULL_BACKOFF_SECONDS="${PULL_BACKOFF_SECONDS:-5}"
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local section_title="$1"
+  printf '\n== %s ==\n' "${section_title}"
+  return 0
 }
 
 fail() {
-  printf 'ERROR: %s\n' "$1" >&2
+  local message="$1"
+  printf 'ERROR: %s\n' "${message}" >&2
   exit 1
 }
 

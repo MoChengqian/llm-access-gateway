@@ -21,6 +21,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const routerTestDefaultModel = "gpt-4o-mini"
+
 func TestHealthz(t *testing.T) {
 	router := newTestRouter(stubAuthStore{
 		record: auth.APIKeyRecord{
@@ -109,7 +111,7 @@ func TestDebugProviders(t *testing.T) {
 				Healthy:             false,
 				ConsecutiveFailures: 1,
 				RouteRules: []handlers.RouteRule{
-					{Model: "gpt-4o-mini", Priority: 10},
+					{Model: routerTestDefaultModel, Priority: 10},
 				},
 			},
 			{Name: "mock-secondary", Healthy: true, ConsecutiveFailures: 0},
@@ -129,7 +131,7 @@ func TestDebugProviders(t *testing.T) {
 	if !strings.Contains(bodyText, "\"ready\":true") || !strings.Contains(bodyText, "\"mock-primary\"") {
 		t.Fatalf("expected provider status payload, got %s", bodyText)
 	}
-	if !strings.Contains(bodyText, "\"route_rules\"") || !strings.Contains(bodyText, "\"model\":\"gpt-4o-mini\"") {
+	if !strings.Contains(bodyText, "\"route_rules\"") || !strings.Contains(bodyText, "\"model\":\""+routerTestDefaultModel+"\"") {
 		t.Fatalf("expected route rule payload, got %s", bodyText)
 	}
 }
@@ -217,7 +219,7 @@ func TestModelsList(t *testing.T) {
 	}
 
 	bodyText := rec.Body.String()
-	if !strings.Contains(bodyText, `"object":"list"`) || !strings.Contains(bodyText, `"id":"gpt-4o-mini"`) {
+	if !strings.Contains(bodyText, `"object":"list"`) || !strings.Contains(bodyText, `"id":"`+routerTestDefaultModel+`"`) {
 		t.Fatalf("expected models payload, got %s", bodyText)
 	}
 }
@@ -247,7 +249,7 @@ func TestUsageReturnsTenantSummaryAndRecentRecords(t *testing.T) {
 			{
 				RequestID:        "req-1",
 				APIKeyID:         10,
-				Model:            "gpt-4o-mini",
+				Model:            routerTestDefaultModel,
 				Stream:           true,
 				Status:           "succeeded",
 				PromptTokens:     10,
@@ -367,8 +369,8 @@ func TestChatCompletions(t *testing.T) {
 		t.Fatalf("expected object chat.completion, got %s", resp.Object)
 	}
 
-	if resp.Model != "gpt-4o-mini" {
-		t.Fatalf("expected default model gpt-4o-mini, got %s", resp.Model)
+	if resp.Model != routerTestDefaultModel {
+		t.Fatalf("expected default model %s, got %s", routerTestDefaultModel, resp.Model)
 	}
 
 	if len(resp.Choices) != 1 || resp.Choices[0].Message.Content == "" {
@@ -720,7 +722,7 @@ func newTestRouterWithMaxBodyBytes(store stubAuthStore, governanceStore *stubGov
 
 	authService := auth.NewService(store)
 	governanceService := governance.NewService(governanceStore, limiter)
-	chatService := chat.NewService("gpt-4o-mini", providermock.New())
+	chatService := chat.NewService(routerTestDefaultModel, providermock.New())
 	modelsService := modelsservice.NewService([]modelsservice.Source{providermock.New()})
 	usageService := usageservice.NewService(governanceStore)
 	return NewRouter(zap.NewNop(), chatService, modelsService, usageService, authService, governanceService, providers, registry, registry, maxRequestBodyBytes)
