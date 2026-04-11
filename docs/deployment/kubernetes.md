@@ -202,6 +202,12 @@ For repository-level structural checks that do not depend on cluster access, use
 ./scripts/stage7-verify.sh static
 ```
 
+To force the same production overlay render behavior used by CI, run:
+
+```bash
+REQUIRE_K8S_PRODUCTION_RENDER=true ./scripts/validate-deployments.rb
+```
+
 The Stage 7 static contract wraps that validator and also checks Go tests, vet,
 dashboard JSON syntax, and required delivery/drill/nightly assets. The
 deployment validator itself confirms the manifest kinds, namespace wiring,

@@ -25,9 +25,15 @@ This validates:
 - `go vet ./...`
 - Docker Compose expansion and Kubernetes manifest structure through
   `scripts/validate-deployments.rb`
+- production Kubernetes overlay renderability when `kubectl` is available
 - Grafana dashboard JSON syntax
 - presence of the required Stage 7 delivery, load, drill, benchmark, and CI
   assets
+
+CI strengthens this contract by setting `REQUIRE_K8S_PRODUCTION_RENDER=true`
+and running `make k8s-production-render` before the static contract. That turns
+the production overlay from a best-effort local enhancement into a required
+delivery gate.
 
 ### Runtime Contract
 
@@ -137,6 +143,9 @@ available, so ingress, PDB, pod security, provider config, Secret patches, and
 image overrides are checked as one delivery bundle. Cluster-specific MySQL,
 Redis, image registry credentials, TLS issuance, and collector deployment remain
 environment-owned.
+
+In CI, `REQUIRE_K8S_PRODUCTION_RENDER=true` makes missing `kubectl` a hard
+failure instead of silently downgrading to source-file validation.
 
 The local production overlay evidence is recorded in
 [`k8s-production-overlay.md`](k8s-production-overlay.md).

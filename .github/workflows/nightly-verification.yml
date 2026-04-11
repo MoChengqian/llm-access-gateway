@@ -17,7 +17,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify Kubernetes production overlay render
+        run: |
+          kubectl version --client=true
+          make k8s-production-render >/tmp/k8s-production-overlay.yaml
+          test -s /tmp/k8s-production-overlay.yaml
+
       - name: Run Stage 7 static contract
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
         run: ./scripts/stage7-verify.sh static
 
   benchmarks:
@@ -87,7 +95,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-mock.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
               exit 0
             fi
@@ -111,7 +119,7 @@ jobs:
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -120,7 +128,7 @@ jobs:
 
             if kill -0 "${gateway_pid}" 2>/dev/null; then
               kill -9 "${gateway_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                   break
                 fi
@@ -129,7 +137,7 @@ jobs:
             fi
           fi
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if ! curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
               break
             fi
@@ -149,7 +157,7 @@ jobs:
           nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode ok >"${ARTIFACT_DIR}/upstream-ok.log" 2>&1 &
           echo $! >/tmp/upstream.pid
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
               exit 0
             fi
@@ -172,7 +180,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-adapter.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
               cat "${ARTIFACT_DIR}/gateway-adapter.log"
               exit 1
@@ -240,7 +248,7 @@ jobs:
           if test -f /tmp/gateway.pid; then
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -251,7 +259,7 @@ jobs:
           if test -f /tmp/upstream.pid; then
             upstream_pid="$(cat /tmp/upstream.pid)"
             kill "${upstream_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                 break
               fi
@@ -326,7 +334,7 @@ jobs:
           nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_prechunk_fail >"${ARTIFACT_DIR}/upstream-prechunk.log" 2>&1 &
           echo $! >/tmp/upstream.pid
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
               exit 0
             fi
@@ -350,7 +358,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
               cat "${ARTIFACT_DIR}/gateway-prechunk.log"
               exit 1
@@ -389,7 +397,7 @@ jobs:
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -398,7 +406,7 @@ jobs:
 
             if kill -0 "${gateway_pid}" 2>/dev/null; then
               kill -9 "${gateway_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                   break
                 fi
@@ -411,7 +419,7 @@ jobs:
             upstream_pid="$(cat /tmp/upstream.pid)"
             kill "${upstream_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                 break
               fi
@@ -420,7 +428,7 @@ jobs:
 
             if kill -0 "${upstream_pid}" 2>/dev/null; then
               kill -9 "${upstream_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                   break
                 fi
@@ -429,7 +437,7 @@ jobs:
             fi
           fi
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             gateway_down=true
             upstream_down=true
             curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
@@ -458,7 +466,7 @@ jobs:
           nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_partial >"${ARTIFACT_DIR}/upstream-partial.log" 2>&1 &
           echo $! >/tmp/upstream.pid
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
               exit 0
             fi
@@ -482,7 +490,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
               cat "${ARTIFACT_DIR}/gateway-partial.log"
               exit 1
@@ -548,7 +556,7 @@ jobs:
           if test -f /tmp/gateway.pid; then
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -559,7 +567,7 @@ jobs:
           if test -f /tmp/upstream.pid; then
             upstream_pid="$(cat /tmp/upstream.pid)"
             kill "${upstream_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                 break
               fi
@@ -636,7 +644,7 @@ jobs:
           nohup python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode capture_system >"${ARTIFACT_DIR}/upstream-system.log" 2>&1 &
           echo $! >/tmp/upstream.pid
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null; then
               exit 0
             fi
@@ -662,7 +670,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-system.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
               cat "${ARTIFACT_DIR}/gateway-system.log"
               exit 1
@@ -700,7 +708,7 @@ jobs:
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -709,7 +717,7 @@ jobs:
 
             if kill -0 "${gateway_pid}" 2>/dev/null; then
               kill -9 "${gateway_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                   break
                 fi
@@ -722,7 +730,7 @@ jobs:
             upstream_pid="$(cat /tmp/upstream.pid)"
             kill "${upstream_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                 break
               fi
@@ -731,7 +739,7 @@ jobs:
 
             if kill -0 "${upstream_pid}" 2>/dev/null; then
               kill -9 "${upstream_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                   break
                 fi
@@ -740,7 +748,7 @@ jobs:
             fi
           fi
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             gateway_down=true
             upstream_down=true
             curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
@@ -769,7 +777,7 @@ jobs:
           nohup python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode stream_prechunk_fail >"${ARTIFACT_DIR}/upstream-prechunk.log" 2>&1 &
           echo $! >/tmp/upstream.pid
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null; then
               exit 0
             fi
@@ -796,7 +804,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
               cat "${ARTIFACT_DIR}/gateway-prechunk.log"
               exit 1
@@ -835,7 +843,7 @@ jobs:
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -844,7 +852,7 @@ jobs:
 
             if kill -0 "${gateway_pid}" 2>/dev/null; then
               kill -9 "${gateway_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                   break
                 fi
@@ -857,7 +865,7 @@ jobs:
             upstream_pid="$(cat /tmp/upstream.pid)"
             kill "${upstream_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                 break
               fi
@@ -866,7 +874,7 @@ jobs:
 
             if kill -0 "${upstream_pid}" 2>/dev/null; then
               kill -9 "${upstream_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                   break
                 fi
@@ -875,7 +883,7 @@ jobs:
             fi
           fi
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             gateway_down=true
             upstream_down=true
             curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
@@ -904,7 +912,7 @@ jobs:
           nohup python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode stream_partial >"${ARTIFACT_DIR}/upstream-partial.log" 2>&1 &
           echo $! >/tmp/upstream.pid
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null; then
               exit 0
             fi
@@ -931,7 +939,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
               cat "${ARTIFACT_DIR}/gateway-partial.log"
               exit 1
@@ -1000,7 +1008,7 @@ jobs:
           if test -f /tmp/gateway.pid; then
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -1011,7 +1019,7 @@ jobs:
           if test -f /tmp/upstream.pid; then
             upstream_pid="$(cat /tmp/upstream.pid)"
             kill "${upstream_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                 break
               fi

@@ -12,6 +12,7 @@ covered by the Stage 7 static delivery contract.
 ```bash
 make k8s-production-render
 ./scripts/validate-deployments.rb
+REQUIRE_K8S_PRODUCTION_RENDER=true ./scripts/validate-deployments.rb
 GOCACHE=/tmp/lag-project-gocache GOMODCACHE=/tmp/lag-project-gomodcache ./scripts/stage7-verify.sh static
 ```
 
@@ -44,8 +45,13 @@ the overlay and checks the final object contract:
 - nginx Ingress host/TLS/backend wiring
 - `PodDisruptionBudget` with `minAvailable: 1`
 
+CI sets `REQUIRE_K8S_PRODUCTION_RENDER=true` and runs
+`make k8s-production-render` before `./scripts/stage7-verify.sh static`. This
+prevents a runner without `kubectl` from silently skipping the render check.
+
 ## Result
 
 The production overlay render and deployment validator pass locally. The Stage 7
-static contract includes the overlay assets so future delivery changes cannot
-silently drop the production bundle.
+static contract includes the overlay assets, and CI now requires the render path
+explicitly, so future delivery changes cannot silently drop or break the
+production bundle.

@@ -479,8 +479,9 @@ make stage7-verify
 assertions enabled and exit non-zero if any core runtime contract check fails.
 `make stage7-static` validates tests, vet, deployment manifests, the production
 Kubernetes overlay, dashboard JSON, and required delivery assets without
-requiring a running gateway. `make stage7-verify` combines both paths when a
-local gateway is already running.
+requiring a running gateway. CI also forces `kubectl`-backed production overlay
+rendering before this static contract runs. `make stage7-verify` combines both
+paths when a local gateway is already running.
 
 The built-in load test also supports machine-readable and threshold-driven runs:
 

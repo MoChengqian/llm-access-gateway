@@ -536,7 +536,8 @@ Stage 7 is complete for the v1 repository contract:
 - `cmd/loadtest` is the canonical load tool for both stream and non-stream paths
 - failure drills are documented and mapped to scripts or nightly checks
 - `.github/workflows/runtime-ci.yml` and `.github/workflows/nightly-verification.yml`
-  protect the runtime contract
+  protect the runtime contract and now explicitly require production overlay
+  rendering before the static contract
 - `scripts/stage7-verify.sh` standardizes static and runtime verification
 
 Remaining future hardening is intentionally outside Stage 7:

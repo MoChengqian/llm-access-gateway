@@ -18,7 +18,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify Kubernetes production overlay render
+        run: |
+          kubectl version --client=true
+          make k8s-production-render >/tmp/k8s-production-overlay.yaml
+          test -s /tmp/k8s-production-overlay.yaml
+
       - name: Run Stage 7 static contract
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
         run: ./scripts/stage7-verify.sh static
 
   runtime:
@@ -82,7 +90,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >/tmp/gateway.log 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
               exit 0
             fi
@@ -101,7 +109,7 @@ jobs:
             smoke_pid="$(cat /tmp/gateway.pid)"
             kill "${smoke_pid}" || true
 
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               if ! kill -0 "${smoke_pid}" 2>/dev/null; then
                 break
               fi
@@ -110,7 +118,7 @@ jobs:
 
             if kill -0 "${smoke_pid}" 2>/dev/null; then
               kill -9 "${smoke_pid}" || true
-              for i in $(seq 1 5); do
+              for _ in $(seq 1 5); do
                 if ! kill -0 "${smoke_pid}" 2>/dev/null; then
                   break
                 fi
@@ -119,7 +127,7 @@ jobs:
             fi
           fi
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if ! curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
               break
             fi
@@ -135,7 +143,7 @@ jobs:
           nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode error500 >/tmp/upstream.log 2>&1 &
           echo $! >/tmp/upstream.pid
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
               exit 0
             fi
@@ -159,7 +167,7 @@ jobs:
           nohup "${GATEWAY_BIN}" >/tmp/gateway-fallback.log 2>&1 &
           echo $! >/tmp/gateway.pid
 
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
               cat /tmp/gateway-fallback.log
               exit 1
@@ -210,7 +218,7 @@ jobs:
           if test -f /tmp/gateway.pid; then
             gateway_pid="$(cat /tmp/gateway.pid)"
             kill "${gateway_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${gateway_pid}" 2>/dev/null; then
                 break
               fi
@@ -222,7 +230,7 @@ jobs:
           if test -f /tmp/upstream.pid; then
             upstream_pid="$(cat /tmp/upstream.pid)"
             kill "${upstream_pid}" || true
-            for i in $(seq 1 10); do
+            for _ in $(seq 1 10); do
               if ! kill -0 "${upstream_pid}" 2>/dev/null; then
                 break
               fi
