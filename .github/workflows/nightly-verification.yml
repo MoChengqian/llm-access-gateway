@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -60,15 +60,15 @@ jobs:
       ARTIFACT_DIR: /tmp/nightly-artifacts/benchmarks
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
@@ -228,7 +228,7 @@ jobs:
 
       - name: Upload benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-benchmarks
           path: /tmp/nightly-artifacts/benchmarks
@@ -300,15 +300,15 @@ jobs:
       ARTIFACT_DIR: /tmp/nightly-artifacts/streaming-failures
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
@@ -536,7 +536,7 @@ jobs:
 
       - name: Upload streaming drill artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-stream-failure-drills
           path: /tmp/nightly-artifacts/streaming-failures
@@ -610,15 +610,15 @@ jobs:
       ARTIFACT_DIR: /tmp/nightly-artifacts/anthropic-adapter
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
@@ -988,7 +988,7 @@ jobs:
 
       - name: Upload Anthropic drill artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-anthropic-adapter
           path: /tmp/nightly-artifacts/anthropic-adapter
@@ -1024,35 +1024,36 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - test
       - benchmarks
       - stream-failure-drills
       - anthropic-adapter-drills
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Download benchmark artifacts
-        continue-on-error: true
-        uses: actions/download-artifact@v4
+        if: needs.benchmarks.result == 'success'
+        uses: actions/download-artifact@v8
         with:
           name: nightly-benchmarks
           path: /tmp/nightly-artifacts/benchmarks
 
       - name: Download streaming drill artifacts
-        continue-on-error: true
-        uses: actions/download-artifact@v4
+        if: needs['stream-failure-drills'].result == 'success'
+        uses: actions/download-artifact@v8
         with:
           name: nightly-stream-failure-drills
           path: /tmp/nightly-artifacts/streaming-failures
 
       - name: Download Anthropic drill artifacts
-        continue-on-error: true
-        uses: actions/download-artifact@v4
+        if: needs['anthropic-adapter-drills'].result == 'success'
+        uses: actions/download-artifact@v8
         with:
           name: nightly-anthropic-adapter
           path: /tmp/nightly-artifacts/anthropic-adapter
@@ -1062,31 +1063,47 @@ jobs:
         run: |
           report_path=/tmp/nightly-artifacts/report/nightly-summary.md
           missing=0
+          prerequisite_failed=0
           report_failed=0
           missing_files=""
 
-          for path in \
-            /tmp/nightly-artifacts/benchmarks/mock-non-stream.json \
-            /tmp/nightly-artifacts/benchmarks/mock-stream.json \
-            /tmp/nightly-artifacts/benchmarks/adapter-non-stream.json \
-            /tmp/nightly-artifacts/benchmarks/adapter-stream.json \
-            /tmp/nightly-artifacts/streaming-failures/prechunk.out \
-            /tmp/nightly-artifacts/streaming-failures/prechunk-metrics.prom \
-            /tmp/nightly-artifacts/streaming-failures/partial.out \
-            /tmp/nightly-artifacts/streaming-failures/partial-metrics.prom \
-            /tmp/nightly-artifacts/anthropic-adapter/system.out \
-            /tmp/nightly-artifacts/anthropic-adapter/upstream-request.json \
-            /tmp/nightly-artifacts/anthropic-adapter/prechunk.out \
-            /tmp/nightly-artifacts/anthropic-adapter/prechunk-metrics.prom \
-            /tmp/nightly-artifacts/anthropic-adapter/partial.out \
-            /tmp/nightly-artifacts/anthropic-adapter/partial-metrics.prom; do
+          require_file() {
+            path="$1"
             if ! test -f "${path}"; then
               missing=1
               missing_files="${missing_files}- ${path}\n"
             fi
-          done
+          }
 
-          if [ "${missing}" -eq 0 ]; then
+          if [ "${{ needs.test.result }}" != "success" ] ||
+             [ "${{ needs.benchmarks.result }}" != "success" ] ||
+             [ "${{ needs['stream-failure-drills'].result }}" != "success" ] ||
+             [ "${{ needs['anthropic-adapter-drills'].result }}" != "success" ]; then
+            prerequisite_failed=1
+          fi
+
+          if [ "${{ needs.benchmarks.result }}" = "success" ]; then
+            require_file /tmp/nightly-artifacts/benchmarks/mock-non-stream.json
+            require_file /tmp/nightly-artifacts/benchmarks/mock-stream.json
+            require_file /tmp/nightly-artifacts/benchmarks/adapter-non-stream.json
+            require_file /tmp/nightly-artifacts/benchmarks/adapter-stream.json
+          fi
+          if [ "${{ needs['stream-failure-drills'].result }}" = "success" ]; then
+            require_file /tmp/nightly-artifacts/streaming-failures/prechunk.out
+            require_file /tmp/nightly-artifacts/streaming-failures/prechunk-metrics.prom
+            require_file /tmp/nightly-artifacts/streaming-failures/partial.out
+            require_file /tmp/nightly-artifacts/streaming-failures/partial-metrics.prom
+          fi
+          if [ "${{ needs['anthropic-adapter-drills'].result }}" = "success" ]; then
+            require_file /tmp/nightly-artifacts/anthropic-adapter/system.out
+            require_file /tmp/nightly-artifacts/anthropic-adapter/upstream-request.json
+            require_file /tmp/nightly-artifacts/anthropic-adapter/prechunk.out
+            require_file /tmp/nightly-artifacts/anthropic-adapter/prechunk-metrics.prom
+            require_file /tmp/nightly-artifacts/anthropic-adapter/partial.out
+            require_file /tmp/nightly-artifacts/anthropic-adapter/partial-metrics.prom
+          fi
+
+          if [ "${prerequisite_failed}" -eq 0 ] && [ "${missing}" -eq 0 ]; then
             if ! go run ./cmd/nightlyreport \
               -baseline .github/nightly/benchmark-baseline.json \
               -mock-non-stream /tmp/nightly-artifacts/benchmarks/mock-non-stream.json \
@@ -1113,14 +1130,17 @@ jobs:
             {
               echo "# Nightly Verification Summary"
               echo
-              if [ "${missing}" -ne 0 ]; then
-                echo "Summary generation was degraded because one or more prerequisite jobs failed or expected artifacts were missing."
+              if [ "${prerequisite_failed}" -ne 0 ]; then
+                echo "Summary generation was degraded because one or more prerequisite jobs did not complete successfully."
+              elif [ "${missing}" -ne 0 ]; then
+                echo "Summary generation was degraded because a successful prerequisite job did not publish every expected artifact."
               else
                 echo "Summary generation failed even though all prerequisite artifacts were present."
               fi
               echo
               echo "## Job Results"
               echo
+              echo "- test: ${{ needs.test.result }}"
               echo "- benchmarks: ${{ needs.benchmarks.result }}"
               echo "- stream-failure-drills: ${{ needs['stream-failure-drills'].result }}"
               echo "- anthropic-adapter-drills: ${{ needs['anthropic-adapter-drills'].result }}"
@@ -1138,7 +1158,7 @@ jobs:
 
       - name: Upload nightly summary artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-summary
           path: /tmp/nightly-artifacts/report/nightly-summary.md
