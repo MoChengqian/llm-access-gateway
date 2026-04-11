@@ -67,6 +67,7 @@ run_static_contract() {
     ".github/workflows/nightly-verification.yml"
     ".github/nightly/benchmark-baseline.json"
     "docs/verification/stage7-delivery-contract.md"
+    "docs/verification/stage7-production-readiness.md"
     "docs/verification/k8s-production-overlay.md"
     "docs/verification/k8s-production-cluster-checklist.md"
     "docs/verification/benchmarks/methodology.md"

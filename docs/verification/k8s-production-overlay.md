@@ -69,3 +69,6 @@ production bundle.
 Cluster-backed server-side dry-run is intentionally separated from local CI and
 documented in
 [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md).
+
+For the full Stage 7 readiness matrix, see
+[`stage7-production-readiness.md`](stage7-production-readiness.md).

@@ -493,6 +493,9 @@ make stage7-runtime
 make stage7-verify
 ```
 
+The Stage 7 production-readiness matrix is documented in
+[docs/verification/stage7-production-readiness.md](docs/verification/stage7-production-readiness.md).
+
 `make verify` and `make stage7-runtime` run the same smoke/load flow with
 assertions enabled and exit non-zero if any core runtime contract check fails.
 `make stage7-static` validates tests, vet, deployment manifests, the production
