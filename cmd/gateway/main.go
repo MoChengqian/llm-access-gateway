@@ -17,6 +17,7 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/config"
 	"github.com/MoChengqian/llm-access-gateway/internal/obs/metrics"
+	"github.com/MoChengqian/llm-access-gateway/internal/obs/oteltracing"
 	provideranthropic "github.com/MoChengqian/llm-access-gateway/internal/provider/anthropic"
 	providermock "github.com/MoChengqian/llm-access-gateway/internal/provider/mock"
 	providerollama "github.com/MoChengqian/llm-access-gateway/internal/provider/ollama"
@@ -47,6 +48,23 @@ func main() {
 	}
 	defer func() {
 		_ = logger.Sync()
+	}()
+
+	traceShutdown, err := oteltracing.Configure(context.Background(), oteltracing.Config{
+		ServiceName:    cfg.Observability.ServiceName,
+		TracesEndpoint: cfg.Observability.OTLPTracesEndpoint,
+		TracesInsecure: cfg.Observability.OTLPTracesInsecure,
+		ExportTimeout:  time.Duration(cfg.Observability.OTLPExportTimeoutSeconds) * time.Second,
+	}, logger)
+	if err != nil {
+		logger.Fatal("otel tracing setup failed", zap.Error(err))
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			logger.Error("otel tracing shutdown failed", zap.Error(err))
+		}
 	}()
 
 	if cfg.MySQL.DSN == "" {

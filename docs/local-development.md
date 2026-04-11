@@ -479,6 +479,19 @@ lag_provider_operation_duration_milliseconds_count{operation="create",backend="p
 lag_provider_probe_results_total{backend="primary",result="success"} ...
 ```
 
+Optional OTLP trace export can be tested by pointing the gateway at a local
+collector:
+
+```bash
+export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
+export APP_OBSERVABILITY_SERVICE_NAME='llm-access-gateway'
+go run ./cmd/gateway
+```
+
+When enabled, the gateway still emits the same span logs, and also exports
+OpenTelemetry spans with `lag.trace_id`, `lag.span_id`, and `lag.request_id`
+attributes for correlation with `X-Trace-Id`.
+
 You can also use the helper script:
 
 ```bash

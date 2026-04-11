@@ -112,15 +112,14 @@ Rough status:
 - Stage 3: complete
 - Stage 4: complete
 - Stage 5: complete in baseline form, with persisted `route_rules` now driving backend selection
-- Stage 6: largely complete in lightweight form, but not yet external-backend observability
+- Stage 6: complete for v1; lightweight metrics remain, and trace export/dashboard assets are now present
 - Stage 7: initial delivery assets exist, but not yet fully standardized against the full plan
 
 Current known gaps that still matter operationally:
 
 - `docs/prd-v1.md` still describes a much earlier mock-only scope
 - `migrations/001_init.sql` does not yet reflect all runtime tables used by the current code path
-- `.env.example` is still too small for the current runtime surface
-- observability is log-based and in-process; OTLP exporter and dashboard assets are not yet part of the repo contract
+- production metrics backends, tracing storage, and Grafana provisioning remain environment-owned
 - load testing exists through `cmd/loadtest`, but the planned `k6`-style external load assets are not yet present
 
 When in doubt, treat this roadmap as the target contract and the current codebase as the moving baseline.
@@ -452,17 +451,21 @@ Make the system not only maintainable, but provable.
 
 ### Current Delta In This Repo
 
-The current repo has a lightweight but usable observability implementation:
+Stage 6 is complete for the v1 repository contract:
 
 - structured logs are present
 - trace correlation is present
 - `/metrics` is present
+- trace spans can optionally be exported over OTLP/HTTP through
+  `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
+- the Grafana dashboard asset is committed at
+  `deployments/grafana/dashboards/llm-access-gateway.json`
 
-What is still missing relative to the full plan:
+Remaining future hardening is intentionally outside Stage 6:
 
-- external tracing backend integration
-- OTLP exporter path
-- Grafana dashboard assets committed as part of the delivery contract
+- push-based metrics export
+- histogram buckets for percentile latency panels
+- production Grafana/Prometheus/Tempo provisioning owned by an environment repo
 
 ## Stage 7: Delivery, Load Testing, And Failure Drills
 

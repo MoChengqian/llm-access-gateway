@@ -9,6 +9,12 @@ server:
 log:
   level: info
 
+observability:
+  service_name: llm-access-gateway
+  otlp_traces_endpoint: ""
+  otlp_traces_insecure: false
+  otlp_export_timeout_seconds: 5
+
 mysql:
   dsn: ""
 

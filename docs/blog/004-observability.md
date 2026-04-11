@@ -6,7 +6,9 @@ A gateway is only as operable as its failure stories.
 
 When a request fails somewhere between auth, governance, routing, and an upstream provider, the first question is not “Do we have a dashboard?” It is “Can we correlate what just happened?”
 
-That is why this repository starts observability with request IDs, trace IDs, structured logs, and a small metrics surface instead of a large monitoring stack.
+That is why this repository starts observability with request IDs, trace IDs,
+structured logs, and a small metrics surface before adding exporter or dashboard
+assets.
 
 ## The First Win: Every Request Gets an Identity
 
@@ -25,11 +27,12 @@ From that point on, the same identifiers move through:
 
 That single design choice changes the debugging experience completely. Instead of guessing which log lines belong together, you can walk one request from the edge to the provider attempt that failed.
 
-## Tracing Without Pretending to Have a Tracing Backend
+## Tracing: Logs First, OTLP When Needed
 
 One thing I like about the current design is its honesty.
 
-There is no external tracing backend configured today. The system does not claim otherwise. Instead, it emits span-completion logs with:
+By default, the gateway does not require a tracing backend to be useful. It emits
+span-completion logs with:
 
 - `trace_id`
 - `span_id`
@@ -45,6 +48,16 @@ That is enough to reconstruct a request path when you need to answer questions l
 - which backend attempt failed?
 - how long did the upstream call take?
 - was the stream interrupted before or after output started?
+
+Stage 6 adds the external path without removing that lightweight workflow:
+
+- `internal/obs/tracing/tracing.go` still logs every span
+- `internal/obs/oteltracing/oteltracing.go` configures optional OTLP/HTTP export
+- `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT` enables the exporter
+- exported spans keep `lag.trace_id`, `lag.span_id`, and `lag.request_id`
+
+The important boundary is that this repository now provides the exporter path,
+not a managed Jaeger, Tempo, or collector installation.
 
 ## Metrics That Match the Gateway’s Real Questions
 
@@ -106,8 +119,9 @@ That workflow is more valuable than a sophisticated observability story that nob
 The boundaries are worth stating clearly:
 
 - metrics are process-local and reset on restart
-- trace data is log-based rather than exported to a tracing system
+- trace export is optional; tracing storage remains environment-owned
 - the registry exposes counts and sums, not histogram buckets
+- the Grafana dashboard is committed as an importable asset, not as a managed service
 
 Those are not flaws hidden under the rug. They are the current shape of the system. Good observability docs should say that plainly.
 

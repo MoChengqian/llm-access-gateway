@@ -129,8 +129,10 @@ Current observability defaults include:
 - `X-Request-Id` on responses
 - `X-Trace-Id` on responses
 - request -> handler -> provider trace correlation
+- optional OTLP/HTTP trace export
 - structured access logs
 - Prometheus-style metrics on `/metrics`
+- Grafana dashboard asset for the `/metrics` contract
 
 ### Delivery Layer
 

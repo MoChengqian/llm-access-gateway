@@ -62,6 +62,8 @@ It is not a general AI product, agent platform, or frontend application.
 
 - structured zap logging with request and trace identifiers
 - in-process Prometheus-style metrics on `/metrics`
+- optional OTLP/HTTP trace export
+- committed Grafana dashboard asset for the `/metrics` contract
 - provider health visibility on `/debug/providers`
 - Docker Compose local delivery path
 - baseline Kubernetes manifests
@@ -72,7 +74,8 @@ It is not a general AI product, agent platform, or frontend application.
 
 The current v1 repository does not include:
 
-- OTLP exporters, external tracing backends, or Grafana dashboards
+- managed Prometheus, Tempo, Jaeger, or Grafana runtime services
+- push-based metrics export or histogram-backed percentile panels
 - weighted traffic splitting or advanced policy routing
 - frontend chat UI
 - agent workflows or RAG
@@ -88,8 +91,8 @@ Important current constraints:
 
 - provider endpoint credentials and transport settings still come from process config
 - backend selection policy is now persisted in MySQL through `route_rules`
-- observability is intentionally lightweight: request IDs, trace IDs, logs, and
-  in-process metrics are present, but external telemetry backends are not
+- observability includes request IDs, trace IDs, logs, in-process `/metrics`,
+  optional OTLP trace export, and committed Grafana dashboard assets
 - the repo is already beyond pure mock behavior, so documentation must describe
   real auth, governance, persistence, and fallback behavior
 

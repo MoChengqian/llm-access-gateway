@@ -50,7 +50,7 @@ Examples:
 
 - ordered failover instead of weighted routing
 - in-process state instead of shared distributed state
-- log-based tracing instead of external tracing backends
+- optional OTLP export while tracing storage remains environment-owned
 
 ## Verification
 
