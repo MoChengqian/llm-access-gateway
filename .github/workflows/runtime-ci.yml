@@ -18,11 +18,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run unit tests
-        run: go test ./...
-
-      - name: Validate deployment manifests
-        run: ./scripts/validate-deployments.rb
+      - name: Run Stage 7 static contract
+        run: ./scripts/stage7-verify.sh static
 
   runtime:
     runs-on: ubuntu-latest

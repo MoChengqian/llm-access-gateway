@@ -134,6 +134,7 @@ For a broader acceptance run, the repository already includes:
 ./scripts/gateway-smoke-check.sh
 ASSERT=true ./scripts/gateway-smoke-check.sh
 make verify
+make stage7-runtime
 ```
 
 These commands exercise:
@@ -145,6 +146,14 @@ These commands exercise:
 - non-stream chat completions
 - stream chat completions
 - the built-in load test
+
+Static delivery checks that do not require a running gateway are available
+through:
+
+```bash
+make stage7-static
+./scripts/stage7-verify.sh static
+```
 
 ## Troubleshooting
 

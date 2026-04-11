@@ -417,10 +417,16 @@ For machine-verifiable local acceptance instead of visual inspection:
 
 ```bash
 make verify
+make stage7-static
+make stage7-runtime
+make stage7-verify
 ```
 
-That runs the same smoke flow with assertions enabled and exits non-zero if any
-core contract check fails.
+`make verify` and `make stage7-runtime` run the same smoke/load flow with
+assertions enabled and exit non-zero if any core runtime contract check fails.
+`make stage7-static` validates tests, vet, deployment manifests, dashboard JSON,
+and required delivery assets without requiring a running gateway. `make
+stage7-verify` combines both paths when a local gateway is already running.
 
 The built-in load test also supports machine-readable and threshold-driven runs:
 
@@ -430,6 +436,10 @@ go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -m
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -json
 go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -min-success-rate 1.0 -max-ttft-p95 2s
 ```
+
+Stage 7 treats `cmd/loadtest` as the canonical load tool. External tools such as
+`k6` are intentionally deferred until they prove coverage that the built-in JSON
+and threshold-driven load contract cannot provide.
 
 Default config file: [`configs/config.yaml`](configs/config.yaml)
 

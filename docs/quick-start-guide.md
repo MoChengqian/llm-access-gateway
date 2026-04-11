@@ -140,12 +140,15 @@ The project includes reproducible failure scenarios to verify resilience feature
 ```bash
 ./scripts/gateway-smoke-check.sh  # Comprehensive API contract verification
 make verify                        # Machine-verifiable acceptance tests
+make stage7-static                 # Static delivery/load/drill contract
+make stage7-runtime                # Runtime smoke and load contract
 ```
 
 **Failure drill reports**:
 - [Provider Timeout Drill](verification/failure-drills/provider-timeout.md)
 - [Provider Error Drill](verification/failure-drills/provider-errors.md)
 - [Quota Enforcement Drill](verification/failure-drills/quota-enforcement.md)
+- [Stage 7 Delivery Contract](verification/stage7-delivery-contract.md)
 - [Streaming Failure Drill](verification/failure-drills/streaming-failures.md)
 
 ### Test Coverage

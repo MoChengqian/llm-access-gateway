@@ -1,10 +1,13 @@
-.PHONY: run test fmt docker-build compose-up compose-down loadtest smoke verify
+.PHONY: run test vet fmt docker-build compose-up compose-down loadtest smoke verify stage7-static stage7-runtime stage7-verify
 
 run:
 	go run ./cmd/gateway
 
 test:
 	go test ./...
+
+vet:
+	go vet ./...
 
 fmt:
 	gofmt -w cmd internal third_party
@@ -25,4 +28,13 @@ smoke:
 	./scripts/gateway-smoke-check.sh
 
 verify:
-	ASSERT=true ./scripts/gateway-smoke-check.sh
+	./scripts/stage7-verify.sh runtime
+
+stage7-static:
+	./scripts/stage7-verify.sh static
+
+stage7-runtime:
+	./scripts/stage7-verify.sh runtime
+
+stage7-verify:
+	./scripts/stage7-verify.sh all
