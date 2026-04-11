@@ -1,4 +1,4 @@
-.PHONY: run test vet fmt docker-build compose-up compose-down observability-demo-up observability-demo-down observability-demo-config observability-demo-prepull observability-demo-verify k8s-production-render k8s-production-hpa-render loadtest smoke verify stage7-static stage7-runtime stage7-verify otlp-check observability-demo-check
+.PHONY: run test vet fmt docker-build compose-up compose-down observability-demo-up observability-demo-down observability-demo-config observability-demo-prepull observability-demo-verify k8s-production-render k8s-production-hpa-render k8s-production-local-check k8s-production-server-dry-run loadtest smoke verify stage7-static stage7-runtime stage7-verify otlp-check observability-demo-check
 
 run:
 	go run ./cmd/gateway
@@ -41,6 +41,12 @@ k8s-production-render:
 
 k8s-production-hpa-render:
 	kubectl kustomize deployments/k8s-overlays/production-hpa
+
+k8s-production-local-check:
+	./scripts/k8s-production-cluster-check.sh local all
+
+k8s-production-server-dry-run:
+	./scripts/k8s-production-cluster-check.sh server-dry-run all
 
 loadtest:
 	go run ./cmd/loadtest -auth-key lag-local-dev-key

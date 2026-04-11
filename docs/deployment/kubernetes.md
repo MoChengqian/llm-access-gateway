@@ -129,6 +129,7 @@ baseline resources plus production-facing defaults:
 ```bash
 kubectl kustomize deployments/k8s-overlays/production
 make k8s-production-render
+make k8s-production-local-check
 ```
 
 Before applying it, replace the environment-owned placeholders:
@@ -174,6 +175,24 @@ The HPA targets `Deployment/llm-access-gateway`, keeps at least two replicas,
 allows up to six replicas, and scales on CPU utilization at 70%. This is a
 starting point for production-style elasticity, not a replacement for load
 testing or provider-side rate-limit planning.
+
+## Cluster Preflight
+
+Before applying either production overlay to a real cluster, run the repository
+preflight:
+
+```bash
+make k8s-production-server-dry-run
+./scripts/k8s-production-cluster-check.sh server-dry-run all
+```
+
+This uses `kubectl apply --server-side --dry-run=server -k ...` against the
+target cluster and checks that the API server accepts the production and
+optional HPA overlays. It also checks the metrics API before the HPA overlay is
+considered safe to apply.
+
+NetworkPolicy server-side acceptance does not prove enforcement. Confirm your
+CNI enforces NetworkPolicy before relying on the boundary policy.
 
 ## Probe Semantics
 
@@ -239,6 +258,7 @@ To force the same production overlay render behavior used by CI, run:
 
 ```bash
 REQUIRE_K8S_PRODUCTION_RENDER=true ./scripts/validate-deployments.rb
+make k8s-production-local-check
 ```
 
 The Stage 7 static contract wraps that validator and also checks Go tests, vet,
@@ -248,6 +268,9 @@ Deployment probes, Service port, bootstrap Job command, production overlay
 renderability, production ingress/network policy/PDB wiring, optional HPA
 wiring, pod security defaults, and the Compose expansion model used in local
 delivery.
+
+For cluster-backed verification, see
+[`../verification/k8s-production-cluster-checklist.md`](../verification/k8s-production-cluster-checklist.md).
 
 ## Operational Checks After Apply
 

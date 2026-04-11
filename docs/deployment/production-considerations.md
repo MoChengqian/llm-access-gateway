@@ -171,9 +171,15 @@ For the production overlay:
 ```bash
 make k8s-production-render
 make k8s-production-hpa-render
+make k8s-production-local-check
+make k8s-production-server-dry-run
 kubectl apply -k deployments/k8s-overlays/production
 kubectl -n llm-access-gateway rollout status deployment/llm-access-gateway --timeout=180s
 ```
+
+`make k8s-production-server-dry-run` requires a reachable target cluster. Run it
+before real apply so API compatibility, HPA metrics support, and server-side
+schema validation fail before rollout time.
 
 ### Post-rollout checks
 

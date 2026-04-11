@@ -138,6 +138,8 @@ Delivery assets are split by runtime target:
   `deployments/k8s-overlays/production-hpa/*`
 - structural validation:
   `scripts/validate-deployments.rb`
+- cluster preflight:
+  `scripts/k8s-production-cluster-check.sh`
 
 The Stage 7 static contract validates that these assets remain parseable and
 structurally aligned. The production overlay is also rendered when `kubectl` is
@@ -153,6 +155,9 @@ failure instead of silently downgrading to source-file validation.
 
 The local production overlay evidence is recorded in
 [`k8s-production-overlay.md`](k8s-production-overlay.md).
+
+The target-cluster preflight checklist is recorded in
+[`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md).
 
 ## Benchmark Contract
 

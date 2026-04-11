@@ -535,6 +535,8 @@ Stage 7 is complete for the v1 repository contract:
   annotations
 - `deployments/k8s-overlays/production-hpa/` provides an optional renderable HPA
   overlay for clusters with metrics support
+- `scripts/k8s-production-cluster-check.sh` standardizes local render checks and
+  target-cluster server-side dry runs before real Kubernetes apply
 - `cmd/devinit` is the repeatable schema and seed-data bootstrap command
 - `cmd/loadtest` is the canonical load tool for both stream and non-stream paths
 - failure drills are documented and mapped to scripts or nightly checks
