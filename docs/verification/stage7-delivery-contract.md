@@ -104,6 +104,20 @@ Automation support:
 - `cmd/nightlyreport`
 - `.github/workflows/nightly-verification.yml`
 
+## Workflow Contract
+
+Stage 7 CI must preserve the primary failing signal instead of obscuring it with
+secondary workflow noise.
+
+That means:
+
+- official GitHub Actions are pinned to Node 24-ready major versions
+- the nightly `report` job only downloads artifacts from prerequisite jobs that
+  actually succeeded
+- when a prerequisite job fails or is skipped, the nightly summary degrades into
+  a readable markdown report instead of introducing a second failure caused only
+  by missing artifacts
+
 ## Deployment Contract
 
 Delivery assets are split by runtime target:
@@ -148,3 +162,4 @@ Stage 7 is complete when all of the following are true:
 - failure drills are documented and mapped to automation
 - CI and nightly verification use the same contract instead of drifting into
   separate definitions
+- nightly reporting preserves root-cause visibility when prerequisite jobs fail
