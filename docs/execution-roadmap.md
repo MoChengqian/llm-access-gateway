@@ -530,8 +530,11 @@ Stage 7 is complete for the v1 repository contract:
 - Docker Compose remains the canonical local stack
 - Kubernetes manifests remain the baseline delivery assets
 - `deployments/k8s-overlays/production/` provides a renderable production
-  Kustomize overlay for ingress, secret/config patches, two replicas, rollout
-  safety, pod security defaults, and Prometheus scrape annotations
+  Kustomize overlay for ingress, NetworkPolicy, secret/config patches, two
+  replicas, rollout safety, pod security defaults, PDB, and Prometheus scrape
+  annotations
+- `deployments/k8s-overlays/production-hpa/` provides an optional renderable HPA
+  overlay for clusters with metrics support
 - `cmd/devinit` is the repeatable schema and seed-data bootstrap command
 - `cmd/loadtest` is the canonical load tool for both stream and non-stream paths
 - failure drills are documented and mapped to scripts or nightly checks

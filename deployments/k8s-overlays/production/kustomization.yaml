@@ -4,6 +4,7 @@ namespace: llm-access-gateway
 resources:
   - ../../k8s
   - ingress.yaml
+  - networkpolicy.yaml
   - poddisruptionbudget.yaml
 patches:
   - path: configmap.patch.yaml

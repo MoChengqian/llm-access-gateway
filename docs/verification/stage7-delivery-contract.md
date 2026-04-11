@@ -134,15 +134,19 @@ Delivery assets are split by runtime target:
   `deployments/k8s/*`
 - Kubernetes production overlay:
   `deployments/k8s-overlays/production/*`
+- Kubernetes optional HPA overlay:
+  `deployments/k8s-overlays/production-hpa/*`
 - structural validation:
   `scripts/validate-deployments.rb`
 
 The Stage 7 static contract validates that these assets remain parseable and
 structurally aligned. The production overlay is also rendered when `kubectl` is
-available, so ingress, PDB, pod security, provider config, Secret patches, and
-image overrides are checked as one delivery bundle. Cluster-specific MySQL,
-Redis, image registry credentials, TLS issuance, and collector deployment remain
-environment-owned.
+available, so ingress, NetworkPolicy, PDB, pod security, provider config, Secret
+patches, and image overrides are checked as one delivery bundle. The optional
+HPA overlay is rendered and validated as a separate bundle so clusters without
+metrics support are not forced to apply it. Cluster-specific MySQL, Redis, image
+registry credentials, TLS issuance, provider egress policy, and collector
+deployment remain environment-owned.
 
 In CI, `REQUIRE_K8S_PRODUCTION_RENDER=true` makes missing `kubectl` a hard
 failure instead of silently downgrading to source-file validation.

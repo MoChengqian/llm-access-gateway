@@ -11,6 +11,7 @@ covered by the Stage 7 static delivery contract.
 
 ```bash
 make k8s-production-render
+make k8s-production-hpa-render
 ./scripts/validate-deployments.rb
 REQUIRE_K8S_PRODUCTION_RENDER=true ./scripts/validate-deployments.rb
 GOCACHE=/tmp/lag-project-gocache GOMODCACHE=/tmp/lag-project-gomodcache ./scripts/stage7-verify.sh static
@@ -27,7 +28,12 @@ GOCACHE=/tmp/lag-project-gocache GOMODCACHE=/tmp/lag-project-gomodcache ./script
 - `Deployment/llm-access-gateway`
 - `Job/llm-access-gateway-devinit`
 - `Ingress/llm-access-gateway`
+- `NetworkPolicy/llm-access-gateway-boundary`
 - `PodDisruptionBudget/llm-access-gateway`
+
+`make k8s-production-hpa-render` renders the same production bundle plus:
+
+- `HorizontalPodAutoscaler/llm-access-gateway`
 
 `scripts/validate-deployments.rb` validates the base manifests plus the
 production overlay source files. When `kubectl` is available, it also renders
@@ -43,11 +49,14 @@ the overlay and checks the final object contract:
 - pod and container security defaults
 - bootstrap Job TTL and resources
 - nginx Ingress host/TLS/backend wiring
+- `NetworkPolicy` namespace and egress-port wiring
 - `PodDisruptionBudget` with `minAvailable: 1`
+- optional `HorizontalPodAutoscaler` with 2-6 replicas and 70% CPU target
 
 CI sets `REQUIRE_K8S_PRODUCTION_RENDER=true` and runs
-`make k8s-production-render` before `./scripts/stage7-verify.sh static`. This
-prevents a runner without `kubectl` from silently skipping the render check.
+`make k8s-production-render` plus `make k8s-production-hpa-render` before
+`./scripts/stage7-verify.sh static`. This prevents a runner without `kubectl`
+from silently skipping the render check.
 
 ## Result
 
