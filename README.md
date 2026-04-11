@@ -271,6 +271,8 @@ Expected results:
 - optional OTLP/HTTP trace export is available through `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
 - OTLP export can be smoke-checked locally with `./scripts/otlp-export-check.sh`
 - the Grafana dashboard asset lives at `deployments/grafana/dashboards/llm-access-gateway.json`
+- a repo-owned observability demo stack can boot OpenTelemetry Collector,
+  Prometheus, and Grafana with `make observability-demo-up`
 
 ## Local Development Entry
 
@@ -284,6 +286,8 @@ make fmt
 make loadtest
 make verify
 make otlp-check
+make observability-demo-up
+make observability-demo-check
 ```
 
 Environment variables currently used by the code:
@@ -321,6 +325,23 @@ export APP_PROVIDER_SECONDARY_TIMEOUT_SECONDS='15'
 export APP_PROVIDER_SECONDARY_MAX_RETRIES='1'
 export APP_PROVIDER_SECONDARY_RETRY_BACKOFF_MILLISECONDS='200'
 ```
+
+To run the full local observability demo stack, start the gateway with OTLP
+export pointed at the local collector and then run:
+
+```bash
+export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
+export APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS='1'
+go run ./cmd/gateway
+make observability-demo-up
+make observability-demo-check
+```
+
+That flow proves all three pieces together:
+
+- the gateway exposes `/metrics`
+- the collector accepts OTLP/HTTP spans from the gateway
+- Grafana boots with the provisioned Prometheus datasource and dashboard
 
 Server hardening defaults:
 

@@ -110,10 +110,14 @@ run:
 ```bash
 ./scripts/otlp-export-check.sh
 make otlp-check
+make observability-demo-up
+make observability-demo-check
 ```
 
-That flow uses `cmd/otlpstub` to verify the gateway emitted a real OTLP/HTTP
-request.
+`cmd/otlpstub` verifies the gateway emitted a real OTLP/HTTP request. The
+observability demo stack under `deployments/observability/` goes one step
+further by booting a local collector, Prometheus, and Grafana with repository-owned
+provisioning and smoke checks.
 
 The gateway continues to emit structured span logs even when OTLP export is
 disabled.

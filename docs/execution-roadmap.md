@@ -462,6 +462,10 @@ Stage 6 is complete for the v1 repository contract:
   `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
 - OTLP export can be verified locally through `cmd/otlpstub` and
   `scripts/otlp-export-check.sh`
+- a repository-owned local demo stack now boots OpenTelemetry Collector,
+  Prometheus, and Grafana from `deployments/observability/`, with
+  `scripts/observability-demo-check.sh` asserting metrics scrape, accepted spans,
+  and dashboard provisioning
 - the Grafana dashboard asset is committed at
   `deployments/grafana/dashboards/llm-access-gateway.json`
 
@@ -470,6 +474,7 @@ Remaining future hardening is intentionally outside Stage 6:
 - push-based metrics export
 - histogram buckets for percentile latency panels
 - production Grafana/Prometheus/Tempo provisioning owned by an environment repo
+- persisted trace storage and long-term metrics retention
 
 ## Stage 7: Delivery, Load Testing, And Failure Drills
 
