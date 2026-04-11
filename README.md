@@ -160,6 +160,7 @@ Expected result:
 The repo now includes baseline Kubernetes manifests in [deployments/k8s](deployments/k8s):
 
 - `namespace.yaml`
+- `kustomization.yaml`
 - `configmap.yaml`
 - `secret.example.yaml`
 - `job.yaml`
@@ -185,6 +186,18 @@ The deployment uses:
 - `/readyz` as readiness probe
 - `APP_*` environment variables from ConfigMap and Secret
 - port `8080` for both API and `/metrics`
+
+For a production-oriented render, use the Kustomize overlay in
+[deployments/k8s-overlays/production](deployments/k8s-overlays/production):
+
+```bash
+make k8s-production-render
+kubectl apply -k deployments/k8s-overlays/production
+```
+
+Replace the overlay image tag, ingress host/TLS secret, MySQL DSN, Redis
+address, provider keys, and OTLP collector URL before applying it to a real
+cluster.
 
 ## Auth
 
@@ -464,9 +477,10 @@ make stage7-verify
 
 `make verify` and `make stage7-runtime` run the same smoke/load flow with
 assertions enabled and exit non-zero if any core runtime contract check fails.
-`make stage7-static` validates tests, vet, deployment manifests, dashboard JSON,
-and required delivery assets without requiring a running gateway. `make
-stage7-verify` combines both paths when a local gateway is already running.
+`make stage7-static` validates tests, vet, deployment manifests, the production
+Kubernetes overlay, dashboard JSON, and required delivery assets without
+requiring a running gateway. `make stage7-verify` combines both paths when a
+local gateway is already running.
 
 The built-in load test also supports machine-readable and threshold-driven runs:
 

@@ -128,7 +128,7 @@ That means a production debugging loop can be:
 
 ## Resource and Scaling Notes
 
-The sample Kubernetes deployment requests and limits:
+The baseline Kubernetes deployment requests and limits:
 
 - request: `100m` CPU / `128Mi` memory
 - limit: `500m` CPU / `256Mi` memory
@@ -142,6 +142,13 @@ Those values are baseline examples, not capacity guarantees. Before scaling traf
 
 Because health state is kept in-process today, multiple replicas will not share cooldown counters or probe state. That is acceptable for a baseline deployment, but it is an important architectural limit to remember.
 
+The production overlay in
+`deployments/k8s-overlays/production/` raises the gateway Deployment to two
+replicas, adds a `PodDisruptionBudget`, applies stricter pod/container security
+defaults, sets `imagePullPolicy: Always`, and annotates pods for Prometheus
+scraping. Treat those settings as a stronger starting point, not a substitute
+for environment-specific capacity tests.
+
 ## Verification Before and After Rollout
 
 ### Pre-rollout checks
@@ -152,6 +159,14 @@ make stage7-static
 ```
 
 If you have cluster access, also verify the Kubernetes apply flow in your target environment before the first rollout.
+
+For the production overlay:
+
+```bash
+make k8s-production-render
+kubectl apply -k deployments/k8s-overlays/production
+kubectl -n llm-access-gateway rollout status deployment/llm-access-gateway --timeout=180s
+```
 
 ### Post-rollout checks
 
@@ -183,9 +198,9 @@ For resilience drills:
 
 ## Current Limitations
 
-- No production-grade distributed tracing backend is configured.
+- No production-grade distributed tracing backend is provisioned by the gateway manifests.
 - Health and cooldown state is process-local and resets on restart.
-- The Kubernetes manifests do not include ingress, autoscaling, or persistent Redis/MySQL resources.
+- The production overlay includes ingress and PDB wiring, but autoscaling, persistent Redis/MySQL resources, TLS issuance, registry credentials, and collector deployment remain environment-owned.
 - Provider routing is ordered failover, not weighted balancing.
 
 ## Related Documentation

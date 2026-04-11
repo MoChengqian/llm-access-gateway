@@ -2,11 +2,12 @@
 
 ## Overview
 
-The repository ships a baseline Kubernetes deployment in [`deployments/k8s/`](../../deployments/k8s). The manifests are intentionally small and focus on running the current gateway with environment variables, health probes, and a bootstrap job for schema and seed data.
+The repository ships a baseline Kubernetes deployment in [`deployments/k8s/`](../../deployments/k8s) and a production-oriented Kustomize overlay in [`deployments/k8s-overlays/production/`](../../deployments/k8s-overlays/production). The baseline manifests are intentionally small and focus on running the current gateway with environment variables, health probes, and a bootstrap job for schema and seed data. The production overlay adds ingress, secret/config patches, two replicas, rollout safety, pod security defaults, and Prometheus scrape annotations.
 
 The directory contains:
 
 - `namespace.yaml`
+- `kustomization.yaml`
 - `configmap.yaml`
 - `secret.example.yaml`
 - `job.yaml`
@@ -14,6 +15,16 @@ The directory contains:
 - `service.yaml`
 
 These manifests are enough to explain the deployment model, but they assume you already have external MySQL and Redis services available to the cluster.
+
+The production overlay contains:
+
+- `kustomization.yaml`
+- `configmap.patch.yaml`
+- `secret.patch.yaml`
+- `deployment.patch.yaml`
+- `job.patch.yaml`
+- `ingress.yaml`
+- `poddisruptionbudget.yaml`
 
 ## Resource Layout
 
@@ -102,6 +113,37 @@ The order matters because:
 2. the ConfigMap and Secret must exist before pods can mount env vars from them
 3. `devinit` should complete before the Deployment starts taking traffic
 
+## Production Overlay
+
+Use the production overlay when you want a single renderable bundle with the
+baseline resources plus production-facing defaults:
+
+```bash
+kubectl kustomize deployments/k8s-overlays/production
+make k8s-production-render
+```
+
+Before applying it, replace the environment-owned placeholders:
+
+- image registry and tag in `deployments/k8s-overlays/production/kustomization.yaml`
+- ingress host and TLS secret in `deployments/k8s-overlays/production/ingress.yaml`
+- MySQL DSN and provider keys in `deployments/k8s-overlays/production/secret.patch.yaml`
+- Redis and OTLP collector service addresses in `deployments/k8s-overlays/production/configmap.patch.yaml`
+
+Then apply:
+
+```bash
+kubectl apply -k deployments/k8s-overlays/production
+kubectl -n llm-access-gateway wait --for=condition=complete job/llm-access-gateway-devinit --timeout=120s
+kubectl -n llm-access-gateway rollout status deployment/llm-access-gateway --timeout=180s
+kubectl -n llm-access-gateway get deploy,svc,ingress,pdb
+```
+
+The overlay intentionally does not create MySQL, Redis, ingress-controller, TLS
+issuer, image registry credentials, or an OpenTelemetry collector. Those remain
+owned by the target environment so the gateway manifests do not pretend to own
+cluster infrastructure they cannot safely provision generically.
+
 ## Probe Semantics
 
 The deployment uses two different probes:
@@ -148,6 +190,8 @@ To structurally inspect the manifests without applying them, you can always pars
 - `Job`
 - `Deployment`
 - `Service`
+- `Ingress` in the production overlay
+- `PodDisruptionBudget` in the production overlay
 
 Client-side `kubectl apply --dry-run=client` still depends on the current kube-context in this environment, so full API recognition requires a Kubernetes client that can reach your cluster control plane.
 
@@ -161,8 +205,9 @@ For repository-level structural checks that do not depend on cluster access, use
 The Stage 7 static contract wraps that validator and also checks Go tests, vet,
 dashboard JSON syntax, and required delivery/drill/nightly assets. The
 deployment validator itself confirms the manifest kinds, namespace wiring,
-Deployment probes, Service port, bootstrap Job command, and the Compose expansion
-model used in local delivery.
+Deployment probes, Service port, bootstrap Job command, production overlay
+renderability, production ingress/PDB wiring, pod security defaults, and the
+Compose expansion model used in local delivery.
 
 ## Operational Checks After Apply
 

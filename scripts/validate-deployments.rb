@@ -7,6 +7,7 @@ REPO_ROOT = File.expand_path("..", __dir__)
 COMPOSE_FILE = File.join(REPO_ROOT, "deployments", "docker", "docker-compose.yml")
 OBSERVABILITY_COMPOSE_FILE = File.join(REPO_ROOT, "deployments", "observability", "docker-compose.yml")
 K8S_DIR = File.join(REPO_ROOT, "deployments", "k8s")
+K8S_PRODUCTION_OVERLAY_DIR = File.join(REPO_ROOT, "deployments", "k8s-overlays", "production")
 OBSERVABILITY_DIR = File.join(REPO_ROOT, "deployments", "observability")
 EXPECTED_NAMESPACE = "llm-access-gateway"
 
@@ -14,6 +15,7 @@ def main
   validate_compose(load_compose_config(COMPOSE_FILE))
   validate_observability_stack(load_compose_config(OBSERVABILITY_COMPOSE_FILE))
   validate_kubernetes_manifests
+  validate_kubernetes_production_overlay
   puts "deployment validation passed"
 end
 
@@ -107,6 +109,7 @@ def validate_healthcheck_contains(service, expected_fragment)
 end
 
 def validate_kubernetes_manifests
+  validate_kustomization(load_manifest("kustomization.yaml"))
   validate_namespace(load_manifest("namespace.yaml"))
   validate_configmap(load_manifest("configmap.yaml"))
   validate_secret(load_manifest("secret.example.yaml"))
@@ -115,11 +118,45 @@ def validate_kubernetes_manifests
   validate_service(load_manifest("service.yaml"))
 end
 
+def validate_kubernetes_production_overlay
+  validate_production_kustomization(load_overlay_manifest("kustomization.yaml"))
+  validate_production_configmap(load_overlay_manifest("configmap.patch.yaml"))
+  validate_production_secret(load_overlay_manifest("secret.patch.yaml"))
+  validate_production_deployment(load_overlay_manifest("deployment.patch.yaml"), patch: true)
+  validate_production_job(load_overlay_manifest("job.patch.yaml"), patch: true)
+  validate_production_ingress(load_overlay_manifest("ingress.yaml"))
+  validate_production_poddisruptionbudget(load_overlay_manifest("poddisruptionbudget.yaml"))
+
+  validate_production_render if command_available?("kubectl")
+end
+
 def load_manifest(name)
   path = File.join(K8S_DIR, name)
   doc = Psych.safe_load(File.read(path), permitted_classes: [], aliases: false, filename: path)
   abort("manifest #{name} did not parse to a mapping") unless doc.is_a?(Hash)
   doc
+end
+
+def load_overlay_manifest(name)
+  path = File.join(K8S_PRODUCTION_OVERLAY_DIR, name)
+  doc = Psych.safe_load(File.read(path), permitted_classes: [], aliases: false, filename: path)
+  abort("production overlay manifest #{name} did not parse to a mapping") unless doc.is_a?(Hash)
+  doc
+end
+
+def validate_kustomization(doc)
+  validate_kind(doc, "Kustomization")
+  resources = Array(doc["resources"])
+  %w[
+    namespace.yaml
+    configmap.yaml
+    secret.example.yaml
+    job.yaml
+    deployment.yaml
+    service.yaml
+  ].each do |resource|
+    abort("base kustomization missing #{resource}") unless resources.include?(resource)
+  end
 end
 
 def validate_namespace(doc)
@@ -196,6 +233,158 @@ def validate_service(doc)
   abort("Service selector missing app label") unless selector["app"] == "llm-access-gateway"
   ports = Array(spec["ports"])
   abort("Service missing port 8080") unless ports.any? { |entry| entry.is_a?(Hash) && entry["port"].to_i == 8080 }
+end
+
+def validate_production_kustomization(doc)
+  validate_kind(doc, "Kustomization")
+  resources = Array(doc["resources"])
+  %w[../../k8s ingress.yaml poddisruptionbudget.yaml].each do |resource|
+    abort("production kustomization missing resource #{resource}") unless resources.include?(resource)
+  end
+
+  patches = Array(doc["patches"]).map { |entry| entry.is_a?(Hash) ? entry["path"] : entry }
+  %w[configmap.patch.yaml secret.patch.yaml deployment.patch.yaml job.patch.yaml].each do |patch|
+    abort("production kustomization missing patch #{patch}") unless patches.include?(patch)
+  end
+
+  image = Array(doc["images"]).find { |entry| entry.is_a?(Hash) && entry["name"] == "llm-access-gateway" }
+  abort("production kustomization missing llm-access-gateway image override") unless image
+  abort("production image registry mismatch") unless image["newName"].to_s.start_with?("ghcr.io/")
+  abort("production image tag must not be latest") if image["newTag"].to_s.empty? || image["newTag"] == "latest"
+end
+
+def validate_production_configmap(doc)
+  validate_kind(doc, "ConfigMap")
+  validate_metadata_name(doc, "llm-access-gateway-config")
+  validate_metadata_namespace(doc)
+  data = fetch_hash!(doc, "data", "production ConfigMap")
+
+  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT", "otel-collector")
+  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT", ".svc.cluster.local")
+  require_data_value(data, "APP_OBSERVABILITY_OTLP_TRACES_INSECURE", "true")
+  require_data_value(data, "APP_REDIS_ADDRESS", "redis.production.svc.cluster.local")
+  require_data_value(data, "APP_PROVIDER_PRIMARY_TYPE", "openai")
+  require_data_value(data, "APP_PROVIDER_SECONDARY_TYPE", "anthropic")
+  require_data_value(data, "APP_PROVIDER_PRIMARY_BASE_URL", "https://api.openai.com/v1")
+  require_data_value(data, "APP_PROVIDER_SECONDARY_BASE_URL", "https://api.anthropic.com/v1")
+end
+
+def validate_production_secret(doc)
+  validate_kind(doc, "Secret")
+  validate_metadata_name(doc, "llm-access-gateway-secrets")
+  validate_metadata_namespace(doc)
+  string_data = fetch_hash!(doc, "stringData", "production Secret")
+  %w[
+    APP_MYSQL_DSN
+    APP_REDIS_PASSWORD
+    APP_PROVIDER_PRIMARY_API_KEY
+    APP_PROVIDER_SECONDARY_API_KEY
+  ].each do |key|
+    abort("production Secret missing #{key}") unless string_data.key?(key)
+  end
+  require_data_value(string_data, "APP_MYSQL_DSN", "mysql.production.svc.cluster.local")
+  require_data_value(string_data, "APP_PROVIDER_PRIMARY_API_KEY", "REPLACE_WITH_OPENAI_API_KEY")
+  require_data_value(string_data, "APP_PROVIDER_SECONDARY_API_KEY", "REPLACE_WITH_ANTHROPIC_API_KEY")
+end
+
+def validate_production_deployment(doc, patch: false)
+  validate_kind(doc, "Deployment")
+  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_namespace(doc)
+
+  spec = fetch_hash!(doc, "spec", "production Deployment")
+  abort("production Deployment replicas must be 2") unless spec["replicas"].to_i == 2
+  strategy = fetch_hash!(spec, "strategy", "production Deployment")
+  abort("production Deployment strategy must be RollingUpdate") unless strategy["type"] == "RollingUpdate"
+  rolling = fetch_hash!(strategy, "rollingUpdate", "production Deployment strategy")
+  abort("production Deployment maxUnavailable must be 0") unless rolling["maxUnavailable"].to_i == 0
+
+  template = fetch_hash!(spec, "template", "production Deployment")
+  metadata = fetch_hash!(template, "metadata", "production Deployment template")
+  annotations = fetch_hash!(metadata, "annotations", "production Deployment template")
+  require_data_value(annotations, "prometheus.io/scrape", "true")
+  require_data_value(annotations, "prometheus.io/path", "/metrics")
+  require_data_value(annotations, "prometheus.io/port", "8080")
+
+  template_spec = fetch_hash!(template, "spec", "production Deployment template")
+  validate_pod_security_context(fetch_hash!(template_spec, "securityContext", "production Deployment pod"))
+  container = first_container(template_spec, "production Deployment")
+  abort("production Deployment imagePullPolicy must be Always") unless container["imagePullPolicy"] == "Always"
+  validate_container_security_context(fetch_hash!(container, "securityContext", "production Deployment container"))
+  validate_resource_contract(fetch_hash!(container, "resources", "production Deployment container"))
+
+  return if patch
+
+  abort("production Deployment image mismatch") unless container["image"] == "ghcr.io/example/llm-access-gateway:v1.0.0"
+  validate_container_port(container, 8080)
+  validate_probe_path(container, "readinessProbe", "/readyz")
+  validate_probe_path(container, "livenessProbe", "/healthz")
+  validate_env_from_refs(container)
+end
+
+def validate_production_job(doc, patch: false)
+  validate_kind(doc, "Job")
+  validate_metadata_name(doc, "llm-access-gateway-devinit")
+  validate_metadata_namespace(doc)
+  spec = fetch_hash!(doc, "spec", "production Job")
+  abort("production Job ttlSecondsAfterFinished must be 3600") unless spec["ttlSecondsAfterFinished"].to_i == 3600
+  template_spec = fetch_hash!(fetch_hash!(spec, "template", "production Job"), "spec", "production Job template")
+  validate_pod_security_context(fetch_hash!(template_spec, "securityContext", "production Job pod"))
+  container = first_container(template_spec, "production Job")
+  abort("production Job imagePullPolicy must be Always") unless container["imagePullPolicy"] == "Always"
+  validate_container_security_context(fetch_hash!(container, "securityContext", "production Job container"))
+  validate_resource_contract(fetch_hash!(container, "resources", "production Job container"))
+
+  return if patch
+
+  abort("production Job restartPolicy must be OnFailure") unless template_spec["restartPolicy"] == "OnFailure"
+  abort("production Job image mismatch") unless container["image"] == "ghcr.io/example/llm-access-gateway:v1.0.0"
+  abort("production Job container command missing /app/devinit") unless Array(container["command"]).include?("/app/devinit")
+  validate_env_from_refs(container)
+end
+
+def validate_production_ingress(doc)
+  validate_kind(doc, "Ingress")
+  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_namespace(doc)
+  spec = fetch_hash!(doc, "spec", "production Ingress")
+  abort("production Ingress class must be nginx") unless spec["ingressClassName"] == "nginx"
+  tls = Array(spec["tls"]).first
+  abort("production Ingress missing TLS") unless tls.is_a?(Hash)
+  abort("production Ingress TLS secret mismatch") unless tls["secretName"] == "llm-access-gateway-tls"
+  abort("production Ingress TLS host mismatch") unless Array(tls["hosts"]).include?("gateway.example.com")
+  rule = Array(spec["rules"]).find { |entry| entry.is_a?(Hash) && entry["host"] == "gateway.example.com" }
+  abort("production Ingress missing gateway.example.com rule") unless rule
+  paths = Array(rule.dig("http", "paths"))
+  backend = paths.first&.dig("backend", "service")
+  abort("production Ingress backend service mismatch") unless backend&.dig("name") == "llm-access-gateway"
+  abort("production Ingress backend port mismatch") unless backend&.dig("port", "number").to_i == 8080
+end
+
+def validate_production_poddisruptionbudget(doc)
+  validate_kind(doc, "PodDisruptionBudget")
+  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_namespace(doc)
+  spec = fetch_hash!(doc, "spec", "production PodDisruptionBudget")
+  abort("production PodDisruptionBudget minAvailable must be 1") unless spec["minAvailable"].to_i == 1
+  selector = fetch_hash!(fetch_hash!(spec, "selector", "production PodDisruptionBudget"), "matchLabels", "production PodDisruptionBudget")
+  abort("production PodDisruptionBudget selector mismatch") unless selector["app"] == "llm-access-gateway"
+end
+
+def validate_production_render
+  stdout, stderr, status = Open3.capture3("kubectl", "kustomize", K8S_PRODUCTION_OVERLAY_DIR)
+  abort("kubectl kustomize production overlay failed: #{stderr.strip}") unless status.success?
+
+  docs = safe_load_stream(stdout, "production overlay render").compact
+  validate_namespace(find_doc!(docs, "Namespace", EXPECTED_NAMESPACE))
+  validate_configmap(find_doc!(docs, "ConfigMap", "llm-access-gateway-config"))
+  validate_production_configmap(find_doc!(docs, "ConfigMap", "llm-access-gateway-config"))
+  validate_production_secret(find_doc!(docs, "Secret", "llm-access-gateway-secrets"))
+  validate_service(find_doc!(docs, "Service", "llm-access-gateway"))
+  validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
+  validate_production_job(find_doc!(docs, "Job", "llm-access-gateway-devinit"))
+  validate_production_ingress(find_doc!(docs, "Ingress", "llm-access-gateway"))
+  validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
 end
 
 def validate_observability_configs
@@ -330,6 +519,57 @@ def validate_env_from_refs(container)
   secret_ok = refs.any? { |entry| entry.is_a?(Hash) && entry.dig("secretRef", "name") == "llm-access-gateway-secrets" }
   abort("container envFrom missing llm-access-gateway-config") unless configmap_ok
   abort("container envFrom missing llm-access-gateway-secrets") unless secret_ok
+end
+
+def validate_pod_security_context(security_context)
+  abort("pod securityContext runAsNonRoot must be true") unless security_context["runAsNonRoot"] == true
+  abort("pod securityContext runAsUser must be 65532") unless security_context["runAsUser"].to_i == 65532
+  abort("pod securityContext seccompProfile must be RuntimeDefault") unless security_context.dig("seccompProfile", "type") == "RuntimeDefault"
+end
+
+def validate_container_security_context(security_context)
+  abort("container securityContext allowPrivilegeEscalation must be false") unless security_context["allowPrivilegeEscalation"] == false
+  abort("container securityContext readOnlyRootFilesystem must be true") unless security_context["readOnlyRootFilesystem"] == true
+  abort("container securityContext must drop all capabilities") unless Array(security_context.dig("capabilities", "drop")).include?("ALL")
+end
+
+def validate_resource_contract(resources)
+  requests = fetch_hash!(resources, "requests", "resources")
+  limits = fetch_hash!(resources, "limits", "resources")
+  abort("resources missing cpu request") if requests["cpu"].to_s.empty?
+  abort("resources missing memory request") if requests["memory"].to_s.empty?
+  abort("resources missing cpu limit") if limits["cpu"].to_s.empty?
+  abort("resources missing memory limit") if limits["memory"].to_s.empty?
+end
+
+def require_data_value(data, key, expected)
+  actual = data[key]
+  abort("missing #{key}") if actual.nil?
+  return if actual.to_s.include?(expected)
+
+  abort("#{key} value #{actual.inspect} does not include #{expected.inspect}")
+end
+
+def find_doc!(docs, kind, name)
+  doc = docs.find do |entry|
+    entry.is_a?(Hash) && entry["kind"] == kind && entry.dig("metadata", "name") == name
+  end
+  abort("rendered production overlay missing #{kind}/#{name}") unless doc
+  doc
+end
+
+def safe_load_stream(yaml, label)
+  if Psych.respond_to?(:safe_load_stream)
+    Psych.safe_load_stream(yaml, permitted_classes: [], aliases: false, filename: label)
+  else
+    Psych.load_stream(yaml)
+  end
+end
+
+def command_available?(command)
+  ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? do |path|
+    File.executable?(File.join(path, command))
+  end
 end
 
 def first_container(template_spec, label)
