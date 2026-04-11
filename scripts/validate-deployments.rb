@@ -127,7 +127,11 @@ def validate_kubernetes_production_overlay
   validate_production_ingress(load_overlay_manifest("ingress.yaml"))
   validate_production_poddisruptionbudget(load_overlay_manifest("poddisruptionbudget.yaml"))
 
-  validate_production_render if command_available?("kubectl")
+  if command_available?("kubectl")
+    validate_production_render
+  elsif require_kubernetes_production_render?
+    abort("kubectl is required because REQUIRE_K8S_PRODUCTION_RENDER is enabled")
+  end
 end
 
 def load_manifest(name)
@@ -570,6 +574,10 @@ def command_available?(command)
   ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? do |path|
     File.executable?(File.join(path, command))
   end
+end
+
+def require_kubernetes_production_render?
+  %w[1 true yes].include?(ENV.fetch("REQUIRE_K8S_PRODUCTION_RENDER", "").downcase)
 end
 
 def first_container(template_spec, label)
