@@ -103,6 +103,18 @@ the exporter uses plaintext or TLS and the URL path is passed to the OTLP HTTP
 exporter. If you provide a bare `host:port`, set
 `APP_OBSERVABILITY_OTLP_TRACES_INSECURE=true` for plaintext collectors.
 
+For a repository-owned local verification path, start the gateway with
+`APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'` and
+run:
+
+```bash
+./scripts/otlp-export-check.sh
+make otlp-check
+```
+
+That flow uses `cmd/otlpstub` to verify the gateway emitted a real OTLP/HTTP
+request.
+
 The gateway continues to emit structured span logs even when OTLP export is
 disabled.
 

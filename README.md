@@ -269,6 +269,7 @@ Expected results:
 - `/metrics` also exposes governance rejection counts, stream request/chunk/TTFT counters, HTTP request latency, provider operation latency, and probe success/failure totals
 - every request returns `X-Trace-Id`, and logs now include `trace_id`, `span_id`, and provider span events for request -> handler -> provider correlation
 - optional OTLP/HTTP trace export is available through `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
+- OTLP export can be smoke-checked locally with `./scripts/otlp-export-check.sh`
 - the Grafana dashboard asset lives at `deployments/grafana/dashboards/llm-access-gateway.json`
 
 ## Local Development Entry
@@ -282,6 +283,7 @@ make test
 make fmt
 make loadtest
 make verify
+make otlp-check
 ```
 
 Environment variables currently used by the code:

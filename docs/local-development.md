@@ -487,7 +487,10 @@ collector:
 ```bash
 export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
 export APP_OBSERVABILITY_SERVICE_NAME='llm-access-gateway'
+export APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS='1'
 go run ./cmd/gateway
+./scripts/otlp-export-check.sh
+make otlp-check
 ```
 
 When enabled, the gateway still emits the same span logs, and also exports

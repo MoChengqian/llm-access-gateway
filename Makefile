@@ -1,4 +1,4 @@
-.PHONY: run test vet fmt docker-build compose-up compose-down loadtest smoke verify stage7-static stage7-runtime stage7-verify
+.PHONY: run test vet fmt docker-build compose-up compose-down loadtest smoke verify stage7-static stage7-runtime stage7-verify otlp-check
 
 run:
 	go run ./cmd/gateway
@@ -38,3 +38,6 @@ stage7-runtime:
 
 stage7-verify:
 	./scripts/stage7-verify.sh all
+
+otlp-check:
+	./scripts/otlp-export-check.sh
