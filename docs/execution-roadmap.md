@@ -106,7 +106,7 @@ The current repository is already beyond the early scaffold stages.
 
 Rough status:
 
-- Stage 0: largely complete, but foundational contract cleanup still exists
+- Stage 0: complete for the v1 repository contract
 - Stage 1: complete
 - Stage 2: complete
 - Stage 3: complete
@@ -117,10 +117,9 @@ Rough status:
 
 Current known gaps that still matter operationally:
 
-- `docs/prd-v1.md` still describes a much earlier mock-only scope
-- `migrations/001_init.sql` does not yet reflect all runtime tables used by the current code path
 - production metrics backends, tracing storage, and Grafana provisioning remain environment-owned
 - external load tools such as `k6` remain intentionally deferred unless they add coverage beyond `cmd/loadtest`
+- long-duration soak and resource-trend evidence are still outside the committed v1 verification contract
 
 When in doubt, treat this roadmap as the target contract and the current codebase as the moving baseline.
 
@@ -171,11 +170,14 @@ Lock the repository shape, baseline docs, local startup path, and schema contrac
 
 ### Current Delta In This Repo
 
-Execution engineers should treat these as remaining Stage 0 cleanup tasks:
+Stage 0 is complete for the current repository contract:
 
-- rewrite `docs/prd-v1.md` to match the current gateway scope
-- align `migrations/001_init.sql` with all currently used tables, especially attempt-level usage tables
-- expand `.env.example` to include MySQL, Redis, and provider-facing runtime variables
+- `docs/prd-v1.md` reflects the real gateway scope rather than the early scaffold
+- `migrations/001_init.sql` includes the runtime tables used by auth, usage, attempt usage, and routing
+- `.env.example` covers the current server, persistence, observability, gateway, and provider runtime surface
+
+Execution engineers should now preserve that contract instead of reopening it
+without evidence of new drift.
 
 ## Stage 1: Minimum Access Layer Loop
 
@@ -564,15 +566,15 @@ Expanded sequence:
 
 ### Do Now
 
-- align docs with the real implementation
-- align migration SQL with runtime schema
-- complete persisted routing policy if that control plane is still intended for v1
+- keep docs, migration SQL, and runtime config aligned as new changes land
+- keep CI and nightly reporting preserving the primary failing signal
+- maintain the standardized Stage 7 verification contract
 
 ### Do Next
 
 - externalize observability where useful
-- standardize deployment and verification assets
 - keep benchmark and drill automation healthy
+- add production overlays or long-duration soak evidence only when the project needs them
 
 ### Do Not Do Now
 
