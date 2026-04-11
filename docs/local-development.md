@@ -497,6 +497,22 @@ When enabled, the gateway still emits the same span logs, and also exports
 OpenTelemetry spans with `lag.trace_id`, `lag.span_id`, and `lag.request_id`
 attributes for correlation with `X-Trace-Id`.
 
+For the full local observability demo stack, keep the gateway on `:8080` with
+that OTLP endpoint and run:
+
+```bash
+make observability-demo-up
+make observability-demo-check
+```
+
+That repository-owned stack brings up:
+
+- OpenTelemetry Collector on `127.0.0.1:4318`
+- Prometheus on `127.0.0.1:9090`
+- Grafana on `127.0.0.1:3000` with the bundled dashboard and datasource already provisioned
+
+Use `make observability-demo-down` to stop it again.
+
 You can also use the helper script:
 
 ```bash
@@ -506,6 +522,7 @@ ASSERT=true ./scripts/gateway-smoke-check.sh
 make verify
 make stage7-static
 make stage7-runtime
+make observability-demo-config
 ```
 
 The smoke script now covers:

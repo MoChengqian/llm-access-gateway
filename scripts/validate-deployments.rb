@@ -5,18 +5,20 @@ require "psych"
 
 REPO_ROOT = File.expand_path("..", __dir__)
 COMPOSE_FILE = File.join(REPO_ROOT, "deployments", "docker", "docker-compose.yml")
+OBSERVABILITY_COMPOSE_FILE = File.join(REPO_ROOT, "deployments", "observability", "docker-compose.yml")
 K8S_DIR = File.join(REPO_ROOT, "deployments", "k8s")
+OBSERVABILITY_DIR = File.join(REPO_ROOT, "deployments", "observability")
 EXPECTED_NAMESPACE = "llm-access-gateway"
 
 def main
-  compose = load_compose_config
-  validate_compose(compose)
+  validate_compose(load_compose_config(COMPOSE_FILE))
+  validate_observability_stack(load_compose_config(OBSERVABILITY_COMPOSE_FILE))
   validate_kubernetes_manifests
   puts "deployment validation passed"
 end
 
-def load_compose_config
-  stdout, stderr, status = Open3.capture3("docker", "compose", "-f", COMPOSE_FILE, "config")
+def load_compose_config(path)
+  stdout, stderr, status = Open3.capture3("docker", "compose", "-f", path, "config")
   unless status.success?
     abort("docker compose config failed: #{stderr.strip}")
   end
@@ -50,6 +52,37 @@ def validate_compose(compose)
 
   command = Array(devinit["command"])
   abort("compose devinit command missing /app/devinit") unless command.include?("/app/devinit")
+end
+
+def validate_observability_stack(compose)
+  services = fetch_hash!(compose, "services", "observability compose config")
+  expected_services = ["otel-collector", "prometheus", "grafana"]
+  expected_services.each do |service|
+    abort("observability compose config missing service #{service}") unless services.key?(service)
+  end
+
+  collector = services.fetch("otel-collector")
+  prometheus = services.fetch("prometheus")
+  grafana = services.fetch("grafana")
+
+  validate_port_mapping(collector, 4318)
+  validate_port_mapping(collector, 13133)
+  validate_port_mapping(collector, 8888)
+  abort("otel collector command missing config path") unless Array(collector["command"]).include?("--config=/etc/otelcol-contrib/config.yaml")
+
+  validate_compose_dependency(prometheus, "otel-collector", "service_started")
+  validate_port_mapping(prometheus, 9090)
+  abort("prometheus command missing config.file") unless Array(prometheus["command"]).include?("--config.file=/etc/prometheus/prometheus.yml")
+  extra_hosts = Array(prometheus["extra_hosts"])
+  abort("prometheus extra_hosts missing host.docker.internal") unless extra_hosts.any? { |entry| entry.to_s.include?("host.docker.internal") }
+
+  validate_compose_dependency(grafana, "prometheus", "service_started")
+  validate_port_mapping(grafana, 3000)
+  environment = fetch_hash!(grafana, "environment", "grafana service")
+  abort("grafana admin user mismatch") unless environment["GF_SECURITY_ADMIN_USER"] == "admin"
+  abort("grafana admin password mismatch") unless environment["GF_SECURITY_ADMIN_PASSWORD"] == "admin"
+
+  validate_observability_configs
 end
 
 def validate_compose_dependency(service, dependency, condition)
@@ -165,6 +198,84 @@ def validate_service(doc)
   abort("Service missing port 8080") unless ports.any? { |entry| entry.is_a?(Hash) && entry["port"].to_i == 8080 }
 end
 
+def validate_observability_configs
+  validate_otel_collector_config
+  validate_prometheus_config
+  validate_grafana_datasource_config
+  validate_grafana_dashboard_config
+end
+
+def validate_otel_collector_config
+  path = File.join(OBSERVABILITY_DIR, "otelcol", "config.yaml")
+  doc = load_yaml(path)
+  extensions = fetch_hash!(doc, "extensions", "otel collector config")
+  health_check = fetch_hash!(extensions, "health_check", "otel collector extensions")
+  abort("otel collector health endpoint mismatch") unless health_check["endpoint"] == "0.0.0.0:13133"
+
+  receivers = fetch_hash!(doc, "receivers", "otel collector config")
+  otlp = fetch_hash!(receivers, "otlp", "otel collector receivers")
+  protocols = fetch_hash!(otlp, "protocols", "otel collector otlp receiver")
+  http = fetch_hash!(protocols, "http", "otel collector otlp protocols")
+  abort("otel collector http receiver endpoint mismatch") unless http["endpoint"] == "0.0.0.0:4318"
+
+  exporters = fetch_hash!(doc, "exporters", "otel collector config")
+  abort("otel collector missing debug exporter") unless exporters.key?("debug")
+
+  service = fetch_hash!(doc, "service", "otel collector config")
+  telemetry = fetch_hash!(service, "telemetry", "otel collector service")
+  metrics = fetch_hash!(telemetry, "metrics", "otel collector telemetry")
+  abort("otel collector telemetry metrics endpoint mismatch") unless metrics["address"] == "0.0.0.0:8888"
+
+  pipelines = fetch_hash!(service, "pipelines", "otel collector service")
+  traces = fetch_hash!(pipelines, "traces", "otel collector pipelines")
+  abort("otel collector traces receiver mismatch") unless Array(traces["receivers"]).include?("otlp")
+  abort("otel collector traces exporter mismatch") unless Array(traces["exporters"]).include?("debug")
+end
+
+def validate_prometheus_config
+  path = File.join(OBSERVABILITY_DIR, "prometheus", "prometheus.yml")
+  doc = load_yaml(path)
+  scrape_configs = Array(doc["scrape_configs"])
+  abort("prometheus config missing scrape_configs") if scrape_configs.empty?
+
+  gateway_job = scrape_configs.find { |entry| entry.is_a?(Hash) && entry["job_name"] == "llm-access-gateway" }
+  abort("prometheus config missing llm-access-gateway job") unless gateway_job
+  abort("prometheus gateway metrics_path mismatch") unless gateway_job["metrics_path"] == "/metrics"
+  gateway_targets = Array(Array(gateway_job["static_configs"]).first&.fetch("targets", []))
+  abort("prometheus gateway target mismatch") unless gateway_targets.include?("host.docker.internal:8080")
+
+  collector_job = scrape_configs.find { |entry| entry.is_a?(Hash) && entry["job_name"] == "otel-collector" }
+  abort("prometheus config missing otel-collector job") unless collector_job
+  collector_targets = Array(Array(collector_job["static_configs"]).first&.fetch("targets", []))
+  abort("prometheus collector target mismatch") unless collector_targets.include?("otel-collector:8888")
+end
+
+def validate_grafana_datasource_config
+  path = File.join(OBSERVABILITY_DIR, "grafana", "provisioning", "datasources", "datasources.yaml")
+  doc = load_yaml(path)
+  datasources = Array(doc["datasources"])
+  abort("grafana datasources config missing datasources") if datasources.empty?
+  prometheus = datasources.find { |entry| entry.is_a?(Hash) && entry["name"] == "Prometheus" }
+  abort("grafana datasources missing Prometheus") unless prometheus
+  abort("grafana datasource type mismatch") unless prometheus["type"] == "prometheus"
+  abort("grafana datasource url mismatch") unless prometheus["url"] == "http://prometheus:9090"
+end
+
+def validate_grafana_dashboard_config
+  path = File.join(OBSERVABILITY_DIR, "grafana", "provisioning", "dashboards", "dashboards.yaml")
+  doc = load_yaml(path)
+  providers = Array(doc["providers"])
+  abort("grafana dashboards config missing providers") if providers.empty?
+  provider = providers.find { |entry| entry.is_a?(Hash) && entry["name"] == "llm-access-gateway" }
+  abort("grafana dashboards provider missing llm-access-gateway") unless provider
+  options = fetch_hash!(provider, "options", "grafana dashboard provider")
+  expected_path = "/var/lib/grafana/dashboards/llm-access-gateway"
+  abort("grafana dashboard provisioning path mismatch") unless options["path"] == expected_path
+
+  dashboard_json = File.join(REPO_ROOT, "deployments", "grafana", "dashboards", "llm-access-gateway.json")
+  abort("grafana dashboard JSON missing at #{dashboard_json}") unless File.file?(dashboard_json)
+end
+
 def validate_kind(doc, expected_kind)
   actual = doc["kind"]
   return if actual == expected_kind
@@ -223,6 +334,12 @@ def fetch_hash!(value, key, label)
   abort("#{label} missing #{key}") unless hash.is_a?(Hash)
 
   hash
+end
+
+def load_yaml(path)
+  doc = Psych.safe_load(File.read(path), permitted_classes: [], aliases: false, filename: path)
+  abort("YAML file #{path} did not parse to a mapping") unless doc.is_a?(Hash)
+  doc
 end
 
 main

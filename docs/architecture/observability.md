@@ -171,6 +171,37 @@ go run ./cmd/gateway
 That check proves the gateway exported a real `POST /v1/traces` request instead
 of only accepting configuration.
 
+### Repository-owned local demo stack
+
+The repository also includes a local observability stack under
+`deployments/observability/`:
+
+- OpenTelemetry Collector for OTLP/HTTP ingest
+- Prometheus scraping the gateway `/metrics` endpoint and collector metrics
+- Grafana with the committed datasource and dashboard provisioned at startup
+
+Typical local flow:
+
+```bash
+export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
+export APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS='1'
+go run ./cmd/gateway
+make observability-demo-up
+make observability-demo-check
+```
+
+`scripts/observability-demo-check.sh` verifies more than simple process health:
+
+- the gateway responds on `/healthz`
+- Prometheus can query `lag_http_requests_total`
+- the collector reports accepted spans
+- Grafana serves the provisioned Prometheus datasource and `llm-access-gateway`
+  dashboard
+
+This keeps the observability story locally reproducible without claiming that
+the repository now owns a production-grade trace store or long-term metrics
+retention layer.
+
 ### Span attributes
 
 The OpenTelemetry exporter preserves the gateway's existing correlation contract
