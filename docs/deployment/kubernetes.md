@@ -24,7 +24,15 @@ The production overlay contains:
 - `deployment.patch.yaml`
 - `job.patch.yaml`
 - `ingress.yaml`
+- `networkpolicy.yaml`
 - `poddisruptionbudget.yaml`
+
+The optional HPA overlay in
+[`deployments/k8s-overlays/production-hpa/`](../../deployments/k8s-overlays/production-hpa)
+contains:
+
+- `kustomization.yaml`
+- `horizontalpodautoscaler.yaml`
 
 ## Resource Layout
 
@@ -127,6 +135,7 @@ Before applying it, replace the environment-owned placeholders:
 
 - image registry and tag in `deployments/k8s-overlays/production/kustomization.yaml`
 - ingress host and TLS secret in `deployments/k8s-overlays/production/ingress.yaml`
+- ingress, monitoring, and same-namespace assumptions in `deployments/k8s-overlays/production/networkpolicy.yaml`
 - MySQL DSN and provider keys in `deployments/k8s-overlays/production/secret.patch.yaml`
 - Redis and OTLP collector service addresses in `deployments/k8s-overlays/production/configmap.patch.yaml`
 
@@ -136,13 +145,35 @@ Then apply:
 kubectl apply -k deployments/k8s-overlays/production
 kubectl -n llm-access-gateway wait --for=condition=complete job/llm-access-gateway-devinit --timeout=120s
 kubectl -n llm-access-gateway rollout status deployment/llm-access-gateway --timeout=180s
-kubectl -n llm-access-gateway get deploy,svc,ingress,pdb
+kubectl -n llm-access-gateway get deploy,svc,ingress,pdb,networkpolicy
 ```
 
 The overlay intentionally does not create MySQL, Redis, ingress-controller, TLS
 issuer, image registry credentials, or an OpenTelemetry collector. Those remain
 owned by the target environment so the gateway manifests do not pretend to own
 cluster infrastructure they cannot safely provision generically.
+
+The production `NetworkPolicy` allows gateway ingress from the `ingress-nginx`,
+`monitoring`, and `llm-access-gateway` namespaces on port `8080`. It allows
+egress for DNS, MySQL, Redis, OTLP/HTTP trace export, and HTTPS provider calls.
+If your cluster uses different namespace names or provider egress controls,
+adjust the policy before applying.
+
+## Optional HPA Overlay
+
+Use the optional HPA overlay only when the target cluster has metrics support:
+
+```bash
+kubectl kustomize deployments/k8s-overlays/production-hpa
+make k8s-production-hpa-render
+kubectl apply -k deployments/k8s-overlays/production-hpa
+kubectl -n llm-access-gateway get hpa llm-access-gateway
+```
+
+The HPA targets `Deployment/llm-access-gateway`, keeps at least two replicas,
+allows up to six replicas, and scales on CPU utilization at 70%. This is a
+starting point for production-style elasticity, not a replacement for load
+testing or provider-side rate-limit planning.
 
 ## Probe Semantics
 
@@ -191,7 +222,9 @@ To structurally inspect the manifests without applying them, you can always pars
 - `Deployment`
 - `Service`
 - `Ingress` in the production overlay
+- `NetworkPolicy` in the production overlay
 - `PodDisruptionBudget` in the production overlay
+- `HorizontalPodAutoscaler` in the optional HPA overlay
 
 Client-side `kubectl apply --dry-run=client` still depends on the current kube-context in this environment, so full API recognition requires a Kubernetes client that can reach your cluster control plane.
 
@@ -212,8 +245,9 @@ The Stage 7 static contract wraps that validator and also checks Go tests, vet,
 dashboard JSON syntax, and required delivery/drill/nightly assets. The
 deployment validator itself confirms the manifest kinds, namespace wiring,
 Deployment probes, Service port, bootstrap Job command, production overlay
-renderability, production ingress/PDB wiring, pod security defaults, and the
-Compose expansion model used in local delivery.
+renderability, production ingress/network policy/PDB wiring, optional HPA
+wiring, pod security defaults, and the Compose expansion model used in local
+delivery.
 
 ## Operational Checks After Apply
 

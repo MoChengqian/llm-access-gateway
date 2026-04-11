@@ -145,9 +145,15 @@ Because health state is kept in-process today, multiple replicas will not share 
 The production overlay in
 `deployments/k8s-overlays/production/` raises the gateway Deployment to two
 replicas, adds a `PodDisruptionBudget`, applies stricter pod/container security
-defaults, sets `imagePullPolicy: Always`, and annotates pods for Prometheus
-scraping. Treat those settings as a stronger starting point, not a substitute
-for environment-specific capacity tests.
+defaults, sets `imagePullPolicy: Always`, annotates pods for Prometheus
+scraping, and adds a `NetworkPolicy` for ingress and egress boundaries. Treat
+those settings as a stronger starting point, not a substitute for
+environment-specific capacity tests.
+
+The optional overlay in `deployments/k8s-overlays/production-hpa/` adds
+`HorizontalPodAutoscaler/llm-access-gateway` with two to six replicas and a 70%
+CPU target. Use it only when the cluster has metrics support and after checking
+provider quotas, MySQL capacity, and Redis capacity.
 
 ## Verification Before and After Rollout
 
@@ -164,6 +170,7 @@ For the production overlay:
 
 ```bash
 make k8s-production-render
+make k8s-production-hpa-render
 kubectl apply -k deployments/k8s-overlays/production
 kubectl -n llm-access-gateway rollout status deployment/llm-access-gateway --timeout=180s
 ```
@@ -200,7 +207,7 @@ For resilience drills:
 
 - No production-grade distributed tracing backend is provisioned by the gateway manifests.
 - Health and cooldown state is process-local and resets on restart.
-- The production overlay includes ingress and PDB wiring, but autoscaling, persistent Redis/MySQL resources, TLS issuance, registry credentials, and collector deployment remain environment-owned.
+- The production overlay includes ingress, NetworkPolicy, PDB, and optional HPA wiring, but persistent Redis/MySQL resources, TLS issuance, registry credentials, provider egress policy, and collector deployment remain environment-owned.
 - Provider routing is ordered failover, not weighted balancing.
 
 ## Related Documentation

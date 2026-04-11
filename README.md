@@ -199,6 +199,15 @@ Replace the overlay image tag, ingress host/TLS secret, MySQL DSN, Redis
 address, provider keys, and OTLP collector URL before applying it to a real
 cluster.
 
+The production overlay also includes a `NetworkPolicy` for gateway ingress and
+egress boundaries. If your cluster has `metrics-server` and you want resource
+based autoscaling, render or apply the optional HPA overlay:
+
+```bash
+make k8s-production-hpa-render
+kubectl apply -k deployments/k8s-overlays/production-hpa
+```
+
 ## Auth
 
 The chat completions endpoint requires:
@@ -480,8 +489,8 @@ assertions enabled and exit non-zero if any core runtime contract check fails.
 `make stage7-static` validates tests, vet, deployment manifests, the production
 Kubernetes overlay, dashboard JSON, and required delivery assets without
 requiring a running gateway. CI also forces `kubectl`-backed production overlay
-rendering before this static contract runs. `make stage7-verify` combines both
-paths when a local gateway is already running.
+and optional HPA overlay rendering before this static contract runs. `make
+stage7-verify` combines both paths when a local gateway is already running.
 
 The built-in load test also supports machine-readable and threshold-driven runs:
 

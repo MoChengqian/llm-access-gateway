@@ -8,6 +8,7 @@ COMPOSE_FILE = File.join(REPO_ROOT, "deployments", "docker", "docker-compose.yml
 OBSERVABILITY_COMPOSE_FILE = File.join(REPO_ROOT, "deployments", "observability", "docker-compose.yml")
 K8S_DIR = File.join(REPO_ROOT, "deployments", "k8s")
 K8S_PRODUCTION_OVERLAY_DIR = File.join(REPO_ROOT, "deployments", "k8s-overlays", "production")
+K8S_PRODUCTION_HPA_OVERLAY_DIR = File.join(REPO_ROOT, "deployments", "k8s-overlays", "production-hpa")
 OBSERVABILITY_DIR = File.join(REPO_ROOT, "deployments", "observability")
 EXPECTED_NAMESPACE = "llm-access-gateway"
 
@@ -16,6 +17,7 @@ def main
   validate_observability_stack(load_compose_config(OBSERVABILITY_COMPOSE_FILE))
   validate_kubernetes_manifests
   validate_kubernetes_production_overlay
+  validate_kubernetes_production_hpa_overlay
   puts "deployment validation passed"
 end
 
@@ -125,10 +127,22 @@ def validate_kubernetes_production_overlay
   validate_production_deployment(load_overlay_manifest("deployment.patch.yaml"), patch: true)
   validate_production_job(load_overlay_manifest("job.patch.yaml"), patch: true)
   validate_production_ingress(load_overlay_manifest("ingress.yaml"))
+  validate_production_networkpolicy(load_overlay_manifest("networkpolicy.yaml"))
   validate_production_poddisruptionbudget(load_overlay_manifest("poddisruptionbudget.yaml"))
 
   if command_available?("kubectl")
     validate_production_render
+  elsif require_kubernetes_production_render?
+    abort("kubectl is required because REQUIRE_K8S_PRODUCTION_RENDER is enabled")
+  end
+end
+
+def validate_kubernetes_production_hpa_overlay
+  validate_production_hpa_kustomization(load_hpa_overlay_manifest("kustomization.yaml"))
+  validate_production_hpa(load_hpa_overlay_manifest("horizontalpodautoscaler.yaml"))
+
+  if command_available?("kubectl")
+    validate_production_hpa_render
   elsif require_kubernetes_production_render?
     abort("kubectl is required because REQUIRE_K8S_PRODUCTION_RENDER is enabled")
   end
@@ -145,6 +159,13 @@ def load_overlay_manifest(name)
   path = File.join(K8S_PRODUCTION_OVERLAY_DIR, name)
   doc = Psych.safe_load(File.read(path), permitted_classes: [], aliases: false, filename: path)
   abort("production overlay manifest #{name} did not parse to a mapping") unless doc.is_a?(Hash)
+  doc
+end
+
+def load_hpa_overlay_manifest(name)
+  path = File.join(K8S_PRODUCTION_HPA_OVERLAY_DIR, name)
+  doc = Psych.safe_load(File.read(path), permitted_classes: [], aliases: false, filename: path)
+  abort("production HPA overlay manifest #{name} did not parse to a mapping") unless doc.is_a?(Hash)
   doc
 end
 
@@ -242,7 +263,7 @@ end
 def validate_production_kustomization(doc)
   validate_kind(doc, "Kustomization")
   resources = Array(doc["resources"])
-  %w[../../k8s ingress.yaml poddisruptionbudget.yaml].each do |resource|
+  %w[../../k8s ingress.yaml networkpolicy.yaml poddisruptionbudget.yaml].each do |resource|
     abort("production kustomization missing resource #{resource}") unless resources.include?(resource)
   end
 
@@ -255,6 +276,14 @@ def validate_production_kustomization(doc)
   abort("production kustomization missing llm-access-gateway image override") unless image
   abort("production image registry mismatch") unless image["newName"].to_s.start_with?("ghcr.io/")
   abort("production image tag must not be latest") if image["newTag"].to_s.empty? || image["newTag"] == "latest"
+end
+
+def validate_production_hpa_kustomization(doc)
+  validate_kind(doc, "Kustomization")
+  resources = Array(doc["resources"])
+  %w[../production horizontalpodautoscaler.yaml].each do |resource|
+    abort("production HPA kustomization missing resource #{resource}") unless resources.include?(resource)
+  end
 end
 
 def validate_production_configmap(doc)
@@ -365,6 +394,43 @@ def validate_production_ingress(doc)
   abort("production Ingress backend port mismatch") unless backend&.dig("port", "number").to_i == 8080
 end
 
+def validate_production_networkpolicy(doc)
+  validate_kind(doc, "NetworkPolicy")
+  validate_metadata_name(doc, "llm-access-gateway-boundary")
+  validate_metadata_namespace(doc)
+  spec = fetch_hash!(doc, "spec", "production NetworkPolicy")
+  selector = fetch_hash!(fetch_hash!(spec, "podSelector", "production NetworkPolicy"), "matchLabels", "production NetworkPolicy")
+  abort("production NetworkPolicy selector mismatch") unless selector["app"] == "llm-access-gateway"
+
+  policy_types = Array(spec["policyTypes"])
+  abort("production NetworkPolicy missing Ingress type") unless policy_types.include?("Ingress")
+  abort("production NetworkPolicy missing Egress type") unless policy_types.include?("Egress")
+
+  ingress = Array(spec["ingress"])
+  abort("production NetworkPolicy missing ingress rules") if ingress.empty?
+  ingress_namespaces = namespace_selector_values(ingress.flat_map { |rule| Array(rule["from"]) })
+  %w[ingress-nginx monitoring llm-access-gateway].each do |namespace|
+    abort("production NetworkPolicy ingress missing namespace #{namespace}") unless ingress_namespaces.include?(namespace)
+  end
+  ingress_ports = policy_ports(ingress)
+  abort("production NetworkPolicy ingress missing TCP/8080") unless ingress_ports.include?(["TCP", 8080])
+
+  egress = Array(spec["egress"])
+  abort("production NetworkPolicy missing egress rules") if egress.empty?
+  dns_rule = egress.find do |rule|
+    namespace_selector_values(Array(rule["to"])).include?("kube-system")
+  end
+  abort("production NetworkPolicy missing kube-system DNS egress") unless dns_rule
+  dns_ports = policy_ports([dns_rule])
+  abort("production NetworkPolicy DNS egress missing UDP/53") unless dns_ports.include?(["UDP", 53])
+  abort("production NetworkPolicy DNS egress missing TCP/53") unless dns_ports.include?(["TCP", 53])
+
+  egress_ports = policy_ports(egress)
+  [3306, 6379, 4318, 443].each do |port|
+    abort("production NetworkPolicy egress missing TCP/#{port}") unless egress_ports.include?(["TCP", port])
+  end
+end
+
 def validate_production_poddisruptionbudget(doc)
   validate_kind(doc, "PodDisruptionBudget")
   validate_metadata_name(doc, "llm-access-gateway")
@@ -373,6 +439,30 @@ def validate_production_poddisruptionbudget(doc)
   abort("production PodDisruptionBudget minAvailable must be 1") unless spec["minAvailable"].to_i == 1
   selector = fetch_hash!(fetch_hash!(spec, "selector", "production PodDisruptionBudget"), "matchLabels", "production PodDisruptionBudget")
   abort("production PodDisruptionBudget selector mismatch") unless selector["app"] == "llm-access-gateway"
+end
+
+def validate_production_hpa(doc)
+  validate_kind(doc, "HorizontalPodAutoscaler")
+  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_namespace(doc)
+  spec = fetch_hash!(doc, "spec", "production HorizontalPodAutoscaler")
+  target = fetch_hash!(spec, "scaleTargetRef", "production HorizontalPodAutoscaler")
+  abort("production HPA target kind mismatch") unless target["kind"] == "Deployment"
+  abort("production HPA target name mismatch") unless target["name"] == "llm-access-gateway"
+  abort("production HPA minReplicas must be 2") unless spec["minReplicas"].to_i == 2
+  abort("production HPA maxReplicas must be 6") unless spec["maxReplicas"].to_i == 6
+
+  metric = Array(spec["metrics"]).find do |entry|
+    entry.is_a?(Hash) && entry["type"] == "Resource" && entry.dig("resource", "name") == "cpu"
+  end
+  abort("production HPA missing CPU resource metric") unless metric
+  target_metric = fetch_hash!(fetch_hash!(metric, "resource", "production HPA metric"), "target", "production HPA metric")
+  abort("production HPA CPU target type mismatch") unless target_metric["type"] == "Utilization"
+  abort("production HPA CPU averageUtilization must be 70") unless target_metric["averageUtilization"].to_i == 70
+
+  behavior = fetch_hash!(spec, "behavior", "production HorizontalPodAutoscaler")
+  abort("production HPA missing scaleUp behavior") unless behavior.key?("scaleUp")
+  abort("production HPA missing scaleDown behavior") unless behavior.key?("scaleDown")
 end
 
 def validate_production_render
@@ -388,7 +478,20 @@ def validate_production_render
   validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
   validate_production_job(find_doc!(docs, "Job", "llm-access-gateway-devinit"))
   validate_production_ingress(find_doc!(docs, "Ingress", "llm-access-gateway"))
+  validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", "llm-access-gateway-boundary"))
   validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
+end
+
+def validate_production_hpa_render
+  stdout, stderr, status = Open3.capture3("kubectl", "kustomize", K8S_PRODUCTION_HPA_OVERLAY_DIR)
+  abort("kubectl kustomize production HPA overlay failed: #{stderr.strip}") unless status.success?
+
+  docs = safe_load_stream(stdout, "production HPA overlay render").compact
+  validate_namespace(find_doc!(docs, "Namespace", EXPECTED_NAMESPACE))
+  validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
+  validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", "llm-access-gateway-boundary"))
+  validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
+  validate_production_hpa(find_doc!(docs, "HorizontalPodAutoscaler", "llm-access-gateway"))
 end
 
 def validate_observability_configs
@@ -552,6 +655,24 @@ def require_data_value(data, key, expected)
   return if actual.to_s.include?(expected)
 
   abort("#{key} value #{actual.inspect} does not include #{expected.inspect}")
+end
+
+def namespace_selector_values(peers)
+  peers.map do |peer|
+    next unless peer.is_a?(Hash)
+
+    peer.dig("namespaceSelector", "matchLabels", "kubernetes.io/metadata.name")
+  end.compact
+end
+
+def policy_ports(rules)
+  rules.flat_map do |rule|
+    Array(rule["ports"]).map do |port|
+      next unless port.is_a?(Hash)
+
+      [port["protocol"] || "TCP", port["port"].to_i]
+    end.compact
+  end
 end
 
 def find_doc!(docs, kind, name)

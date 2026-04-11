@@ -23,6 +23,8 @@ jobs:
           kubectl version --client=true
           make k8s-production-render >/tmp/k8s-production-overlay.yaml
           test -s /tmp/k8s-production-overlay.yaml
+          make k8s-production-hpa-render >/tmp/k8s-production-hpa-overlay.yaml
+          test -s /tmp/k8s-production-hpa-overlay.yaml
 
       - name: Run Stage 7 static contract
         env:
