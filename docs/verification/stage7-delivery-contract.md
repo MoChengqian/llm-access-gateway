@@ -112,6 +112,7 @@ Automation support:
 - `scripts/anthropic-adapter-drill.sh`
 - `scripts/ci-start-background.sh`
 - `scripts/ci-stop-background.sh`
+- `scripts/sonar-quality-gate-check.rb`
 - `cmd/nightlycheck`
 - `cmd/nightlyreport`
 - `.github/workflows/nightly-verification.yml`
@@ -170,6 +171,29 @@ The target-cluster preflight checklist is recorded in
 The end-to-end readiness matrix is recorded in
 [`stage7-production-readiness.md`](stage7-production-readiness.md).
 
+## External Quality Gate Contract
+
+Stage 7 does not end at GitHub Actions green. The repository also depends on a
+separate SonarCloud project-level quality gate that is owned outside the Git
+tree.
+
+Use this command after merge and before tag or release claims:
+
+```bash
+make sonar-quality-gate-check
+```
+
+This contract is intentionally separate from `stage7-static`:
+
+- it depends on external network access to SonarCloud
+- it validates a project-admin configuration state, not repository syntax
+- it catches the ambiguous `neutral / Quality Gate not computed` case that the
+  GitHub UI can otherwise hide behind a green merge commit
+
+If the command reports `NONE`, the code may still be fine, but the repository is
+not fully release-ready until a SonarCloud admin configures New Code for
+`main` and reruns analysis.
+
 ## Benchmark Contract
 
 Benchmark methodology and result documents live under:
@@ -200,3 +224,5 @@ Stage 7 is complete when all of the following are true:
 - CI and nightly verification use the same contract instead of drifting into
   separate definitions
 - nightly reporting preserves root-cause visibility when prerequisite jobs fail
+- SonarCloud returns an explicit quality-gate result for `main` instead of
+  `NONE`

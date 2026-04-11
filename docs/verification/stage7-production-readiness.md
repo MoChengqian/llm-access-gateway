@@ -30,6 +30,7 @@ NetworkPolicy enforcement, and observability retention remain environment-owned.
 | Streaming drills | [`failure-drills/streaming-failures.md`](failure-drills/streaming-failures.md) | `./scripts/provider-fallback-drill.sh stream-fail` | Repeatable streaming evidence |
 | Anthropic adapter drills | [`failure-drills/anthropic-adapter.md`](failure-drills/anthropic-adapter.md) | `./scripts/anthropic-adapter-drill.sh` | Adapter compatibility evidence |
 | Nightly regression | [`benchmarks/methodology.md`](benchmarks/methodology.md) | `.github/workflows/nightly-verification.yml` | Scheduled regression guard |
+| SonarCloud main quality gate | [`sonar-quality-gate.md`](sonar-quality-gate.md) | `make sonar-quality-gate-check` | Post-merge release gate |
 
 ## Minimum Merge Gate
 
@@ -51,6 +52,27 @@ This gate proves:
 - Stage 7 required assets are still present
 - workflow syntax and shell snippets remain lint-clean
 - whitespace hygiene is clean
+
+## External Quality Gate
+
+Run this after merge, before tagging a release, and any time SonarCloud reports
+`neutral` instead of an explicit gate result:
+
+```bash
+make sonar-quality-gate-check
+```
+
+This check calls SonarCloud's public API and turns an ambiguous UI state into an
+explicit result:
+
+- `OK`: the assigned quality gate was computed successfully
+- `ERROR` or `WARN`: the quality gate ran and failed a condition
+- `NONE`: SonarCloud analyzed the branch but did not compute a quality gate
+
+For this repository, `NONE` on `main` is not a code regression by itself. It is
+an external project-configuration gap that must be fixed in SonarCloud by a
+project admin. The canonical remediation path is documented in
+[`sonar-quality-gate.md`](sonar-quality-gate.md).
 
 ## Local Runtime Gate
 
@@ -132,6 +154,7 @@ For the v1 repository contract, Stage 7 is complete when:
 - `make k8s-production-local-check` passes locally
 - `make k8s-production-server-dry-run` passes against the target cluster before real apply
 - nightly benchmark and failure-drill workflows remain green
+- SonarCloud computes an explicit quality-gate result for `main`
 
 If any of those fail, the project is not ready to claim production-style
 delivery for that environment.

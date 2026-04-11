@@ -1,4 +1,4 @@
-.PHONY: run test vet fmt docker-build compose-up compose-down observability-demo-up observability-demo-down observability-demo-config observability-demo-prepull observability-demo-verify k8s-production-render k8s-production-hpa-render k8s-production-local-check k8s-production-server-dry-run loadtest smoke verify stage7-static stage7-runtime stage7-verify otlp-check observability-demo-check
+.PHONY: run test vet fmt docker-build compose-up compose-down observability-demo-up observability-demo-down observability-demo-config observability-demo-prepull observability-demo-verify k8s-production-render k8s-production-hpa-render k8s-production-local-check k8s-production-server-dry-run loadtest smoke verify stage7-static stage7-runtime stage7-verify otlp-check observability-demo-check sonar-quality-gate-check
 
 run:
 	go run ./cmd/gateway
@@ -71,3 +71,6 @@ otlp-check:
 
 observability-demo-check:
 	./scripts/observability-demo-check.sh
+
+sonar-quality-gate-check:
+	./scripts/sonar-quality-gate-check.rb
