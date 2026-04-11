@@ -12,6 +12,7 @@ covered by the Stage 7 static delivery contract.
 ```bash
 make k8s-production-render
 make k8s-production-hpa-render
+make k8s-production-local-check
 ./scripts/validate-deployments.rb
 REQUIRE_K8S_PRODUCTION_RENDER=true ./scripts/validate-deployments.rb
 GOCACHE=/tmp/lag-project-gocache GOMODCACHE=/tmp/lag-project-gomodcache ./scripts/stage7-verify.sh static
@@ -64,3 +65,7 @@ The production overlay render and deployment validator pass locally. The Stage 7
 static contract includes the overlay assets, and CI now requires the render path
 explicitly, so future delivery changes cannot silently drop or break the
 production bundle.
+
+Cluster-backed server-side dry-run is intentionally separated from local CI and
+documented in
+[`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md).

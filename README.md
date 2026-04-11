@@ -208,6 +208,15 @@ make k8s-production-hpa-render
 kubectl apply -k deployments/k8s-overlays/production-hpa
 ```
 
+Before applying to a real cluster, run the standardized preflight checks:
+
+```bash
+make k8s-production-local-check
+make k8s-production-server-dry-run
+```
+
+The server-side dry run requires access to the target Kubernetes cluster.
+
 ## Auth
 
 The chat completions endpoint requires:
