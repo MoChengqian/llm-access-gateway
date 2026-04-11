@@ -21,6 +21,7 @@ fail() {
   local message="$1"
   printf 'ERROR: %s\n' "${message}" >&2
   exit 1
+  return 1
 }
 
 wait_for_http() {
@@ -39,6 +40,7 @@ wait_for_http() {
 query_prometheus() {
   local query="$1"
   curl -fsS -G "${PROMETHEUS_URL}/api/v1/query" --data-urlencode "query=${query}"
+  return 0
 }
 
 grafana_api() {

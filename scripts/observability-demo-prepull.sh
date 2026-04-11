@@ -19,6 +19,7 @@ fail() {
   local message="$1"
   printf 'ERROR: %s\n' "${message}" >&2
   exit 1
+  return 1
 }
 
 pull_with_retry() {

@@ -380,7 +380,7 @@ func TestCreateCompletionFallbackPropagatesBackendNameToAttemptRecorder(t *testi
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 
 	ctx := provider.WithAttemptRecorder(context.Background(), recorder)
-	resp, err := routed.CreateChatCompletion(ctx, provider.ChatCompletionRequest{Model: "gpt-4o-mini"})
+	resp, err := routed.CreateChatCompletion(ctx, provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
 		t.Fatalf("create completion: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestReadyAndBackendStatusesReflectCooldown(t *testing.T) {
 	}, Config{FailureThreshold: 1, Cooldown: time.Minute})
 	routed.now = func() time.Time { return now }
 
-	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err == nil {
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err == nil {
 		t.Fatal("expected create completion to fail")
 	}
 
@@ -445,7 +445,7 @@ func TestObserverSeesFallbackAndFailureEvents(t *testing.T) {
 		Observer:         observer,
 	})
 
-	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
 		t.Fatalf("create completion: %v", err)
 	}
 
@@ -475,7 +475,7 @@ func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
 	})
 	routed.now = func() time.Time { return now }
 
-	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
 		t.Fatalf("first create completion: %v", err)
 	}
 
@@ -483,7 +483,7 @@ func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
 	primary.createCalled = false
 	secondary.createCalled = false
 
-	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: "gpt-4o-mini"}); err != nil {
+	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
 		t.Fatalf("second create completion: %v", err)
 	}
 
@@ -495,7 +495,7 @@ func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
 func TestProbeMarksBackendHealthyAndUnhealthy(t *testing.T) {
 	now := time.Unix(123, 0)
 	primary := &stubProvider{modelsErr: errors.New("probe failed")}
-	secondary := &stubProvider{models: []provider.Model{{ID: "gpt-4o-mini"}}}
+	secondary := &stubProvider{models: []provider.Model{{ID: routerDefaultModel}}}
 
 	routed := New([]Backend{
 		{Name: "primary", Provider: primary},
@@ -524,7 +524,7 @@ func TestProbeMarksBackendHealthyAndUnhealthy(t *testing.T) {
 func TestProbeObserverSeesProbeEvents(t *testing.T) {
 	observer := &stubObserver{}
 	primary := &stubProvider{modelsErr: errors.New("probe failed")}
-	secondary := &stubProvider{models: []provider.Model{{ID: "gpt-4o-mini"}}}
+	secondary := &stubProvider{models: []provider.Model{{ID: routerDefaultModel}}}
 
 	routed := New([]Backend{
 		{Name: "primary", Provider: primary},

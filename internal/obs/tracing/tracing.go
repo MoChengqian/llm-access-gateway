@@ -196,7 +196,7 @@ func noopSpan(name string) *Span {
 	}
 }
 
-func baseSpanAttributes(name string, traceID string, spanID string, parentSpanID string, requestID string) []attribute.KeyValue {
+func baseSpanAttributes(name, traceID, spanID, parentSpanID, requestID string) []attribute.KeyValue {
 	return []attribute.KeyValue{
 		attribute.String("lag.trace_id", traceID),
 		attribute.String("lag.span_id", spanID),
