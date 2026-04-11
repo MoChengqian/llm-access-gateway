@@ -7,6 +7,10 @@ demonstrable system. The contract is not "we have scripts somewhere"; it is a
 small set of repeatable commands that prove delivery, load, failure, and CI
 assets are still aligned.
 
+Use [`stage7-production-readiness.md`](stage7-production-readiness.md) as the
+operator-facing matrix that connects this contract to deployment, observability,
+load, drill, and cluster preflight evidence.
+
 ## Canonical Verification Entrypoints
 
 ### Static Contract
@@ -158,6 +162,9 @@ The local production overlay evidence is recorded in
 
 The target-cluster preflight checklist is recorded in
 [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md).
+
+The end-to-end readiness matrix is recorded in
+[`stage7-production-readiness.md`](stage7-production-readiness.md).
 
 ## Benchmark Contract
 

@@ -80,3 +80,6 @@ kubectl top pods -n llm-access-gateway
 
 Then run the gateway smoke checks through the target ingress or a temporary
 port-forward.
+
+For the full Stage 7 readiness matrix, see
+[`stage7-production-readiness.md`](stage7-production-readiness.md).

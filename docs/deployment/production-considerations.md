@@ -157,6 +157,9 @@ provider quotas, MySQL capacity, and Redis capacity.
 
 ## Verification Before and After Rollout
 
+For the end-to-end readiness matrix, start with
+[`../verification/stage7-production-readiness.md`](../verification/stage7-production-readiness.md).
+
 ### Pre-rollout checks
 
 ```bash
