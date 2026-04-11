@@ -190,6 +190,13 @@ make observability-demo-up
 make observability-demo-check
 ```
 
+If you want the repository to manage the full runtime loop instead of manually
+starting MySQL, Redis, `devinit`, and the gateway, use:
+
+```bash
+make observability-demo-verify
+```
+
 `scripts/observability-demo-check.sh` verifies more than simple process health:
 
 - the gateway responds on `/healthz`
@@ -197,6 +204,11 @@ make observability-demo-check
 - the collector reports accepted spans
 - Grafana serves the provisioned Prometheus datasource and `llm-access-gateway`
   dashboard
+
+`scripts/observability-demo-prepull.sh` and
+`scripts/observability-demo-verify.sh` also close the operational gap that
+showed up during local validation: registry image fetches can be warmed first,
+and the entire demo path now has a single repository-owned verification entry.
 
 This keeps the observability story locally reproducible without claiming that
 the repository now owns a production-grade trace store or long-term metrics

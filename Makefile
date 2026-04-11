@@ -1,4 +1,4 @@
-.PHONY: run test vet fmt docker-build compose-up compose-down observability-demo-up observability-demo-down observability-demo-config loadtest smoke verify stage7-static stage7-runtime stage7-verify otlp-check observability-demo-check
+.PHONY: run test vet fmt docker-build compose-up compose-down observability-demo-up observability-demo-down observability-demo-config observability-demo-prepull observability-demo-verify loadtest smoke verify stage7-static stage7-runtime stage7-verify otlp-check observability-demo-check
 
 run:
 	go run ./cmd/gateway
@@ -29,6 +29,12 @@ observability-demo-down:
 
 observability-demo-config:
 	docker compose -f deployments/observability/docker-compose.yml config
+
+observability-demo-prepull:
+	./scripts/observability-demo-prepull.sh
+
+observability-demo-verify:
+	./scripts/observability-demo-verify.sh
 
 loadtest:
 	go run ./cmd/loadtest -auth-key lag-local-dev-key

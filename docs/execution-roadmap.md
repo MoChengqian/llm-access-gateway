@@ -466,6 +466,9 @@ Stage 6 is complete for the v1 repository contract:
   Prometheus, and Grafana from `deployments/observability/`, with
   `scripts/observability-demo-check.sh` asserting metrics scrape, accepted spans,
   and dashboard provisioning
+- `scripts/observability-demo-prepull.sh` and
+  `scripts/observability-demo-verify.sh` standardize image warming and the
+  end-to-end local runtime verification loop
 - the Grafana dashboard asset is committed at
   `deployments/grafana/dashboards/llm-access-gateway.json`
 

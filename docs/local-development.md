@@ -501,17 +501,29 @@ For the full local observability demo stack, keep the gateway on `:8080` with
 that OTLP endpoint and run:
 
 ```bash
+make observability-demo-prepull
 make observability-demo-up
 make observability-demo-check
+make observability-demo-verify
 ```
 
 That repository-owned stack brings up:
 
 - OpenTelemetry Collector on `127.0.0.1:4318`
-- Prometheus on `127.0.0.1:9090`
-- Grafana on `127.0.0.1:3000` with the bundled dashboard and datasource already provisioned
+- Prometheus on `127.0.0.1:19090`
+- Grafana on `127.0.0.1:13000` with the bundled dashboard and datasource already provisioned
 
 Use `make observability-demo-down` to stop it again.
+
+`make observability-demo-verify` is the lowest-friction end-to-end path. It:
+
+- pre-pulls the observability images by default
+- starts MySQL and Redis
+- runs `go run ./cmd/devinit`
+- starts the observability stack
+- starts the gateway with OTLP export enabled
+- executes `./scripts/observability-demo-check.sh`
+- tears everything down automatically
 
 You can also use the helper script:
 
@@ -523,6 +535,7 @@ make verify
 make stage7-static
 make stage7-runtime
 make observability-demo-config
+make observability-demo-prepull
 ```
 
 The smoke script now covers:
