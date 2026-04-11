@@ -126,12 +126,20 @@ Delivery assets are split by runtime target:
   `deployments/docker/docker-compose.yml`
 - Kubernetes baseline:
   `deployments/k8s/*`
+- Kubernetes production overlay:
+  `deployments/k8s-overlays/production/*`
 - structural validation:
   `scripts/validate-deployments.rb`
 
 The Stage 7 static contract validates that these assets remain parseable and
-structurally aligned. Cluster-specific MySQL, Redis, image registry, ingress,
-secret management, and collector wiring remain environment-owned.
+structurally aligned. The production overlay is also rendered when `kubectl` is
+available, so ingress, PDB, pod security, provider config, Secret patches, and
+image overrides are checked as one delivery bundle. Cluster-specific MySQL,
+Redis, image registry credentials, TLS issuance, and collector deployment remain
+environment-owned.
+
+The local production overlay evidence is recorded in
+[`k8s-production-overlay.md`](k8s-production-overlay.md).
 
 ## Benchmark Contract
 
