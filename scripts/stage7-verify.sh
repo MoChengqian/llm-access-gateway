@@ -66,6 +66,8 @@ run_static_contract() {
     "scripts/gateway-smoke-check.sh"
     "scripts/provider-fallback-drill.sh"
     "scripts/anthropic-adapter-drill.sh"
+    "scripts/ci-start-background.sh"
+    "scripts/ci-stop-background.sh"
     "cmd/nightlycheck/main.go"
     "cmd/nightlyreport/main.go"
     ".github/workflows/runtime-ci.yml"

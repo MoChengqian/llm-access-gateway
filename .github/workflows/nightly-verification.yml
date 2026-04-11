@@ -94,8 +94,10 @@ jobs:
 
       - name: Start gateway for mock provider benchmarks
         run: |
-          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-mock.log" 2>&1 &
-          echo $! >/tmp/gateway.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --log-file "${ARTIFACT_DIR}/gateway-mock.log" \
+            -- "${GATEWAY_BIN}"
 
           for _ in $(seq 1 60); do
             if curl -fsS "${BASE_URL}/healthz" >/dev/null; then
@@ -117,47 +119,18 @@ jobs:
       - name: Stop mock benchmark gateway
         if: always()
         run: |
-          if test -f /tmp/gateway.pid; then
-            gateway_pid="$(cat /tmp/gateway.pid)"
-            kill "${gateway_pid}" || true
-
-            for _ in $(seq 1 30); do
-              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-
-            if kill -0 "${gateway_pid}" 2>/dev/null; then
-              kill -9 "${gateway_pid}" || true
-              for _ in $(seq 1 5); do
-                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
-            fi
-          fi
-
-          for _ in $(seq 1 30); do
-            if ! curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-
-          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
-            echo "mock benchmark gateway still serving ${BASE_URL} after shutdown" >&2
-            test -f "${ARTIFACT_DIR}/gateway-mock.log" && cat "${ARTIFACT_DIR}/gateway-mock.log" || true
-            exit 1
-          fi
-
-          rm -f /tmp/gateway.pid
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --label "mock benchmark gateway" \
+            --health-url "${BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/gateway-mock.log"
 
       - name: Start synthetic upstream for adapter benchmarks
         run: |
-          nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode ok >"${ARTIFACT_DIR}/upstream-ok.log" 2>&1 &
-          echo $! >/tmp/upstream.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --log-file "${ARTIFACT_DIR}/upstream-ok.log" \
+            -- python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode ok
 
           for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
@@ -180,8 +153,10 @@ jobs:
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
           go run ./cmd/routerulectl sync-from-config
-          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-adapter.log" 2>&1 &
-          echo $! >/tmp/gateway.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --log-file "${ARTIFACT_DIR}/gateway-adapter.log" \
+            -- "${GATEWAY_BIN}"
 
           for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
@@ -248,28 +223,16 @@ jobs:
       - name: Stop background processes
         if: always()
         run: |
-          if test -f /tmp/gateway.pid; then
-            gateway_pid="$(cat /tmp/gateway.pid)"
-            kill "${gateway_pid}" || true
-            for _ in $(seq 1 10); do
-              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-            kill -9 "${gateway_pid}" 2>/dev/null || true
-          fi
-          if test -f /tmp/upstream.pid; then
-            upstream_pid="$(cat /tmp/upstream.pid)"
-            kill "${upstream_pid}" || true
-            for _ in $(seq 1 10); do
-              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-            kill -9 "${upstream_pid}" 2>/dev/null || true
-          fi
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --label "benchmark gateway" \
+            --health-url "${BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/gateway-adapter.log"
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --label "benchmark upstream" \
+            --health-url "http://127.0.0.1:18081/healthz" \
+            --log-file "${ARTIFACT_DIR}/upstream-ok.log"
 
   stream-failure-drills:
     runs-on: ubuntu-latest
@@ -334,8 +297,10 @@ jobs:
 
       - name: Start synthetic upstream for pre-chunk failure scenario
         run: |
-          nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_prechunk_fail >"${ARTIFACT_DIR}/upstream-prechunk.log" 2>&1 &
-          echo $! >/tmp/upstream.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --log-file "${ARTIFACT_DIR}/upstream-prechunk.log" \
+            -- python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_prechunk_fail
 
           for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
@@ -359,8 +324,10 @@ jobs:
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
           go run ./cmd/routerulectl sync-from-config
-          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
-          echo $! >/tmp/gateway.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --log-file "${ARTIFACT_DIR}/gateway-prechunk.log" \
+            -- "${GATEWAY_BIN}"
 
           for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
@@ -397,78 +364,23 @@ jobs:
       - name: Stop pre-chunk processes
         if: always()
         run: |
-          if test -f /tmp/gateway.pid; then
-            gateway_pid="$(cat /tmp/gateway.pid)"
-            kill "${gateway_pid}" || true
-
-            for _ in $(seq 1 30); do
-              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-
-            if kill -0 "${gateway_pid}" 2>/dev/null; then
-              kill -9 "${gateway_pid}" || true
-              for _ in $(seq 1 5); do
-                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
-            fi
-          fi
-
-          if test -f /tmp/upstream.pid; then
-            upstream_pid="$(cat /tmp/upstream.pid)"
-            kill "${upstream_pid}" || true
-
-            for _ in $(seq 1 30); do
-              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-
-            if kill -0 "${upstream_pid}" 2>/dev/null; then
-              kill -9 "${upstream_pid}" || true
-              for _ in $(seq 1 5); do
-                if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
-            fi
-          fi
-
-          for _ in $(seq 1 30); do
-            gateway_down=true
-            upstream_down=true
-            curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
-            curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null 2>&1 && upstream_down=false
-            if $gateway_down && $upstream_down; then
-              break
-            fi
-            sleep 1
-          done
-
-          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
-            echo "pre-chunk gateway still serving ${BASE_URL} after shutdown" >&2
-            test -f "${ARTIFACT_DIR}/gateway-prechunk.log" && cat "${ARTIFACT_DIR}/gateway-prechunk.log" || true
-            exit 1
-          fi
-          if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null 2>&1; then
-            echo "pre-chunk upstream still serving http://127.0.0.1:18081 after shutdown" >&2
-            test -f "${ARTIFACT_DIR}/upstream-prechunk.log" && cat "${ARTIFACT_DIR}/upstream-prechunk.log" || true
-            exit 1
-          fi
-
-          rm -f /tmp/gateway.pid /tmp/upstream.pid
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --label "pre-chunk gateway" \
+            --health-url "${BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/gateway-prechunk.log"
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --label "pre-chunk upstream" \
+            --health-url "http://127.0.0.1:18081/healthz" \
+            --log-file "${ARTIFACT_DIR}/upstream-prechunk.log"
 
       - name: Start synthetic upstream for partial stream scenario
         run: |
-          nohup python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_partial >"${ARTIFACT_DIR}/upstream-partial.log" 2>&1 &
-          echo $! >/tmp/upstream.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --log-file "${ARTIFACT_DIR}/upstream-partial.log" \
+            -- python3 ./scripts/synthetic-openai-upstream.py --port 18081 --mode stream_partial
 
           for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:18081/healthz" >/dev/null; then
@@ -492,8 +404,10 @@ jobs:
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
           go run ./cmd/routerulectl sync-from-config
-          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
-          echo $! >/tmp/gateway.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --log-file "${ARTIFACT_DIR}/gateway-partial.log" \
+            -- "${GATEWAY_BIN}"
 
           for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
@@ -558,28 +472,16 @@ jobs:
       - name: Stop background processes
         if: always()
         run: |
-          if test -f /tmp/gateway.pid; then
-            gateway_pid="$(cat /tmp/gateway.pid)"
-            kill "${gateway_pid}" || true
-            for _ in $(seq 1 10); do
-              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-            kill -9 "${gateway_pid}" 2>/dev/null || true
-          fi
-          if test -f /tmp/upstream.pid; then
-            upstream_pid="$(cat /tmp/upstream.pid)"
-            kill "${upstream_pid}" || true
-            for _ in $(seq 1 10); do
-              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-            kill -9 "${upstream_pid}" 2>/dev/null || true
-          fi
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --label "stream drill gateway" \
+            --health-url "${BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/gateway-partial.log"
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --label "stream drill upstream" \
+            --health-url "http://127.0.0.1:18081/healthz" \
+            --log-file "${ARTIFACT_DIR}/upstream-partial.log"
 
   anthropic-adapter-drills:
     runs-on: ubuntu-latest
@@ -646,8 +548,10 @@ jobs:
 
       - name: Start synthetic Anthropic upstream for system prompt capture
         run: |
-          nohup python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode capture_system >"${ARTIFACT_DIR}/upstream-system.log" 2>&1 &
-          echo $! >/tmp/upstream.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --log-file "${ARTIFACT_DIR}/upstream-system.log" \
+            -- python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode capture_system
 
           for _ in $(seq 1 30); do
             if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null; then
@@ -673,8 +577,10 @@ jobs:
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
           go run ./cmd/routerulectl sync-from-config
-          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-system.log" 2>&1 &
-          echo $! >/tmp/gateway.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --log-file "${ARTIFACT_DIR}/gateway-system.log" \
+            -- "${GATEWAY_BIN}"
 
           for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
@@ -710,78 +616,23 @@ jobs:
       - name: Stop system prompt processes
         if: always()
         run: |
-          if test -f /tmp/gateway.pid; then
-            gateway_pid="$(cat /tmp/gateway.pid)"
-            kill "${gateway_pid}" || true
-
-            for _ in $(seq 1 30); do
-              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-
-            if kill -0 "${gateway_pid}" 2>/dev/null; then
-              kill -9 "${gateway_pid}" || true
-              for _ in $(seq 1 5); do
-                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
-            fi
-          fi
-
-          if test -f /tmp/upstream.pid; then
-            upstream_pid="$(cat /tmp/upstream.pid)"
-            kill "${upstream_pid}" || true
-
-            for _ in $(seq 1 30); do
-              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-
-            if kill -0 "${upstream_pid}" 2>/dev/null; then
-              kill -9 "${upstream_pid}" || true
-              for _ in $(seq 1 5); do
-                if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
-            fi
-          fi
-
-          for _ in $(seq 1 30); do
-            gateway_down=true
-            upstream_down=true
-            curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
-            curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1 && upstream_down=false
-            if $gateway_down && $upstream_down; then
-              break
-            fi
-            sleep 1
-          done
-
-          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
-            echo "system prompt gateway still serving ${BASE_URL} after shutdown" >&2
-            test -f "${ARTIFACT_DIR}/gateway-system.log" && cat "${ARTIFACT_DIR}/gateway-system.log" || true
-            exit 1
-          fi
-          if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1; then
-            echo "system prompt upstream still serving ${UPSTREAM_BASE_URL} after shutdown" >&2
-            test -f "${ARTIFACT_DIR}/upstream-system.log" && cat "${ARTIFACT_DIR}/upstream-system.log" || true
-            exit 1
-          fi
-
-          rm -f /tmp/gateway.pid /tmp/upstream.pid
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --label "system prompt gateway" \
+            --health-url "${BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/gateway-system.log"
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --label "system prompt upstream" \
+            --health-url "${UPSTREAM_BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/upstream-system.log"
 
       - name: Start synthetic Anthropic upstream for pre-chunk failure scenario
         run: |
-          nohup python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode stream_prechunk_fail >"${ARTIFACT_DIR}/upstream-prechunk.log" 2>&1 &
-          echo $! >/tmp/upstream.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --log-file "${ARTIFACT_DIR}/upstream-prechunk.log" \
+            -- python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode stream_prechunk_fail
 
           for _ in $(seq 1 30); do
             if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null; then
@@ -808,8 +659,10 @@ jobs:
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
           go run ./cmd/routerulectl sync-from-config
-          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-prechunk.log" 2>&1 &
-          echo $! >/tmp/gateway.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --log-file "${ARTIFACT_DIR}/gateway-prechunk.log" \
+            -- "${GATEWAY_BIN}"
 
           for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
@@ -846,78 +699,23 @@ jobs:
       - name: Stop Anthropic pre-chunk processes
         if: always()
         run: |
-          if test -f /tmp/gateway.pid; then
-            gateway_pid="$(cat /tmp/gateway.pid)"
-            kill "${gateway_pid}" || true
-
-            for _ in $(seq 1 30); do
-              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-
-            if kill -0 "${gateway_pid}" 2>/dev/null; then
-              kill -9 "${gateway_pid}" || true
-              for _ in $(seq 1 5); do
-                if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
-            fi
-          fi
-
-          if test -f /tmp/upstream.pid; then
-            upstream_pid="$(cat /tmp/upstream.pid)"
-            kill "${upstream_pid}" || true
-
-            for _ in $(seq 1 30); do
-              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-
-            if kill -0 "${upstream_pid}" 2>/dev/null; then
-              kill -9 "${upstream_pid}" || true
-              for _ in $(seq 1 5); do
-                if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
-            fi
-          fi
-
-          for _ in $(seq 1 30); do
-            gateway_down=true
-            upstream_down=true
-            curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1 && gateway_down=false
-            curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1 && upstream_down=false
-            if $gateway_down && $upstream_down; then
-              break
-            fi
-            sleep 1
-          done
-
-          if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then
-            echo "Anthropic pre-chunk gateway still serving ${BASE_URL} after shutdown" >&2
-            test -f "${ARTIFACT_DIR}/gateway-prechunk.log" && cat "${ARTIFACT_DIR}/gateway-prechunk.log" || true
-            exit 1
-          fi
-          if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null 2>&1; then
-            echo "Anthropic pre-chunk upstream still serving ${UPSTREAM_BASE_URL} after shutdown" >&2
-            test -f "${ARTIFACT_DIR}/upstream-prechunk.log" && cat "${ARTIFACT_DIR}/upstream-prechunk.log" || true
-            exit 1
-          fi
-
-          rm -f /tmp/gateway.pid /tmp/upstream.pid
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --label "Anthropic pre-chunk gateway" \
+            --health-url "${BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/gateway-prechunk.log"
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --label "Anthropic pre-chunk upstream" \
+            --health-url "${UPSTREAM_BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/upstream-prechunk.log"
 
       - name: Start synthetic Anthropic upstream for partial stream scenario
         run: |
-          nohup python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode stream_partial >"${ARTIFACT_DIR}/upstream-partial.log" 2>&1 &
-          echo $! >/tmp/upstream.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --log-file "${ARTIFACT_DIR}/upstream-partial.log" \
+            -- python3 ./scripts/synthetic-anthropic-upstream.py --port 18081 --mode stream_partial
 
           for _ in $(seq 1 30); do
             if curl -fsS "${UPSTREAM_BASE_URL}/healthz" >/dev/null; then
@@ -944,8 +742,10 @@ jobs:
           APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS: "200"
         run: |
           go run ./cmd/routerulectl sync-from-config
-          nohup "${GATEWAY_BIN}" >"${ARTIFACT_DIR}/gateway-partial.log" 2>&1 &
-          echo $! >/tmp/gateway.pid
+          ./scripts/ci-start-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --log-file "${ARTIFACT_DIR}/gateway-partial.log" \
+            -- "${GATEWAY_BIN}"
 
           for _ in $(seq 1 60); do
             if ! kill -0 "$(cat /tmp/gateway.pid)" 2>/dev/null; then
@@ -1013,28 +813,16 @@ jobs:
       - name: Stop background processes
         if: always()
         run: |
-          if test -f /tmp/gateway.pid; then
-            gateway_pid="$(cat /tmp/gateway.pid)"
-            kill "${gateway_pid}" || true
-            for _ in $(seq 1 10); do
-              if ! kill -0 "${gateway_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-            kill -9 "${gateway_pid}" 2>/dev/null || true
-          fi
-          if test -f /tmp/upstream.pid; then
-            upstream_pid="$(cat /tmp/upstream.pid)"
-            kill "${upstream_pid}" || true
-            for _ in $(seq 1 10); do
-              if ! kill -0 "${upstream_pid}" 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-            kill -9 "${upstream_pid}" 2>/dev/null || true
-          fi
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/gateway.pid \
+            --label "Anthropic drill gateway" \
+            --health-url "${BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/gateway-partial.log"
+          ./scripts/ci-stop-background.sh \
+            --pid-file /tmp/upstream.pid \
+            --label "Anthropic drill upstream" \
+            --health-url "${UPSTREAM_BASE_URL}/healthz" \
+            --log-file "${ARTIFACT_DIR}/upstream-partial.log"
 
   report:
     runs-on: ubuntu-latest

@@ -110,6 +110,8 @@ Automation support:
 
 - `scripts/provider-fallback-drill.sh`
 - `scripts/anthropic-adapter-drill.sh`
+- `scripts/ci-start-background.sh`
+- `scripts/ci-stop-background.sh`
 - `cmd/nightlycheck`
 - `cmd/nightlyreport`
 - `.github/workflows/nightly-verification.yml`
@@ -122,6 +124,8 @@ secondary workflow noise.
 That means:
 
 - official GitHub Actions are pinned to Node 24-ready major versions
+- long-running synthetic upstream and gateway processes are started and stopped
+  through shared helper scripts instead of copy-pasted kill loops
 - the nightly `report` job only downloads artifacts from prerequisite jobs that
   actually succeeded
 - when a prerequisite job fails or is skipped, the nightly summary degrades into
