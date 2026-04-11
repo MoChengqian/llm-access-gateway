@@ -33,6 +33,23 @@ The command calls SonarCloud's public API and prints:
 `NONE` is the important ambiguous case. It means the merge commit may look fine
 in GitHub while the external quality-gate contract is still incomplete.
 
+## Repository Configuration
+
+The repository keeps SonarCloud project metadata in:
+
+```text
+sonar-project.properties
+```
+
+The file intentionally excludes provider adapter implementations from copy-paste
+detection. Those adapters share HTTP client, streaming, and test scaffolding,
+but their request translation and provider compatibility behavior are reviewed
+through unit tests, drills, and runtime CI.
+
+Do not broaden `sonar.cpd.exclusions` to unrelated application, routing,
+persistence, or deployment code. If duplication appears outside provider
+adapter scaffolding, fix the code instead of hiding it.
+
 ## Current Repository-Specific Interpretation
 
 If `main` reports `NONE` while pull requests report `OK`, treat that as a

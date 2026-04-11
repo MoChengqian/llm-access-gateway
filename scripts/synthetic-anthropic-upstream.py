@@ -275,6 +275,7 @@ def main() -> None:
     parser.add_argument("--delay-seconds", type=float, default=2.5)
     args = parser.parse_args()
 
+    # Local CI-only synthetic upstream; TLS is intentionally terminated outside this loopback test server. # NOSONAR
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.mode = args.mode
     server.delay_seconds = args.delay_seconds

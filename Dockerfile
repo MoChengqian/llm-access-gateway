@@ -16,10 +16,17 @@ FROM alpine:3.22
 
 WORKDIR /app
 
-COPY --from=builder /out/gateway /app/gateway
-COPY --from=builder /out/devinit /app/devinit
-COPY configs /app/configs
+RUN addgroup -S gateway && \
+    adduser -S -G gateway -H -D gateway && \
+    mkdir -p /app/configs && \
+    chmod 0555 /app /app/configs
+
+COPY --from=builder --chmod=0555 /out/gateway /app/gateway
+COPY --from=builder --chmod=0555 /out/devinit /app/devinit
+COPY --chmod=0444 configs/config.yaml /app/configs/config.yaml
 
 EXPOSE 8080
+
+USER gateway
 
 CMD ["/app/gateway"]

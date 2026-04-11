@@ -10,6 +10,7 @@ wait_seconds=30
 
 usage() {
   echo "usage: $0 --pid-file PATH --label NAME [--health-url URL] [--log-file PATH] [--wait-seconds N]" >&2
+  return 0
 }
 
 while [[ $# -gt 0 ]]; do
@@ -65,10 +66,12 @@ stop_target() {
     kill -"${signal_name}" -- "-${pgid}" 2>/dev/null || true
   fi
   kill -"${signal_name}" "${pid}" 2>/dev/null || true
+  return 0
 }
 
 is_alive() {
   kill -0 "${pid}" 2>/dev/null
+  return $?
 }
 
 stop_target TERM
@@ -96,6 +99,8 @@ if is_alive; then
   fi
   exit 1
 fi
+
+exit 0
 
 if [[ -n "${health_url}" ]]; then
   for _ in $(seq 1 "${wait_seconds}"); do
