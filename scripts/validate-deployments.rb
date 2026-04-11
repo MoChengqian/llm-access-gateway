@@ -224,7 +224,17 @@ def validate_otel_collector_config
   service = fetch_hash!(doc, "service", "otel collector config")
   telemetry = fetch_hash!(service, "telemetry", "otel collector service")
   metrics = fetch_hash!(telemetry, "metrics", "otel collector telemetry")
-  abort("otel collector telemetry metrics endpoint mismatch") unless metrics["address"] == "0.0.0.0:8888"
+  readers = Array(metrics["readers"])
+  abort("otel collector telemetry metrics readers missing") if readers.empty?
+  pull_reader = readers.find { |entry| entry.is_a?(Hash) && entry.key?("pull") }
+  abort("otel collector telemetry missing pull reader") unless pull_reader
+  pull = fetch_hash!(pull_reader, "pull", "otel collector pull reader")
+  exporter = fetch_hash!(pull, "exporter", "otel collector pull exporter")
+  prometheus = fetch_hash!(exporter, "prometheus", "otel collector prometheus exporter")
+  abort("otel collector prometheus exporter host mismatch") unless prometheus["host"] == "0.0.0.0"
+  abort("otel collector prometheus exporter port mismatch") unless prometheus["port"].to_i == 8888
+  abort("otel collector prometheus exporter without_type_suffix mismatch") unless prometheus["without_type_suffix"] == true
+  abort("otel collector prometheus exporter without_units mismatch") unless prometheus["without_units"] == true
 
   pipelines = fetch_hash!(service, "pipelines", "otel collector service")
   traces = fetch_hash!(pipelines, "traces", "otel collector pipelines")

@@ -110,14 +110,17 @@ run:
 ```bash
 ./scripts/otlp-export-check.sh
 make otlp-check
+make observability-demo-prepull
 make observability-demo-up
 make observability-demo-check
+make observability-demo-verify
 ```
 
 `cmd/otlpstub` verifies the gateway emitted a real OTLP/HTTP request. The
 observability demo stack under `deployments/observability/` goes one step
 further by booting a local collector, Prometheus, and Grafana with repository-owned
-provisioning and smoke checks.
+provisioning and smoke checks. `make observability-demo-prepull` can be used to
+warm those images ahead of time when registry access is unstable.
 
 The gateway continues to emit structured span logs even when OTLP export is
 disabled.

@@ -3,8 +3,8 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
-PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9090}"
-GRAFANA_URL="${GRAFANA_URL:-http://127.0.0.1:3000}"
+PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:19090}"
+GRAFANA_URL="${GRAFANA_URL:-http://127.0.0.1:13000}"
 GRAFANA_USERNAME="${GRAFANA_USERNAME:-admin}"
 GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-admin}"
 OTEL_COLLECTOR_HEALTH_URL="${OTEL_COLLECTOR_HEALTH_URL:-http://127.0.0.1:13133}"
@@ -68,7 +68,7 @@ wait_for_http "${OTEL_COLLECTOR_HEALTH_URL}" "otel collector health"
 wait_for_http "${OTEL_COLLECTOR_METRICS_URL}" "otel collector metrics"
 
 print_section "wait for prometheus"
-wait_for_http "${PROMETHEUS_URL}/-/ready" "prometheus"
+wait_for_http "${PROMETHEUS_URL}/api/v1/status/runtimeinfo" "prometheus"
 
 print_section "wait for grafana"
 wait_for_http "${GRAFANA_URL}/api/health" "grafana"

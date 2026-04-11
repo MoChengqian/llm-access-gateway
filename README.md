@@ -286,8 +286,10 @@ make fmt
 make loadtest
 make verify
 make otlp-check
+make observability-demo-prepull
 make observability-demo-up
 make observability-demo-check
+make observability-demo-verify
 ```
 
 Environment variables currently used by the code:
@@ -342,6 +344,21 @@ That flow proves all three pieces together:
 - the gateway exposes `/metrics`
 - the collector accepts OTLP/HTTP spans from the gateway
 - Grafana boots with the provisioned Prometheus datasource and dashboard
+
+For a repo-owned end-to-end path that also boots MySQL, Redis, seeds the
+database, starts the gateway, runs the observability check, and then cleans up,
+use:
+
+```bash
+make observability-demo-verify
+```
+
+If Docker Hub or a registry mirror is slow in your environment, warm the images
+first:
+
+```bash
+make observability-demo-prepull
+```
 
 Server hardening defaults:
 
