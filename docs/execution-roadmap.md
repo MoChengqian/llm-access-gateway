@@ -460,6 +460,8 @@ Stage 6 is complete for the v1 repository contract:
 - `/metrics` is present
 - trace spans can optionally be exported over OTLP/HTTP through
   `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
+- OTLP export can be verified locally through `cmd/otlpstub` and
+  `scripts/otlp-export-check.sh`
 - the Grafana dashboard asset is committed at
   `deployments/grafana/dashboards/llm-access-gateway.json`
 

@@ -150,6 +150,27 @@ security and the path is passed through to the OTLP HTTP exporter. If the
 endpoint is a bare `host:port`, `APP_OBSERVABILITY_OTLP_TRACES_INSECURE=true`
 can be used for a local plaintext collector.
 
+### Repository-owned OTLP verification
+
+The repository now includes a minimal OTLP smoke path so exporter wiring can be
+verified without an external SaaS backend:
+
+- `cmd/otlpstub` receives OTLP/HTTP payloads and records the last request
+- `scripts/otlp-export-check.sh` starts the stub, triggers a traced request, and
+  waits for an exported payload
+
+Typical local flow:
+
+```bash
+export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
+export APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS='1'
+go run ./cmd/gateway
+./scripts/otlp-export-check.sh
+```
+
+That check proves the gateway exported a real `POST /v1/traces` request instead
+of only accepting configuration.
+
 ### Span attributes
 
 The OpenTelemetry exporter preserves the gateway's existing correlation contract
