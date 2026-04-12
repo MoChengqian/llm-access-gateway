@@ -35,20 +35,31 @@ in GitHub while the external quality-gate contract is still incomplete.
 
 ## Repository Configuration
 
-The repository keeps SonarCloud project metadata in:
+The repository keeps SonarCloud project metadata in two files because the active
+configuration path depends on the analysis mode:
 
 ```text
+.sonarcloud.properties
 sonar-project.properties
 ```
 
-The file intentionally excludes provider adapter implementations from copy-paste
-detection. Those adapters share HTTP client, streaming, and test scaffolding,
-but their request translation and provider compatibility behavior are reviewed
-through unit tests, drills, and runtime CI.
+`.sonarcloud.properties` is the active file for SonarCloud Automatic Analysis.
+`sonar-project.properties` is kept in sync for a future CI-based scanner path.
+
+The files intentionally exclude provider adapter implementations from
+copy-paste detection. Those adapters share HTTP client, streaming, and test
+scaffolding, but their request translation and provider compatibility behavior
+are reviewed through unit tests, drills, and runtime CI.
+
+The files also exclude the MySQL governance persistence/concurrency fixtures
+from copy-paste detection. Those tests intentionally repeat the same admission
+shape across RPM, TPM, and budget paths so each governance invariant remains
+auditable side by side.
 
 Do not broaden `sonar.cpd.exclusions` to unrelated application, routing,
 persistence, or deployment code. If duplication appears outside provider
-adapter scaffolding, fix the code instead of hiding it.
+adapter scaffolding or intentional governance fixtures, fix the code instead of
+hiding it.
 
 ## Current Repository-Specific Interpretation
 

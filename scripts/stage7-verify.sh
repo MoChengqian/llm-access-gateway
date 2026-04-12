@@ -44,6 +44,7 @@ run_static_contract() {
   print_section "required Stage 7 assets"
   local required_assets=(
     "deployments/docker/docker-compose.yml"
+    ".sonarcloud.properties"
     "sonar-project.properties"
     "deployments/k8s/namespace.yaml"
     "deployments/k8s/kustomization.yaml"
