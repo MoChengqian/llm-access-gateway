@@ -338,7 +338,7 @@ func (r *attemptRecorderStub) BeginAttempt(_ context.Context, metadata provider.
 	return attemptHandleStub{record: record}, nil
 }
 
-func openAIStreamChunk(model string, deltaJSON string, finishReason string) string {
+func openAIStreamChunk(model, deltaJSON, finishReason string) string {
 	return fmt.Sprintf(
 		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"%s\",\"choices\":[{\"index\":0,\"delta\":%s,\"finish_reason\":\"%s\"}]}\n\n",
 		model,
