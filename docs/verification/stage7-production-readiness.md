@@ -24,7 +24,7 @@ NetworkPolicy enforcement, and observability retention remain environment-owned.
 | Kubernetes production render | [`k8s-production-overlay.md`](k8s-production-overlay.md) | `make k8s-production-render` | Required in CI |
 | Kubernetes optional HPA render | [`k8s-production-overlay.md`](k8s-production-overlay.md) | `make k8s-production-hpa-render` | Required in CI |
 | Kubernetes local preflight | [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md) | `make k8s-production-local-check` | Required before cluster dry-run |
-| Kubernetes server dry-run | [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md) | `make k8s-production-server-dry-run` | Required before real apply |
+| Kubernetes server dry-run | [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md), [`k8s-production-server-dry-run-2026-04-12.md`](k8s-production-server-dry-run-2026-04-12.md) | `make k8s-production-server-dry-run` | Required before real apply |
 | Load baseline | [`benchmarks/methodology.md`](benchmarks/methodology.md) | `go run ./cmd/loadtest ... -json` | Canonical load tool |
 | Failure drills | [`failure-drills/provider-errors.md`](failure-drills/provider-errors.md) | `./scripts/provider-fallback-drill.sh create-fail` | Repeatable resilience evidence |
 | Streaming drills | [`failure-drills/streaming-failures.md`](failure-drills/streaming-failures.md) | `./scripts/provider-fallback-drill.sh stream-fail` | Repeatable streaming evidence |
