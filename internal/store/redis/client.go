@@ -26,6 +26,10 @@ type Client struct {
 	dialTimeout time.Duration
 }
 
+type respReader struct {
+	reader *bufio.Reader
+}
+
 func NewClient(cfg Config) Client {
 	timeout := cfg.DialTimeout
 	if timeout <= 0 {
@@ -188,16 +192,14 @@ func writeCommand(conn net.Conn, command []string) error {
 }
 
 func readRESP(reader *bufio.Reader) (any, error) {
-	prefix, err := reader.ReadByte()
-	if err != nil {
-		return nil, err
-	}
+	return respReader{reader: reader}.read()
+}
 
-	line, err := reader.ReadString('\n')
+func (r respReader) read() (any, error) {
+	prefix, line, err := r.readHeader()
 	if err != nil {
 		return nil, err
 	}
-	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 
 	switch prefix {
 	case '+':
@@ -207,36 +209,59 @@ func readRESP(reader *bufio.Reader) (any, error) {
 	case ':':
 		return strconv.ParseInt(line, 10, 64)
 	case '$':
-		size, err := strconv.Atoi(line)
-		if err != nil {
-			return nil, err
-		}
-		if size < 0 {
-			return "", nil
-		}
-		buffer := make([]byte, size+2)
-		if _, err := io.ReadFull(reader, buffer); err != nil {
-			return nil, err
-		}
-		return string(buffer[:size]), nil
+		return r.readBulkString(line)
 	case '*':
-		size, err := strconv.Atoi(line)
-		if err != nil {
-			return nil, err
-		}
-		if size < 0 {
-			return []any{}, nil
-		}
-		items := make([]any, 0, size)
-		for i := 0; i < size; i++ {
-			item, err := readRESP(reader)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, item)
-		}
-		return items, nil
+		return r.readArray(line)
 	default:
 		return nil, fmt.Errorf("unsupported redis response prefix %q", prefix)
 	}
+}
+
+func (r respReader) readHeader() (byte, string, error) {
+	prefix, err := r.reader.ReadByte()
+	if err != nil {
+		return 0, "", err
+	}
+
+	line, err := r.reader.ReadString('\n')
+	if err != nil {
+		return 0, "", err
+	}
+	return prefix, strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), nil
+}
+
+func (r respReader) readBulkString(line string) (any, error) {
+	size, err := strconv.Atoi(line)
+	if err != nil {
+		return nil, err
+	}
+	if size < 0 {
+		return "", nil
+	}
+
+	buffer := make([]byte, size+2)
+	if _, err := io.ReadFull(r.reader, buffer); err != nil {
+		return nil, err
+	}
+	return string(buffer[:size]), nil
+}
+
+func (r respReader) readArray(line string) (any, error) {
+	size, err := strconv.Atoi(line)
+	if err != nil {
+		return nil, err
+	}
+	if size < 0 {
+		return []any{}, nil
+	}
+
+	items := make([]any, 0, size)
+	for i := 0; i < size; i++ {
+		item, err := r.read()
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
