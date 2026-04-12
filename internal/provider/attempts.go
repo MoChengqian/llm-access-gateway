@@ -10,8 +10,6 @@ type AttemptBeginner interface {
 	BeginAttempt(ctx context.Context, metadata AttemptMetadata) (AttemptHandle, error)
 }
 
-type AttemptRecorder = AttemptBeginner
-
 type AttemptHandle interface {
 	Complete(ctx context.Context, result AttemptResult) error
 }
@@ -59,16 +57,16 @@ func IsAttemptAccountingError(err error) bool {
 type attemptRecorderContextKey struct{}
 type attemptBackendContextKey struct{}
 
-func WithAttemptRecorder(ctx context.Context, recorder AttemptRecorder) context.Context {
-	if recorder == nil {
+func WithAttemptRecorder(ctx context.Context, beginner AttemptBeginner) context.Context {
+	if beginner == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, attemptRecorderContextKey{}, recorder)
+	return context.WithValue(ctx, attemptRecorderContextKey{}, beginner)
 }
 
-func AttemptRecorderFromContext(ctx context.Context) AttemptRecorder {
-	recorder, _ := ctx.Value(attemptRecorderContextKey{}).(AttemptRecorder)
-	return recorder
+func AttemptRecorderFromContext(ctx context.Context) AttemptBeginner {
+	beginner, _ := ctx.Value(attemptRecorderContextKey{}).(AttemptBeginner)
+	return beginner
 }
 
 func WithAttemptBackend(ctx context.Context, backend string) context.Context {

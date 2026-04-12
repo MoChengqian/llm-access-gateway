@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,23 +49,12 @@ func (h ChatHandler) CreateCompletion(w http.ResponseWriter, r *http.Request) {
 		)
 	}()
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeCompletionRequest(w, r, &req); err != nil {
 		traceErr = err
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
-			return
-		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	tracker, err := h.governance.BeginRequest(ctx, governance.RequestMetadata{
-		RequestID: chimiddleware.GetReqID(ctx),
-		Model:     req.Model,
-		Stream:    req.Stream,
-		Messages:  req.Messages,
-	})
+	tracker, err := h.beginTrackedRequest(ctx, req)
 	if err != nil {
 		traceErr = err
 		writeGovernanceErrorWithMetrics(w, err, h.metrics)
@@ -76,25 +66,52 @@ func (h ChatHandler) CreateCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.handleNonStreamCompletion(w, ctx, req, tracker); err != nil {
+		traceErr = err
+	}
+}
+
+func (h ChatHandler) beginTrackedRequest(ctx context.Context, req chat.CompletionRequest) (governance.RequestTracker, error) {
+	return h.governance.BeginRequest(ctx, governance.RequestMetadata{
+		RequestID: chimiddleware.GetReqID(ctx),
+		Model:     req.Model,
+		Stream:    req.Stream,
+		Messages:  req.Messages,
+	})
+}
+
+func (h ChatHandler) handleNonStreamCompletion(w http.ResponseWriter, ctx context.Context, req chat.CompletionRequest, tracker governance.RequestTracker) error {
 	resp, err := h.service.CreateCompletion(tracker.BindContext(ctx), req)
 	if err != nil {
-		traceErr = err
 		_ = tracker.Fail(ctx)
 		if isGovernanceError(err) {
 			writeGovernanceErrorWithMetrics(w, err, h.metrics)
-			return
+			return err
 		}
 		writeServiceError(w, err)
-		return
+		return err
 	}
 
 	if err := tracker.CompleteNonStream(ctx, req, resp); err != nil {
-		traceErr = err
 		writeGovernanceErrorWithMetrics(w, err, h.metrics)
-		return
+		return err
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+	return nil
+}
+
+func decodeCompletionRequest(w http.ResponseWriter, r *http.Request, req *chat.CompletionRequest) error {
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			return err
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return err
+	}
+	return nil
 }
 
 func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, req chat.CompletionRequest, tracker governance.RequestTracker) {

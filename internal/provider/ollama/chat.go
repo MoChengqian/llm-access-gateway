@@ -63,6 +63,13 @@ type modelPayload struct {
 	ModifiedAt string `json:"modified_at"`
 }
 
+type streamState struct {
+	ctx           context.Context
+	events        chan<- provider.ChatCompletionStreamEvent
+	attemptHandle provider.AttemptHandle
+	defaultModel  string
+}
+
 func New(cfg Config) Provider {
 	client := cfg.HTTPClient
 	if client == nil {
@@ -148,67 +155,100 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		state := streamState{
+			ctx:           ctx,
+			events:        events,
+			attemptHandle: attemptHandle,
+			defaultModel:  p.resolveModel(req.Model),
+		}
 		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-
-			var payload responsePayload
-			if err := json.Unmarshal([]byte(line), &payload); err != nil {
-				_ = failAttempt(ctx, attemptHandle, p.resolveModel(req.Model))
-				publishStreamError(ctx, events, err)
-				return
-			}
-			if payload.Error != "" {
-				_ = failAttempt(ctx, attemptHandle, p.resolveModel(req.Model))
-				publishStreamError(ctx, events, errors.New(payload.Error))
-				return
-			}
-
-			if payload.Done && payload.Message.Role == "" && payload.Message.Content == "" && payload.DoneReason == "" {
-				return
-			}
-
-			created := parseTimestamp(payload.CreatedAt)
-			model := payload.Model
-			if strings.TrimSpace(model) == "" {
-				model = p.resolveModel(req.Model)
-			}
-			event := provider.ChatCompletionStreamEvent{
-				Chunk: provider.ChatCompletionChunk{
-					ID:      completionID(created),
-					Object:  "chat.completion.chunk",
-					Created: created.Unix(),
-					Model:   model,
-					Choices: []provider.ChatChoice{{
-						Index:        0,
-						Message:      payload.Message,
-						FinishReason: finishReason(payload.DoneReason, payload.Done),
-					}},
-				},
-			}
-
-			select {
-			case <-ctx.Done():
-				_ = failAttempt(ctx, attemptHandle, model)
-				publishStreamError(ctx, events, ctx.Err())
-				return
-			case events <- event:
-			}
-
-			if payload.Done {
+			done, ok := state.consumeLine(scanner.Text())
+			if done || !ok {
 				return
 			}
 		}
 
 		if err := scanner.Err(); err != nil {
-			_ = failAttempt(ctx, attemptHandle, p.resolveModel(req.Model))
-			publishStreamError(ctx, events, err)
+			state.publishFailure(err, state.defaultModel)
 		}
 	}()
 
 	return events, nil
+}
+
+func (s *streamState) consumeLine(line string) (bool, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false, true
+	}
+
+	payload, err := decodeStreamPayload(trimmed)
+	if err != nil {
+		s.publishFailure(err, s.defaultModel)
+		return false, false
+	}
+	if isDoneSentinel(payload) {
+		return true, false
+	}
+
+	model := payloadModel(payload, s.defaultModel)
+	if !s.publishChunk(payload, model) {
+		return false, false
+	}
+	return payload.Done, !payload.Done
+}
+
+func decodeStreamPayload(line string) (responsePayload, error) {
+	var payload responsePayload
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		return responsePayload{}, err
+	}
+	if payload.Error != "" {
+		return responsePayload{}, errors.New(payload.Error)
+	}
+	return payload, nil
+}
+
+func isDoneSentinel(payload responsePayload) bool {
+	return payload.Done && payload.Message.Role == "" && payload.Message.Content == "" && payload.DoneReason == ""
+}
+
+func payloadModel(payload responsePayload, fallback string) string {
+	model := payload.Model
+	if strings.TrimSpace(model) != "" {
+		return model
+	}
+	return fallback
+}
+
+func (s *streamState) publishChunk(payload responsePayload, model string) bool {
+	created := parseTimestamp(payload.CreatedAt)
+	event := provider.ChatCompletionStreamEvent{
+		Chunk: provider.ChatCompletionChunk{
+			ID:      completionID(created),
+			Object:  "chat.completion.chunk",
+			Created: created.Unix(),
+			Model:   model,
+			Choices: []provider.ChatChoice{{
+				Index:        0,
+				Message:      payload.Message,
+				FinishReason: finishReason(payload.DoneReason, payload.Done),
+			}},
+		},
+	}
+
+	select {
+	case <-s.ctx.Done():
+		s.publishFailure(s.ctx.Err(), model)
+		return false
+	case s.events <- event:
+		return true
+	}
+}
+
+func (s *streamState) publishFailure(err error, model string) {
+	_ = failAttempt(s.ctx, s.attemptHandle, model)
+	publishStreamError(s.ctx, s.events, err)
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {

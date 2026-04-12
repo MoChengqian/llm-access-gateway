@@ -655,7 +655,18 @@ func newTestRouterWithMaxBodyBytes(store stubAuthStore, governanceStore *stubGov
 	chatService := chat.NewService(routerTestDefaultModel, providermock.New())
 	modelsService := modelsservice.NewService([]modelsservice.Source{providermock.New()})
 	usageService := usageservice.NewService(governanceStore)
-	return NewRouter(zap.NewNop(), chatService, modelsService, usageService, authService, governanceService, providers, registry, registry, maxRequestBodyBytes)
+	return NewRouter(RouterDependencies{
+		Logger:              zap.NewNop(),
+		ChatService:         chatService,
+		ModelsService:       modelsService,
+		UsageService:        usageService,
+		Authenticator:       authService,
+		GovernanceService:   governanceService,
+		Providers:           providers,
+		MetricsHandler:      registry,
+		MetricsRecorder:     registry,
+		MaxRequestBodyBytes: maxRequestBodyBytes,
+	})
 }
 
 type stubAuthStore struct {

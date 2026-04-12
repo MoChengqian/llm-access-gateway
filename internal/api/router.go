@@ -29,38 +29,51 @@ type ProviderStatusMetricsRecorder interface {
 	SyncProviderStatuses(statuses []handlers.ProviderBackendStatus)
 }
 
-func NewRouter(logger *zap.Logger, chatService chat.Service, modelsService models.Service, usageService usageservice.Service, authenticator auth.Authenticator, governanceService governance.Service, providers handlers.ProviderHealthReader, metricsHandler http.Handler, metricsRecorder RequestMetricsRecorder, maxRequestBodyBytes int64) http.Handler {
+type RouterDependencies struct {
+	Logger              *zap.Logger
+	ChatService         chat.Service
+	ModelsService       models.Service
+	UsageService        usageservice.Service
+	Authenticator       auth.Authenticator
+	GovernanceService   governance.Service
+	Providers           handlers.ProviderHealthReader
+	MetricsHandler      http.Handler
+	MetricsRecorder     RequestMetricsRecorder
+	MaxRequestBodyBytes int64
+}
+
+func NewRouter(deps RouterDependencies) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(requestIDHeader)
-	r.Use(requestTracing(logger))
-	r.Use(requestMetrics(metricsRecorder))
-	r.Use(requestLogger(logger))
+	r.Use(requestTracing(deps.Logger))
+	r.Use(requestMetrics(deps.MetricsRecorder))
+	r.Use(requestLogger(deps.Logger))
 
-	healthHandler := handlers.NewHealthHandler(providers)
-	chatHandler := handlers.NewChatHandler(chatService, governanceService, metricsRecorder)
-	modelsHandler := handlers.NewModelsHandler(modelsService)
-	usageHandler := handlers.NewUsageHandler(usageService)
+	healthHandler := handlers.NewHealthHandler(deps.Providers)
+	chatHandler := handlers.NewChatHandler(deps.ChatService, deps.GovernanceService, deps.MetricsRecorder)
+	modelsHandler := handlers.NewModelsHandler(deps.ModelsService)
+	usageHandler := handlers.NewUsageHandler(deps.UsageService)
 
-	if syncer, ok := metricsRecorder.(ProviderStatusMetricsRecorder); ok && providers != nil {
-		syncer.SyncProviderStatuses(providers.BackendStatuses())
+	if syncer, ok := deps.MetricsRecorder.(ProviderStatusMetricsRecorder); ok && deps.Providers != nil {
+		syncer.SyncProviderStatuses(deps.Providers.BackendStatuses())
 	}
 
 	r.Get("/healthz", healthHandler.Healthz)
 	r.Get("/readyz", healthHandler.Readyz)
 	r.Get("/debug/providers", healthHandler.Providers)
-	if metricsHandler != nil {
+	if deps.MetricsHandler != nil {
 		r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
-			metricsHandler.ServeHTTP(w, r)
+			deps.MetricsHandler.ServeHTTP(w, r)
 		})
 	}
-	r.Get("/v1/models", requireAPIKey(authenticator, modelsHandler.List))
-	r.Get("/v1/usage", requireAPIKey(authenticator, usageHandler.GetUsage))
+	r.Get("/v1/models", requireAPIKey(deps.Authenticator, modelsHandler.List))
+	r.Get("/v1/usage", requireAPIKey(deps.Authenticator, usageHandler.GetUsage))
 	r.Post("/v1/chat/completions", chainHandler(
-		requireAPIKey(authenticator, chatHandler.CreateCompletion),
-		limitRequestBody(maxRequestBodyBytes),
+		requireAPIKey(deps.Authenticator, chatHandler.CreateCompletion),
+		limitRequestBody(deps.MaxRequestBodyBytes),
 	))
 
 	return r
