@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      GOCACHE: /tmp/go-build
+      GOMODCACHE: /tmp/go-mod
     steps:
       - name: Check out repository
         uses: actions/checkout@v6

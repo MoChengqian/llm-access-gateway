@@ -29,8 +29,13 @@ require_file() {
 run_static_contract() {
   cd "${REPO_ROOT}"
 
+  print_section "go environment"
+  go version
+  go env GOOS GOARCH GOCACHE GOMODCACHE
+
   print_section "go test ./..."
-  go test ./...
+  go clean -testcache
+  go test -count=1 ./...
 
   print_section "go vet ./..."
   go vet ./...
