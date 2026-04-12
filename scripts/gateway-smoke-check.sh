@@ -5,10 +5,13 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
 API_KEY="${API_KEY:-lag-local-dev-key}"
 ASSERT="${ASSERT:-false}"
+HTTP_OK="HTTP/1.1 200 OK"
 
 fail() {
-  printf 'ERROR: %s\n' "$1" >&2
+  local message="$1"
+  printf 'ERROR: %s\n' "${message}" >&2
   exit 1
+  return 1
 }
 
 expect_contains() {
@@ -18,10 +21,13 @@ expect_contains() {
   if [[ "${haystack}" != *"${needle}"* ]]; then
     fail "${label}: expected to find ${needle}"
   fi
+  return 0
 }
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local title="$1"
+  printf '\n== %s ==\n' "${title}"
+  return 0
 }
 
 call_health() {
@@ -30,7 +36,7 @@ call_health() {
   output="$(curl -i -sS "${BASE_URL}/healthz")"
   printf '%s\n' "${output}"
   if [[ "${ASSERT}" == "true" ]]; then
-    expect_contains "${output}" "HTTP/1.1 200 OK" "/healthz status"
+    expect_contains "${output}" "${HTTP_OK}" "/healthz status"
     expect_contains "${output}" "X-Trace-Id:" "/healthz trace header"
   fi
   printf '\n'
@@ -43,6 +49,7 @@ call_health() {
     expect_contains "${output}" "lag_http_request_duration_milliseconds_count" "/metrics request latency"
   fi
   printf '\n'
+  return 0
 }
 
 call_models() {
@@ -52,10 +59,11 @@ call_models() {
     -H "Authorization: Bearer ${API_KEY}")"
   printf '%s\n' "${output}"
   if [[ "${ASSERT}" == "true" ]]; then
-    expect_contains "${output}" "HTTP/1.1 200 OK" "/v1/models status"
+    expect_contains "${output}" "${HTTP_OK}" "/v1/models status"
     expect_contains "${output}" "\"object\":\"list\"" "/v1/models object"
   fi
   printf '\n'
+  return 0
 }
 
 call_usage() {
@@ -65,11 +73,12 @@ call_usage() {
     -H "Authorization: Bearer ${API_KEY}")"
   printf '%s\n' "${output}"
   if [[ "${ASSERT}" == "true" ]]; then
-    expect_contains "${output}" "HTTP/1.1 200 OK" "/v1/usage status"
+    expect_contains "${output}" "${HTTP_OK}" "/v1/usage status"
     expect_contains "${output}" "\"object\":\"usage\"" "/v1/usage object"
     expect_contains "${output}" "\"summary\"" "/v1/usage summary"
   fi
   printf '\n'
+  return 0
 }
 
 call_chat() {
@@ -81,10 +90,11 @@ call_chat() {
     -d '{"messages":[{"role":"user","content":"hello"}]}')"
   printf '%s\n' "${output}"
   if [[ "${ASSERT}" == "true" ]]; then
-    expect_contains "${output}" "HTTP/1.1 200 OK" "non-stream status"
+    expect_contains "${output}" "${HTTP_OK}" "non-stream status"
     expect_contains "${output}" "\"object\":\"chat.completion\"" "non-stream object"
   fi
   printf '\n'
+  return 0
 }
 
 call_stream() {
@@ -96,11 +106,12 @@ call_stream() {
     -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}')"
   printf '%s\n' "${output}"
   if [[ "${ASSERT}" == "true" ]]; then
-    expect_contains "${output}" "HTTP/1.1 200 OK" "stream status"
+    expect_contains "${output}" "${HTTP_OK}" "stream status"
     expect_contains "${output}" "Content-Type: text/event-stream" "stream content-type"
     expect_contains "${output}" "data: [DONE]" "stream done marker"
   fi
   printf '\n'
+  return 0
 }
 
 call_loadtest() {
@@ -113,6 +124,7 @@ call_loadtest() {
     expect_contains "${output}" "\"status_counts\"" "loadtest status counts"
   fi
   printf '\n'
+  return 0
 }
 
 call_stream_loadtest() {
@@ -125,6 +137,7 @@ call_stream_loadtest() {
     expect_contains "${output}" "\"failure\": 0" "stream loadtest failure count"
   fi
   printf '\n'
+  return 0
 }
 
 call_health

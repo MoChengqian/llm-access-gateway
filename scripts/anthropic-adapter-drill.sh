@@ -9,7 +9,9 @@ API_KEY="${API_KEY:-lag-local-dev-key}"
 MODEL="${MODEL:-claude-3-5-sonnet-latest}"
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local title="$1"
+  printf '\n== %s ==\n' "${title}"
+  return 0
 }
 
 call_system_prompt() {
@@ -26,6 +28,7 @@ JSON
   print_section "GET synthetic upstream /debug/last-request"
   curl -sS "${UPSTREAM_BASE_URL}/debug/last-request"
   printf '\n'
+  return 0
 }
 
 call_partial_stream() {
@@ -33,11 +36,12 @@ call_partial_stream() {
   curl -i -sS -N "${BASE_URL}/v1/chat/completions" \
     -H "Authorization: Bearer ${API_KEY}" \
     -H 'Content-Type: application/json' \
-    -d "$(cat <<JSON
+  -d "$(cat <<JSON
 {"model":"${MODEL}","messages":[{"role":"user","content":"hello"}],"stream":true}
 JSON
 )"
   printf '\n'
+  return 0
 }
 
 case "${MODE}" in

@@ -20,6 +20,7 @@ PRODUCTION_NETWORK_POLICY_NAME = "llm-access-gateway-boundary"
 GATEWAY_CONFIG_NAME = "llm-access-gateway-config"
 GATEWAY_SECRET_NAME = "llm-access-gateway-secrets"
 DEVINIT_JOB_NAME = "llm-access-gateway-devinit"
+BASE_GATEWAY_IMAGE = "llm-access-gateway:v0.0.0-local"
 PRODUCTION_DEPLOYMENT_LABEL = "production Deployment"
 PRODUCTION_DEPLOYMENT_TEMPLATE_LABEL = "#{PRODUCTION_DEPLOYMENT_LABEL} template"
 PRODUCTION_JOB_LABEL = "production Job"
@@ -242,6 +243,7 @@ def validate_job(doc)
   template_spec = fetch_hash!(fetch_hash!(fetch_hash!(doc, "spec", "Job"), "template", "Job template"), "spec", "Job template spec")
   abort("Job restartPolicy must be OnFailure") unless template_spec["restartPolicy"] == "OnFailure"
   container = first_container(template_spec, "Job")
+  abort("Job container image mismatch") unless container["image"] == BASE_GATEWAY_IMAGE
   abort("Job container command missing #{DEVINIT_COMMAND}") unless Array(container["command"]).include?(DEVINIT_COMMAND)
   validate_env_from_refs(container)
 end
@@ -258,7 +260,7 @@ def validate_deployment(doc)
 
   template_spec = fetch_hash!(fetch_hash!(spec, "template", "Deployment template"), "spec", "Deployment template spec")
   container = first_container(template_spec, "Deployment")
-  abort("Deployment container image mismatch") unless container["image"] == "llm-access-gateway:latest"
+  abort("Deployment container image mismatch") unless container["image"] == BASE_GATEWAY_IMAGE
   validate_container_port(container, 8080)
   validate_probe_path(container, "readinessProbe", "/readyz")
   validate_probe_path(container, "livenessProbe", "/healthz")

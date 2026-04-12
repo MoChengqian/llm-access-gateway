@@ -41,10 +41,10 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 
-	if got := rec.Header().Get("X-Request-Id"); got == "" {
+	if rec.Header().Get("X-Request-Id") == "" {
 		t.Fatal("expected X-Request-Id header to be set")
 	}
-	if got := rec.Header().Get("X-Trace-Id"); got == "" {
+	if rec.Header().Get("X-Trace-Id") == "" {
 		t.Fatal("expected X-Trace-Id header to be set")
 	}
 	if rec.Header().Get("X-Trace-Id") != rec.Header().Get("X-Request-Id") {

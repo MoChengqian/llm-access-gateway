@@ -85,7 +85,7 @@ This job exists so schema/bootstrap work happens before the gateway pod starts s
 
 - `Deployment/llm-access-gateway`
 - one replica
-- container image `llm-access-gateway:latest`
+- container image `llm-access-gateway:v0.0.0-local`
 - container port `8080`
 - readiness probe on `/readyz`
 - liveness probe on `/healthz`
