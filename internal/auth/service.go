@@ -46,19 +46,23 @@ type APIKeyRecord struct {
 	APIKeyPrefix  string
 }
 
-type APIKeyStore interface {
+type APIKeyFinder interface {
 	LookupAPIKey(ctx context.Context, keyHash string) (APIKeyRecord, error)
 }
 
-type Authenticator interface {
+type APIKeyStore = APIKeyFinder
+
+type RequestAuthenticator interface {
 	AuthenticateRequest(ctx context.Context, authorization string) (Principal, error)
 }
 
+type Authenticator = RequestAuthenticator
+
 type Service struct {
-	store APIKeyStore
+	store APIKeyFinder
 }
 
-func NewService(store APIKeyStore) Service {
+func NewService(store APIKeyFinder) Service {
 	return Service{store: store}
 }
 

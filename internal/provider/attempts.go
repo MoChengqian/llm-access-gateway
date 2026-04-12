@@ -6,9 +6,11 @@ import (
 	"time"
 )
 
-type AttemptRecorder interface {
+type AttemptBeginner interface {
 	BeginAttempt(ctx context.Context, metadata AttemptMetadata) (AttemptHandle, error)
 }
+
+type AttemptRecorder = AttemptBeginner
 
 type AttemptHandle interface {
 	Complete(ctx context.Context, result AttemptResult) error
