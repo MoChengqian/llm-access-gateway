@@ -3,6 +3,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,14 @@ import (
 	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
+)
+
+const (
+	ollamaTestContentTypeHeader    = "Content-Type"
+	ollamaTestJSONContentType      = "application/json"
+	ollamaTestDefaultModel         = "llama3.1:8b"
+	ollamaCompletionResponsePrefix = `{"model":"`
+	ollamaCompletionResponseSuffix = `","created_at":"2026-04-09T09:00:00Z","message":{"role":"assistant","content":"hello"},"done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":1}`
 )
 
 func TestCreateChatCompletion(t *testing.T) {
@@ -22,15 +31,15 @@ func TestCreateChatCompletion(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"llama3.1:8b","created_at":"2026-04-09T09:00:00Z","message":{"role":"assistant","content":"hello"},"done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":1}`))
+		w.Header().Set(ollamaTestContentTypeHeader, ollamaTestJSONContentType)
+		_, _ = w.Write([]byte(ollamaCompletionResponsePrefix + ollamaTestDefaultModel + ollamaCompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
 		APIKey:       "test-key",
-		DefaultModel: "llama3.1:8b",
+		DefaultModel: ollamaTestDefaultModel,
 	})
 
 	resp, err := p.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{
@@ -43,10 +52,10 @@ func TestCreateChatCompletion(t *testing.T) {
 	if authHeader != "Bearer test-key" {
 		t.Fatalf("expected authorization header, got %s", authHeader)
 	}
-	if payload.Model != "llama3.1:8b" || payload.Stream {
+	if payload.Model != ollamaTestDefaultModel || payload.Stream {
 		t.Fatalf("unexpected request payload %#v", payload)
 	}
-	if resp.Model != "llama3.1:8b" || resp.Choices[0].Message.Content != "hello" {
+	if resp.Model != ollamaTestDefaultModel || resp.Choices[0].Message.Content != "hello" {
 		t.Fatalf("unexpected response %#v", resp)
 	}
 	if resp.Usage.TotalTokens != 4 {
@@ -56,16 +65,16 @@ func TestCreateChatCompletion(t *testing.T) {
 
 func TestStreamChatCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, _ = w.Write([]byte("{\"model\":\"llama3.1:8b\",\"created_at\":\"2026-04-09T09:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},\"done\":false}\n"))
-		_, _ = w.Write([]byte("{\"model\":\"llama3.1:8b\",\"created_at\":\"2026-04-09T09:00:01Z\",\"message\":{\"content\":\"lo\"},\"done\":false}\n"))
-		_, _ = w.Write([]byte("{\"model\":\"llama3.1:8b\",\"created_at\":\"2026-04-09T09:00:02Z\",\"message\":{},\"done\":true,\"done_reason\":\"stop\"}\n"))
+		w.Header().Set(ollamaTestContentTypeHeader, "application/x-ndjson")
+		_, _ = w.Write([]byte(ollamaStreamChunk(ollamaTestDefaultModel, "2026-04-09T09:00:00Z", `{"role":"assistant","content":"hel"}`, false, "")))
+		_, _ = w.Write([]byte(ollamaStreamChunk(ollamaTestDefaultModel, "2026-04-09T09:00:01Z", `{"content":"lo"}`, false, "")))
+		_, _ = w.Write([]byte(ollamaStreamChunk(ollamaTestDefaultModel, "2026-04-09T09:00:02Z", `{}`, true, "stop")))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "llama3.1:8b",
+		DefaultModel: ollamaTestDefaultModel,
 	})
 
 	chunks, err := p.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{
@@ -99,8 +108,8 @@ func TestListModels(t *testing.T) {
 		if r.URL.Path != "/api/tags" {
 			t.Fatalf("expected /api/tags, got %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"models":[{"name":"llama3.1:8b","model":"llama3.1:8b","modified_at":"2026-04-09T09:00:00Z"}]}`))
+		w.Header().Set(ollamaTestContentTypeHeader, ollamaTestJSONContentType)
+		_, _ = w.Write([]byte(`{"models":[{"name":"` + ollamaTestDefaultModel + `","model":"` + ollamaTestDefaultModel + `","modified_at":"2026-04-09T09:00:00Z"}]}`))
 	}))
 	defer server.Close()
 
@@ -110,7 +119,7 @@ func TestListModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list models: %v", err)
 	}
-	if len(models) != 1 || models[0].ID != "llama3.1:8b" || models[0].OwnedBy != "ollama" {
+	if len(models) != 1 || models[0].ID != ollamaTestDefaultModel || models[0].OwnedBy != "ollama" {
 		t.Fatalf("unexpected models %#v", models)
 	}
 }
@@ -125,14 +134,14 @@ func TestCreateChatCompletionRetriesRetryableStatus(t *testing.T) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"llama3.1:8b","created_at":"2026-04-09T09:00:00Z","message":{"role":"assistant","content":"hello"},"done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":1}`))
+		w.Header().Set(ollamaTestContentTypeHeader, ollamaTestJSONContentType)
+		_, _ = w.Write([]byte(ollamaCompletionResponsePrefix + ollamaTestDefaultModel + ollamaCompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "llama3.1:8b",
+		DefaultModel: ollamaTestDefaultModel,
 		MaxRetries:   1,
 		RetryBackoff: time.Millisecond,
 	})
@@ -154,14 +163,14 @@ func TestCreateChatCompletionRetriesRetryableStatus(t *testing.T) {
 func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"llama3.1:8b","created_at":"2026-04-09T09:00:00Z","message":{"role":"assistant","content":"hello"},"done":true}`))
+		w.Header().Set(ollamaTestContentTypeHeader, ollamaTestJSONContentType)
+		_, _ = w.Write([]byte(`{"model":"` + ollamaTestDefaultModel + `","created_at":"2026-04-09T09:00:00Z","message":{"role":"assistant","content":"hello"},"done":true}`))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "llama3.1:8b",
+		DefaultModel: ollamaTestDefaultModel,
 		Timeout:      10 * time.Millisecond,
 	})
 
@@ -171,4 +180,25 @@ func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
+}
+
+func ollamaStreamChunk(model string, createdAt string, messageJSON string, done bool, doneReason string) string {
+	if doneReason == "" {
+		return fmt.Sprintf(
+			"{\"model\":\"%s\",\"created_at\":\"%s\",\"message\":%s,\"done\":%t}\n",
+			model,
+			createdAt,
+			messageJSON,
+			done,
+		)
+	}
+
+	return fmt.Sprintf(
+		"{\"model\":\"%s\",\"created_at\":\"%s\",\"message\":%s,\"done\":%t,\"done_reason\":\"%s\"}\n",
+		model,
+		createdAt,
+		messageJSON,
+		done,
+		doneReason,
+	)
 }

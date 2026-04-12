@@ -2,13 +2,15 @@ package config
 
 import "testing"
 
+const loadConfigErrorFormat = "load config: %v"
+
 func TestLoadParsesProviderModelListsFromEnvironment(t *testing.T) {
 	t.Setenv("APP_PROVIDER_PRIMARY_MODELS", "[]")
 	t.Setenv("APP_PROVIDER_SECONDARY_MODELS", `["gpt-4o-mini","gpt-4.1-mini"]`)
 
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("load config: %v", err)
+		t.Fatalf(loadConfigErrorFormat, err)
 	}
 
 	if len(cfg.Provider.Primary.Models) != 0 {
@@ -27,7 +29,7 @@ func TestLoadParsesCommaSeparatedProviderModelListsFromEnvironment(t *testing.T)
 
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("load config: %v", err)
+		t.Fatalf(loadConfigErrorFormat, err)
 	}
 
 	if len(cfg.Provider.Primary.Models) != 2 {
@@ -40,7 +42,7 @@ func TestLoadParsesProviderMaxTokensFromEnvironment(t *testing.T) {
 
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("load config: %v", err)
+		t.Fatalf(loadConfigErrorFormat, err)
 	}
 
 	if cfg.Provider.Primary.MaxTokens != 2048 {
@@ -56,7 +58,7 @@ func TestLoadParsesObservabilityFromEnvironment(t *testing.T) {
 
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("load config: %v", err)
+		t.Fatalf(loadConfigErrorFormat, err)
 	}
 
 	if cfg.Observability.ServiceName != "lag-test" {

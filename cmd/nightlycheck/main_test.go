@@ -7,6 +7,15 @@ import (
 	"testing"
 )
 
+const (
+	prechunkOutputFile = "prechunk.out"
+	prechunkPromFile   = "prechunk.prom"
+	partialOutputFile  = "partial.out"
+	partialPromFile    = "partial.prom"
+	httpOKOutput       = "HTTP/1.1 200 OK"
+	httpServerError    = "HTTP/1.1 500 Internal Server Error\n"
+)
+
 func TestValidateBenchmarkSummarySuccess(t *testing.T) {
 	t.Parallel()
 
@@ -73,15 +82,15 @@ func TestValidateStreamFailureModeSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	cfg := config{
-		PrechunkOutputPath: writeTempFile(t, dir, "prechunk.out", "HTTP/1.1 200 OK\ndata: {\"id\":\"chatcmpl-mock\"}\ndata: [DONE]\n"),
-		PrechunkMetricsPath: writeTempFile(t, dir, "prechunk.prom", strings.Join([]string{
+		PrechunkOutputPath: writeTempFile(t, dir, prechunkOutputFile, httpOKOutput+"\ndata: {\"id\":\"chatcmpl-mock\"}\ndata: [DONE]\n"),
+		PrechunkMetricsPath: writeTempFile(t, dir, prechunkPromFile, strings.Join([]string{
 			`# HELP lag_provider_events_total Total provider routing events.`,
 			`lag_provider_events_total{type="provider_request_failed",operation="stream",backend="openai-primary"} 1`,
 			`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1`,
 			"",
 		}, "\n")),
-		PartialOutputPath: writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: {\"content\":\"partial \"}\n"),
-		PartialMetricsPath: writeTempFile(t, dir, "partial.prom", strings.Join([]string{
+		PartialOutputPath: writeTempFile(t, dir, partialOutputFile, httpOKOutput+"\ndata: {\"content\":\"partial \"}\n"),
+		PartialMetricsPath: writeTempFile(t, dir, partialPromFile, strings.Join([]string{
 			`lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="openai-primary"} 1`,
 			"",
 		}, "\n")),
@@ -98,10 +107,10 @@ func TestValidateStreamFailureModeFailure(t *testing.T) {
 
 	dir := t.TempDir()
 	cfg := config{
-		PrechunkOutputPath:  writeTempFile(t, dir, "prechunk.out", "HTTP/1.1 500 Internal Server Error\n"),
-		PrechunkMetricsPath: writeTempFile(t, dir, "prechunk.prom", ""),
-		PartialOutputPath:   writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: partial \ndata: [DONE]\n"),
-		PartialMetricsPath: writeTempFile(t, dir, "partial.prom", strings.Join([]string{
+		PrechunkOutputPath:  writeTempFile(t, dir, prechunkOutputFile, httpServerError),
+		PrechunkMetricsPath: writeTempFile(t, dir, prechunkPromFile, ""),
+		PartialOutputPath:   writeTempFile(t, dir, partialOutputFile, httpOKOutput+"\ndata: partial \ndata: [DONE]\n"),
+		PartialMetricsPath: writeTempFile(t, dir, partialPromFile, strings.Join([]string{
 			`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1`,
 			"",
 		}, "\n")),
@@ -128,7 +137,7 @@ func TestValidateAnthropicAdapterModeSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	cfg := config{
-		SystemOutputPath: writeTempFile(t, dir, "system.out", "HTTP/1.1 200 OK\n{\"choices\":[{\"message\":{\"content\":\"system=Be concise.\\\\n\\\\nUse JSON only.;messages=1;first_role=user\"}}]}\n"),
+		SystemOutputPath: writeTempFile(t, dir, "system.out", httpOKOutput+"\n{\"choices\":[{\"message\":{\"content\":\"system=Be concise.\\\\n\\\\nUse JSON only.;messages=1;first_role=user\"}}]}\n"),
 		UpstreamRequestPath: writeTempFile(t, dir, "upstream-request.json", `{
   "path": "/v1/messages",
   "headers": {
@@ -147,14 +156,14 @@ func TestValidateAnthropicAdapterModeSuccess(t *testing.T) {
     ]
   }
 }`),
-		PrechunkOutputPath: writeTempFile(t, dir, "prechunk.out", "HTTP/1.1 200 OK\ndata: {\"id\":\"chatcmpl-mock\"}\ndata: [DONE]\n"),
-		PrechunkMetricsPath: writeTempFile(t, dir, "prechunk.prom", strings.Join([]string{
+		PrechunkOutputPath: writeTempFile(t, dir, prechunkOutputFile, httpOKOutput+"\ndata: {\"id\":\"chatcmpl-mock\"}\ndata: [DONE]\n"),
+		PrechunkMetricsPath: writeTempFile(t, dir, prechunkPromFile, strings.Join([]string{
 			`lag_provider_events_total{type="provider_request_failed",operation="stream",backend="anthropic-primary"} 1`,
 			`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1`,
 			"",
 		}, "\n")),
-		PartialOutputPath: writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: {\"content\":\"anthropic partial \"}\n"),
-		PartialMetricsPath: writeTempFile(t, dir, "partial.prom", strings.Join([]string{
+		PartialOutputPath: writeTempFile(t, dir, partialOutputFile, httpOKOutput+"\ndata: {\"content\":\"anthropic partial \"}\n"),
+		PartialMetricsPath: writeTempFile(t, dir, partialPromFile, strings.Join([]string{
 			`lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="anthropic-primary"} 1`,
 			"",
 		}, "\n")),
@@ -174,7 +183,7 @@ func TestValidateAnthropicAdapterModeFailure(t *testing.T) {
 
 	dir := t.TempDir()
 	cfg := config{
-		SystemOutputPath: writeTempFile(t, dir, "system.out", "HTTP/1.1 500 Internal Server Error\n"),
+		SystemOutputPath: writeTempFile(t, dir, "system.out", httpServerError),
 		UpstreamRequestPath: writeTempFile(t, dir, "upstream-request.json", `{
   "path": "/wrong",
   "headers": {},
@@ -187,10 +196,10 @@ func TestValidateAnthropicAdapterModeFailure(t *testing.T) {
     ]
   }
 }`),
-		PrechunkOutputPath:  writeTempFile(t, dir, "prechunk.out", "HTTP/1.1 500 Internal Server Error\n"),
-		PrechunkMetricsPath: writeTempFile(t, dir, "prechunk.prom", ""),
-		PartialOutputPath:   writeTempFile(t, dir, "partial.out", "HTTP/1.1 200 OK\ndata: anthropic partial \ndata: [DONE]\n"),
-		PartialMetricsPath: writeTempFile(t, dir, "partial.prom", strings.Join([]string{
+		PrechunkOutputPath:  writeTempFile(t, dir, prechunkOutputFile, httpServerError),
+		PrechunkMetricsPath: writeTempFile(t, dir, prechunkPromFile, ""),
+		PartialOutputPath:   writeTempFile(t, dir, partialOutputFile, httpOKOutput+"\ndata: anthropic partial \ndata: [DONE]\n"),
+		PartialMetricsPath: writeTempFile(t, dir, partialPromFile, strings.Join([]string{
 			`lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"} 1`,
 			"",
 		}, "\n")),

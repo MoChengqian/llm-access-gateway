@@ -10,17 +10,19 @@ K8S_DIR = File.join(REPO_ROOT, "deployments", "k8s")
 K8S_PRODUCTION_OVERLAY_DIR = File.join(REPO_ROOT, "deployments", "k8s-overlays", "production")
 K8S_PRODUCTION_HPA_OVERLAY_DIR = File.join(REPO_ROOT, "deployments", "k8s-overlays", "production-hpa")
 OBSERVABILITY_DIR = File.join(REPO_ROOT, "deployments", "observability")
-EXPECTED_NAMESPACE = "llm-access-gateway"
+APP_NAME = "llm-access-gateway"
+EXPECTED_NAMESPACE = APP_NAME
 KUSTOMIZATION_FILE = "kustomization.yaml"
 DEVINIT_COMMAND = "/app/devinit"
 OTEL_COLLECTOR_SERVICE = "otel-collector"
 OTEL_COLLECTOR_CONFIG = "otel collector config"
 OTEL_COLLECTOR_METRICS_TARGET = "#{OTEL_COLLECTOR_SERVICE}:8888"
-PRODUCTION_NETWORK_POLICY_NAME = "llm-access-gateway-boundary"
-GATEWAY_CONFIG_NAME = "llm-access-gateway-config"
-GATEWAY_SECRET_NAME = "llm-access-gateway-secrets"
-DEVINIT_JOB_NAME = "llm-access-gateway-devinit"
-BASE_GATEWAY_IMAGE = "llm-access-gateway:v0.0.0-local"
+PRODUCTION_NETWORK_POLICY_NAME = "#{APP_NAME}-boundary"
+GATEWAY_CONFIG_NAME = "#{APP_NAME}-config"
+GATEWAY_SECRET_NAME = "#{APP_NAME}-secrets"
+DEVINIT_JOB_NAME = "#{APP_NAME}-devinit"
+BASE_GATEWAY_IMAGE = "#{APP_NAME}:v0.0.0-local"
+PRODUCTION_TLS_SECRET_NAME = "#{APP_NAME}-tls"
 PRODUCTION_DEPLOYMENT_LABEL = "production Deployment"
 PRODUCTION_DEPLOYMENT_TEMPLATE_LABEL = "#{PRODUCTION_DEPLOYMENT_LABEL} template"
 PRODUCTION_JOB_LABEL = "production Job"
@@ -28,7 +30,9 @@ PRODUCTION_JOB_TEMPLATE_LABEL = "#{PRODUCTION_JOB_LABEL} template"
 PRODUCTION_PDB_LABEL = "production PodDisruptionBudget"
 PRODUCTION_NETWORK_POLICY_LABEL = "production NetworkPolicy"
 PRODUCTION_HPA_LABEL = "production HorizontalPodAutoscaler"
-PRODUCTION_GATEWAY_IMAGE = "ghcr.io/example/llm-access-gateway:v1.0.0"
+PRODUCTION_GATEWAY_IMAGE = "ghcr.io/example/#{APP_NAME}:v1.0.0"
+GRAFANA_DASHBOARD_PATH = "/var/lib/grafana/dashboards/#{APP_NAME}"
+GRAFANA_DASHBOARD_FILE = "#{APP_NAME}.json"
 
 def main
   validate_compose(load_compose_config(COMPOSE_FILE))
@@ -250,13 +254,13 @@ end
 
 def validate_deployment(doc)
   validate_kind(doc, "Deployment")
-  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_name(doc, APP_NAME)
   validate_metadata_namespace(doc)
 
   spec = fetch_hash!(doc, "spec", "Deployment")
   abort("Deployment replicas must be 1") unless spec["replicas"].to_i == 1
   selector = fetch_hash!(fetch_hash!(spec, "selector", "Deployment selector"), "matchLabels", "Deployment selector labels")
-  abort("Deployment selector missing app label") unless selector["app"] == "llm-access-gateway"
+  abort("Deployment selector missing app label") unless selector["app"] == APP_NAME
 
   template_spec = fetch_hash!(fetch_hash!(spec, "template", "Deployment template"), "spec", "Deployment template spec")
   container = first_container(template_spec, "Deployment")
@@ -269,12 +273,12 @@ end
 
 def validate_service(doc)
   validate_kind(doc, "Service")
-  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_name(doc, APP_NAME)
   validate_metadata_namespace(doc)
   spec = fetch_hash!(doc, "spec", "Service")
   abort("Service type must be ClusterIP") unless spec["type"] == "ClusterIP"
   selector = fetch_hash!(spec, "selector", "Service selector")
-  abort("Service selector missing app label") unless selector["app"] == "llm-access-gateway"
+  abort("Service selector missing app label") unless selector["app"] == APP_NAME
   ports = Array(spec["ports"])
   abort("Service missing port 8080") unless ports.any? { |entry| entry.is_a?(Hash) && entry["port"].to_i == 8080 }
 end
@@ -291,8 +295,8 @@ def validate_production_kustomization(doc)
     abort("production kustomization missing patch #{patch}") unless patches.include?(patch)
   end
 
-  image = Array(doc["images"]).find { |entry| entry.is_a?(Hash) && entry["name"] == "llm-access-gateway" }
-  abort("production kustomization missing llm-access-gateway image override") unless image
+  image = Array(doc["images"]).find { |entry| entry.is_a?(Hash) && entry["name"] == APP_NAME }
+  abort("production kustomization missing #{APP_NAME} image override") unless image
   abort("production image registry mismatch") unless image["newName"].to_s.start_with?("ghcr.io/")
   abort("production image tag must not be latest") if image["newTag"].to_s.empty? || image["newTag"] == "latest"
 end
@@ -342,7 +346,7 @@ end
 
 def validate_production_deployment(doc, patch: false)
   validate_kind(doc, "Deployment")
-  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_name(doc, APP_NAME)
   validate_metadata_namespace(doc)
 
   spec = fetch_hash!(doc, "spec", PRODUCTION_DEPLOYMENT_LABEL)
@@ -398,19 +402,19 @@ end
 
 def validate_production_ingress(doc)
   validate_kind(doc, "Ingress")
-  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_name(doc, APP_NAME)
   validate_metadata_namespace(doc)
   spec = fetch_hash!(doc, "spec", "production Ingress")
   abort("production Ingress class must be nginx") unless spec["ingressClassName"] == "nginx"
   tls = Array(spec["tls"]).first
   abort("production Ingress missing TLS") unless tls.is_a?(Hash)
-  abort("production Ingress TLS secret mismatch") unless tls["secretName"] == "llm-access-gateway-tls"
+  abort("production Ingress TLS secret mismatch") unless tls["secretName"] == PRODUCTION_TLS_SECRET_NAME
   abort("production Ingress TLS host mismatch") unless Array(tls["hosts"]).include?("gateway.example.com")
   rule = Array(spec["rules"]).find { |entry| entry.is_a?(Hash) && entry["host"] == "gateway.example.com" }
   abort("production Ingress missing gateway.example.com rule") unless rule
   paths = Array(rule.dig("http", "paths"))
   backend = paths.first&.dig("backend", "service")
-  abort("production Ingress backend service mismatch") unless backend&.dig("name") == "llm-access-gateway"
+  abort("production Ingress backend service mismatch") unless backend&.dig("name") == APP_NAME
   abort("production Ingress backend port mismatch") unless backend&.dig("port", "number").to_i == 8080
 end
 
@@ -420,7 +424,7 @@ def validate_production_networkpolicy(doc)
   validate_metadata_namespace(doc)
   spec = fetch_hash!(doc, "spec", PRODUCTION_NETWORK_POLICY_LABEL)
   selector = fetch_hash!(fetch_hash!(spec, "podSelector", PRODUCTION_NETWORK_POLICY_LABEL), "matchLabels", PRODUCTION_NETWORK_POLICY_LABEL)
-  abort("production NetworkPolicy selector mismatch") unless selector["app"] == "llm-access-gateway"
+  abort("production NetworkPolicy selector mismatch") unless selector["app"] == APP_NAME
 
   policy_types = Array(spec["policyTypes"])
   abort("production NetworkPolicy missing Ingress type") unless policy_types.include?("Ingress")
@@ -429,7 +433,7 @@ def validate_production_networkpolicy(doc)
   ingress = Array(spec["ingress"])
   abort("production NetworkPolicy missing ingress rules") if ingress.empty?
   ingress_namespaces = namespace_selector_values(ingress.flat_map { |rule| Array(rule["from"]) })
-  %w[ingress-nginx monitoring llm-access-gateway].each do |namespace|
+  ["ingress-nginx", "monitoring", APP_NAME].each do |namespace|
     abort("production NetworkPolicy ingress missing namespace #{namespace}") unless ingress_namespaces.include?(namespace)
   end
   ingress_ports = policy_ports(ingress)
@@ -453,22 +457,22 @@ end
 
 def validate_production_poddisruptionbudget(doc)
   validate_kind(doc, "PodDisruptionBudget")
-  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_name(doc, APP_NAME)
   validate_metadata_namespace(doc)
   spec = fetch_hash!(doc, "spec", PRODUCTION_PDB_LABEL)
   abort("production PodDisruptionBudget minAvailable must be 1") unless spec["minAvailable"].to_i == 1
   selector = fetch_hash!(fetch_hash!(spec, "selector", PRODUCTION_PDB_LABEL), "matchLabels", PRODUCTION_PDB_LABEL)
-  abort("production PodDisruptionBudget selector mismatch") unless selector["app"] == "llm-access-gateway"
+  abort("production PodDisruptionBudget selector mismatch") unless selector["app"] == APP_NAME
 end
 
 def validate_production_hpa(doc)
   validate_kind(doc, "HorizontalPodAutoscaler")
-  validate_metadata_name(doc, "llm-access-gateway")
+  validate_metadata_name(doc, APP_NAME)
   validate_metadata_namespace(doc)
   spec = fetch_hash!(doc, "spec", PRODUCTION_HPA_LABEL)
   target = fetch_hash!(spec, "scaleTargetRef", PRODUCTION_HPA_LABEL)
   abort("production HPA target kind mismatch") unless target["kind"] == "Deployment"
-  abort("production HPA target name mismatch") unless target["name"] == "llm-access-gateway"
+  abort("production HPA target name mismatch") unless target["name"] == APP_NAME
   abort("production HPA minReplicas must be 2") unless spec["minReplicas"].to_i == 2
   abort("production HPA maxReplicas must be 6") unless spec["maxReplicas"].to_i == 6
 
@@ -494,12 +498,12 @@ def validate_production_render
   validate_configmap(find_doc!(docs, "ConfigMap", GATEWAY_CONFIG_NAME))
   validate_production_configmap(find_doc!(docs, "ConfigMap", GATEWAY_CONFIG_NAME))
   validate_production_secret(find_doc!(docs, "Secret", GATEWAY_SECRET_NAME))
-  validate_service(find_doc!(docs, "Service", "llm-access-gateway"))
-  validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
+  validate_service(find_doc!(docs, "Service", APP_NAME))
+  validate_production_deployment(find_doc!(docs, "Deployment", APP_NAME))
   validate_production_job(find_doc!(docs, "Job", DEVINIT_JOB_NAME))
-  validate_production_ingress(find_doc!(docs, "Ingress", "llm-access-gateway"))
+  validate_production_ingress(find_doc!(docs, "Ingress", APP_NAME))
   validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", PRODUCTION_NETWORK_POLICY_NAME))
-  validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
+  validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", APP_NAME))
 end
 
 def validate_production_hpa_render
@@ -508,10 +512,10 @@ def validate_production_hpa_render
 
   docs = safe_load_stream(stdout, "production HPA overlay render").compact
   validate_namespace(find_doc!(docs, "Namespace", EXPECTED_NAMESPACE))
-  validate_production_deployment(find_doc!(docs, "Deployment", "llm-access-gateway"))
+  validate_production_deployment(find_doc!(docs, "Deployment", APP_NAME))
   validate_production_networkpolicy(find_doc!(docs, "NetworkPolicy", PRODUCTION_NETWORK_POLICY_NAME))
-  validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", "llm-access-gateway"))
-  validate_production_hpa(find_doc!(docs, "HorizontalPodAutoscaler", "llm-access-gateway"))
+  validate_production_poddisruptionbudget(find_doc!(docs, "PodDisruptionBudget", APP_NAME))
+  validate_production_hpa(find_doc!(docs, "HorizontalPodAutoscaler", APP_NAME))
 end
 
 def validate_observability_configs
@@ -564,8 +568,8 @@ def validate_prometheus_config
   scrape_configs = Array(doc["scrape_configs"])
   abort("prometheus config missing scrape_configs") if scrape_configs.empty?
 
-  gateway_job = scrape_configs.find { |entry| entry.is_a?(Hash) && entry["job_name"] == "llm-access-gateway" }
-  abort("prometheus config missing llm-access-gateway job") unless gateway_job
+  gateway_job = scrape_configs.find { |entry| entry.is_a?(Hash) && entry["job_name"] == APP_NAME }
+  abort("prometheus config missing #{APP_NAME} job") unless gateway_job
   abort("prometheus gateway metrics_path mismatch") unless gateway_job["metrics_path"] == "/metrics"
   gateway_targets = Array(Array(gateway_job["static_configs"]).first&.fetch("targets", []))
   abort("prometheus gateway target mismatch") unless gateway_targets.include?("host.docker.internal:8080")
@@ -592,13 +596,12 @@ def validate_grafana_dashboard_config
   doc = load_yaml(path)
   providers = Array(doc["providers"])
   abort("grafana dashboards config missing providers") if providers.empty?
-  provider = providers.find { |entry| entry.is_a?(Hash) && entry["name"] == "llm-access-gateway" }
-  abort("grafana dashboards provider missing llm-access-gateway") unless provider
+  provider = providers.find { |entry| entry.is_a?(Hash) && entry["name"] == APP_NAME }
+  abort("grafana dashboards provider missing #{APP_NAME}") unless provider
   options = fetch_hash!(provider, "options", "grafana dashboard provider")
-  expected_path = "/var/lib/grafana/dashboards/llm-access-gateway"
-  abort("grafana dashboard provisioning path mismatch") unless options["path"] == expected_path
+  abort("grafana dashboard provisioning path mismatch") unless options["path"] == GRAFANA_DASHBOARD_PATH
 
-  dashboard_json = File.join(REPO_ROOT, "deployments", "grafana", "dashboards", "llm-access-gateway.json")
+  dashboard_json = File.join(REPO_ROOT, "deployments", "grafana", "dashboards", GRAFANA_DASHBOARD_FILE)
   abort("grafana dashboard JSON missing at #{dashboard_json}") unless File.file?(dashboard_json)
 end
 

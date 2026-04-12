@@ -11,18 +11,23 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/provider/router"
 )
 
+const (
+	metricsMockPrimary   = "mock-primary"
+	metricsMockSecondary = "mock-secondary"
+)
+
 func TestRegistryServeHTTP(t *testing.T) {
 	registry := NewRegistry()
 	cooldownUntil := time.Now().Add(time.Minute)
 	registry.SyncProviderStatuses([]handlers.ProviderBackendStatus{
 		{
-			Name:                "mock-primary",
+			Name:                metricsMockPrimary,
 			Healthy:             false,
 			ConsecutiveFailures: 2,
 			UnhealthyUntil:      cooldownUntil,
 		},
 		{
-			Name:    "mock-secondary",
+			Name:    metricsMockSecondary,
 			Healthy: true,
 		},
 	})
@@ -36,7 +41,7 @@ func TestRegistryServeHTTP(t *testing.T) {
 	registry.OnEvent(router.Event{
 		Type:                "provider_request_failed",
 		Operation:           "create",
-		Backend:             "mock-primary",
+		Backend:             metricsMockPrimary,
 		Duration:            15 * time.Millisecond,
 		ConsecutiveFailures: 2,
 		UnhealthyUntil:      cooldownUntil,
@@ -44,19 +49,19 @@ func TestRegistryServeHTTP(t *testing.T) {
 	registry.OnEvent(router.Event{
 		Type:      "provider_fallback_succeeded",
 		Operation: "create",
-		Backend:   "mock-secondary",
+		Backend:   metricsMockSecondary,
 		Duration:  5 * time.Millisecond,
 	})
 	registry.OnEvent(router.Event{
 		Type:      "provider_probe_succeeded",
 		Operation: "probe",
-		Backend:   "mock-secondary",
+		Backend:   metricsMockSecondary,
 		Duration:  2 * time.Millisecond,
 	})
 	registry.OnEvent(router.Event{
 		Type:                "provider_stream_interrupted",
 		Operation:           "stream",
-		Backend:             "mock-primary",
+		Backend:             metricsMockPrimary,
 		Duration:            7 * time.Millisecond,
 		ConsecutiveFailures: 2,
 		UnhealthyUntil:      cooldownUntil,
@@ -75,28 +80,28 @@ func TestRegistryServeHTTP(t *testing.T) {
 	if !strings.Contains(body, `lag_http_requests_total{method="GET",path="/healthz",status="200"} 1`) {
 		t.Fatalf("expected healthz request metric, got %s", body)
 	}
-	if !strings.Contains(body, `lag_provider_events_total{type="provider_fallback_succeeded",operation="create",backend="mock-secondary"} 1`) {
+	if !strings.Contains(body, `lag_provider_events_total{type="provider_fallback_succeeded",operation="create",backend="`+metricsMockSecondary+`"} 1`) {
 		t.Fatalf("expected fallback metric, got %s", body)
 	}
 	if !strings.Contains(body, `lag_http_request_duration_milliseconds_count{method="GET",path="/healthz",status="200"} 1`) {
 		t.Fatalf("expected http duration count, got %s", body)
 	}
-	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="create",backend="mock-primary",result="error"} 1`) {
+	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="create",backend="`+metricsMockPrimary+`",result="error"} 1`) {
 		t.Fatalf("expected provider duration count, got %s", body)
 	}
-	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="stream",backend="mock-primary",result="error"} 1`) {
+	if !strings.Contains(body, `lag_provider_operation_duration_milliseconds_count{operation="stream",backend="`+metricsMockPrimary+`",result="error"} 1`) {
 		t.Fatalf("expected interrupted stream duration count, got %s", body)
 	}
-	if !strings.Contains(body, `lag_provider_probe_results_total{backend="mock-secondary",result="success"} 1`) {
+	if !strings.Contains(body, `lag_provider_probe_results_total{backend="`+metricsMockSecondary+`",result="success"} 1`) {
 		t.Fatalf("expected provider probe result metric, got %s", body)
 	}
-	if !strings.Contains(body, `lag_provider_backend_healthy{backend="mock-primary"} 0`) {
+	if !strings.Contains(body, `lag_provider_backend_healthy{backend="`+metricsMockPrimary+`"} 0`) {
 		t.Fatalf("expected backend health gauge, got %s", body)
 	}
-	if !strings.Contains(body, `lag_provider_backend_consecutive_failures{backend="mock-primary"} 2`) {
+	if !strings.Contains(body, `lag_provider_backend_consecutive_failures{backend="`+metricsMockPrimary+`"} 2`) {
 		t.Fatalf("expected consecutive failure gauge, got %s", body)
 	}
-	if !strings.Contains(body, `lag_provider_backend_cooldown_remaining_milliseconds{backend="mock-primary"} `) {
+	if !strings.Contains(body, `lag_provider_backend_cooldown_remaining_milliseconds{backend="`+metricsMockPrimary+`"} `) {
 		t.Fatalf("expected cooldown gauge, got %s", body)
 	}
 	if !strings.Contains(body, "lag_provider_ready 1") {

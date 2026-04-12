@@ -8,14 +8,16 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
 
+const modelsTestDefaultModel = "gpt-4o-mini"
+
 func TestListModelsDeduplicatesAndFormatsResponse(t *testing.T) {
 	service := NewService([]Source{
 		stubSource{models: []provider.Model{
-			{ID: "gpt-4o-mini", Object: "model", Created: 1, OwnedBy: "primary"},
+			{ID: modelsTestDefaultModel, Object: "model", Created: 1, OwnedBy: "primary"},
 			{ID: "gpt-4.1", Object: "model", Created: 2, OwnedBy: "primary"},
 		}},
 		stubSource{models: []provider.Model{
-			{ID: "gpt-4o-mini", Object: "model", Created: 3, OwnedBy: "secondary"},
+			{ID: modelsTestDefaultModel, Object: "model", Created: 3, OwnedBy: "secondary"},
 		}},
 	})
 
@@ -29,7 +31,7 @@ func TestListModelsDeduplicatesAndFormatsResponse(t *testing.T) {
 	if len(resp.Data) != 2 {
 		t.Fatalf("expected 2 models, got %#v", resp.Data)
 	}
-	if resp.Data[0].ID != "gpt-4.1" || resp.Data[1].ID != "gpt-4o-mini" {
+	if resp.Data[0].ID != "gpt-4.1" || resp.Data[1].ID != modelsTestDefaultModel {
 		t.Fatalf("unexpected models %#v", resp.Data)
 	}
 	if resp.Data[1].Object != "model" || resp.Data[1].OwnedBy != "secondary" {
@@ -52,7 +54,7 @@ func TestListModelsReturnsPartialResultsWhenOneSourceFails(t *testing.T) {
 	service := NewService([]Source{
 		stubSource{err: errors.New("primary unavailable")},
 		stubSource{models: []provider.Model{
-			{ID: "gpt-4o-mini", OwnedBy: "secondary"},
+			{ID: modelsTestDefaultModel, OwnedBy: "secondary"},
 		}},
 	})
 
@@ -60,7 +62,7 @@ func TestListModelsReturnsPartialResultsWhenOneSourceFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected partial success, got %v", err)
 	}
-	if len(resp.Data) != 1 || resp.Data[0].ID != "gpt-4o-mini" {
+	if len(resp.Data) != 1 || resp.Data[0].ID != modelsTestDefaultModel {
 		t.Fatalf("unexpected response %#v", resp)
 	}
 }

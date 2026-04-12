@@ -13,9 +13,15 @@ import (
 )
 
 const (
-	testDefaultModel   = "gpt-4o-mini"
-	testGenericBackend = "generic-fallback"
-	testFastBackend    = "fast-gpt4o"
+	testDefaultModel                   = "gpt-4o-mini"
+	testOpenAIModel                    = "gpt-4.1-mini"
+	testAnthropicModel                 = "claude-3-5-sonnet-latest"
+	testOllamaModel                    = "llama3.1:8b"
+	testGenericBackend                 = "generic-fallback"
+	testFastBackend                    = "fast-gpt4o"
+	expectedConfiguredModelsMessage    = "expected configured models, got %#v"
+	expectedProviderImplementation     = "expected provider implementation"
+	expectedMissingBaseURLErrorMessage = "expected missing base url error"
 )
 
 func TestBuildProviderBackendSupportsMock(t *testing.T) {
@@ -50,9 +56,9 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 		Name:           "openai-primary",
 		BaseURL:        "https://example.com/v1",
 		APIKey:         "key",
-		Model:          "gpt-4.1-mini",
+		Model:          testOpenAIModel,
 		Priority:       10,
-		Models:         []string{"gpt-4.1-mini"},
+		Models:         []string{testOpenAIModel},
 		TimeoutSeconds: 7,
 	}, testDefaultModel, providermock.Config{})
 	if err != nil {
@@ -68,11 +74,11 @@ func TestBuildProviderBackendSupportsOpenAI(t *testing.T) {
 	if backend.FirstEventTimeout != 7*time.Second {
 		t.Fatalf("expected first event timeout 7s, got %s", backend.FirstEventTimeout)
 	}
-	if len(backend.Models) != 1 || backend.Models[0] != "gpt-4.1-mini" {
-		t.Fatalf("expected configured models, got %#v", backend.Models)
+	if len(backend.Models) != 1 || backend.Models[0] != testOpenAIModel {
+		t.Fatalf(expectedConfiguredModelsMessage, backend.Models)
 	}
 	if backend.Provider == nil {
-		t.Fatal("expected provider implementation")
+		t.Fatal(expectedProviderImplementation)
 	}
 }
 
@@ -82,10 +88,10 @@ func TestBuildProviderBackendSupportsAnthropic(t *testing.T) {
 		Name:           "anthropic-primary",
 		BaseURL:        "https://api.anthropic.com/v1",
 		APIKey:         "test-key",
-		Model:          "claude-3-5-sonnet-latest",
+		Model:          testAnthropicModel,
 		MaxTokens:      2048,
 		Priority:       15,
-		Models:         []string{"claude-3-5-sonnet-latest"},
+		Models:         []string{testAnthropicModel},
 		TimeoutSeconds: 9,
 	}, testDefaultModel, providermock.Config{})
 	if err != nil {
@@ -101,11 +107,11 @@ func TestBuildProviderBackendSupportsAnthropic(t *testing.T) {
 	if backend.FirstEventTimeout != 9*time.Second {
 		t.Fatalf("expected first event timeout 9s, got %s", backend.FirstEventTimeout)
 	}
-	if len(backend.Models) != 1 || backend.Models[0] != "claude-3-5-sonnet-latest" {
-		t.Fatalf("expected configured models, got %#v", backend.Models)
+	if len(backend.Models) != 1 || backend.Models[0] != testAnthropicModel {
+		t.Fatalf(expectedConfiguredModelsMessage, backend.Models)
 	}
 	if backend.Provider == nil {
-		t.Fatal("expected provider implementation")
+		t.Fatal(expectedProviderImplementation)
 	}
 }
 
@@ -114,9 +120,9 @@ func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 		Type:           "ollama",
 		Name:           "ollama-primary",
 		BaseURL:        "http://127.0.0.1:11434",
-		Model:          "llama3.1:8b",
+		Model:          testOllamaModel,
 		Priority:       20,
-		Models:         []string{"llama3.1:8b"},
+		Models:         []string{testOllamaModel},
 		TimeoutSeconds: 11,
 	}, testDefaultModel, providermock.Config{})
 	if err != nil {
@@ -132,11 +138,11 @@ func TestBuildProviderBackendSupportsOllama(t *testing.T) {
 	if backend.FirstEventTimeout != 11*time.Second {
 		t.Fatalf("expected first event timeout 11s, got %s", backend.FirstEventTimeout)
 	}
-	if len(backend.Models) != 1 || backend.Models[0] != "llama3.1:8b" {
-		t.Fatalf("expected configured models, got %#v", backend.Models)
+	if len(backend.Models) != 1 || backend.Models[0] != testOllamaModel {
+		t.Fatalf(expectedConfiguredModelsMessage, backend.Models)
 	}
 	if backend.Provider == nil {
-		t.Fatal("expected provider implementation")
+		t.Fatal(expectedProviderImplementation)
 	}
 }
 
@@ -145,7 +151,7 @@ func TestBuildProviderBackendRejectsMissingOpenAIBaseURL(t *testing.T) {
 		Type: "openai",
 	}, testDefaultModel, providermock.Config{})
 	if err == nil {
-		t.Fatal("expected missing base url error")
+		t.Fatal(expectedMissingBaseURLErrorMessage)
 	}
 }
 
@@ -154,7 +160,7 @@ func TestBuildProviderBackendRejectsMissingAnthropicBaseURL(t *testing.T) {
 		Type: "anthropic",
 	}, testDefaultModel, providermock.Config{})
 	if err == nil {
-		t.Fatal("expected missing base url error")
+		t.Fatal(expectedMissingBaseURLErrorMessage)
 	}
 }
 
@@ -163,7 +169,7 @@ func TestBuildProviderBackendRejectsMissingOllamaBaseURL(t *testing.T) {
 		Type: "ollama",
 	}, testDefaultModel, providermock.Config{})
 	if err == nil {
-		t.Fatal("expected missing base url error")
+		t.Fatal(expectedMissingBaseURLErrorMessage)
 	}
 }
 

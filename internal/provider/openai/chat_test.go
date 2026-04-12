@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,15 @@ import (
 	"time"
 
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
+)
+
+const (
+	openAITestContentTypeHeader    = "Content-Type"
+	openAITestJSONContentType      = "application/json"
+	openAITestEventStreamType      = "text/event-stream"
+	openAITestDefaultModel         = "gpt-4.1-mini"
+	openAICompletionResponsePrefix = `{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"`
+	openAICompletionResponseSuffix = `","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`
 )
 
 func TestCreateChatCompletion(t *testing.T) {
@@ -23,15 +33,15 @@ func TestCreateChatCompletion(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+		w.Header().Set(openAITestContentTypeHeader, openAITestJSONContentType)
+		_, _ = w.Write([]byte(openAICompletionResponsePrefix + openAITestDefaultModel + openAICompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
 		APIKey:       "test-key",
-		DefaultModel: "gpt-4.1-mini",
+		DefaultModel: openAITestDefaultModel,
 	})
 
 	resp, err := p.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{
@@ -44,26 +54,26 @@ func TestCreateChatCompletion(t *testing.T) {
 	if authHeader != "Bearer test-key" {
 		t.Fatalf("expected authorization header, got %s", authHeader)
 	}
-	if payload.Model != "gpt-4.1-mini" || payload.Stream {
+	if payload.Model != openAITestDefaultModel || payload.Stream {
 		t.Fatalf("unexpected request payload %#v", payload)
 	}
-	if resp.Model != "gpt-4.1-mini" || resp.Choices[0].Message.Content != "hello" {
+	if resp.Model != openAITestDefaultModel || resp.Choices[0].Message.Content != "hello" {
 		t.Fatalf("unexpected response %#v", resp)
 	}
 }
 
 func TestStreamChatCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4.1-mini\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":\"\"}]}\n\n"))
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4.1-mini\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		w.Header().Set(openAITestContentTypeHeader, openAITestEventStreamType)
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"role":"assistant","content":"hel"}`, "")))
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"content":"lo"}`, "stop")))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "gpt-4.1-mini",
+		DefaultModel: openAITestDefaultModel,
 	})
 
 	chunks, err := p.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{
@@ -94,7 +104,7 @@ func TestCreateChatCompletionReturnsUpstreamError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := New(Config{BaseURL: server.URL, DefaultModel: "gpt-4.1-mini"})
+	p := New(Config{BaseURL: server.URL, DefaultModel: openAITestDefaultModel})
 
 	_, err := p.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{
 		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
@@ -109,8 +119,8 @@ func TestListModels(t *testing.T) {
 		if r.URL.Path != "/models" {
 			t.Fatalf("expected /models, got %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4.1-mini","object":"model","created":123,"owned_by":"openai"}]}`))
+		w.Header().Set(openAITestContentTypeHeader, openAITestJSONContentType)
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"` + openAITestDefaultModel + `","object":"model","created":123,"owned_by":"openai"}]}`))
 	}))
 	defer server.Close()
 
@@ -120,7 +130,7 @@ func TestListModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list models: %v", err)
 	}
-	if len(models) != 1 || models[0].ID != "gpt-4.1-mini" {
+	if len(models) != 1 || models[0].ID != openAITestDefaultModel {
 		t.Fatalf("unexpected models %#v", models)
 	}
 }
@@ -135,14 +145,14 @@ func TestCreateChatCompletionRetriesRetryableStatus(t *testing.T) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+		w.Header().Set(openAITestContentTypeHeader, openAITestJSONContentType)
+		_, _ = w.Write([]byte(openAICompletionResponsePrefix + openAITestDefaultModel + openAICompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "gpt-4.1-mini",
+		DefaultModel: openAITestDefaultModel,
 		MaxRetries:   1,
 		RetryBackoff: time.Millisecond,
 	})
@@ -171,8 +181,8 @@ func TestCreateChatCompletionRetryRecordsAttemptUsage(t *testing.T) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+		w.Header().Set(openAITestContentTypeHeader, openAITestJSONContentType)
+		_, _ = w.Write([]byte(openAICompletionResponsePrefix + openAITestDefaultModel + openAICompletionResponseSuffix))
 	}))
 	defer server.Close()
 
@@ -181,7 +191,7 @@ func TestCreateChatCompletionRetryRecordsAttemptUsage(t *testing.T) {
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "gpt-4.1-mini",
+		DefaultModel: openAITestDefaultModel,
 		MaxRetries:   1,
 		RetryBackoff: time.Millisecond,
 	})
@@ -213,15 +223,15 @@ func TestStreamChatCompletionRetriesBeforeOpen(t *testing.T) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4.1-mini\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		w.Header().Set(openAITestContentTypeHeader, openAITestEventStreamType)
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"role":"assistant","content":"ok"}`, "stop")))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "gpt-4.1-mini",
+		DefaultModel: openAITestDefaultModel,
 		MaxRetries:   1,
 		RetryBackoff: time.Millisecond,
 	})
@@ -253,14 +263,14 @@ func TestStreamChatCompletionRetriesBeforeOpen(t *testing.T) {
 func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":123,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+		w.Header().Set(openAITestContentTypeHeader, openAITestJSONContentType)
+		_, _ = w.Write([]byte(openAICompletionResponsePrefix + openAITestDefaultModel + openAICompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "gpt-4.1-mini",
+		DefaultModel: openAITestDefaultModel,
 		Timeout:      20 * time.Millisecond,
 		MaxRetries:   0,
 	})
@@ -278,14 +288,14 @@ func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 
 func TestStreamChatCompletionPropagatesMidstreamError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4.1-mini\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":\"\"}]}\n\n"))
+		w.Header().Set(openAITestContentTypeHeader, openAITestEventStreamType)
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"role":"assistant","content":"hel"}`, "")))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "gpt-4.1-mini",
+		DefaultModel: openAITestDefaultModel,
 	})
 
 	events, err := p.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{
@@ -326,6 +336,15 @@ func (r *attemptRecorderStub) BeginAttempt(_ context.Context, metadata provider.
 	record := &attemptRecord{metadata: metadata}
 	r.records = append(r.records, record)
 	return attemptHandleStub{record: record}, nil
+}
+
+func openAIStreamChunk(model, deltaJSON, finishReason string) string {
+	return fmt.Sprintf(
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"%s\",\"choices\":[{\"index\":0,\"delta\":%s,\"finish_reason\":\"%s\"}]}\n\n",
+		model,
+		deltaJSON,
+		finishReason,
+	)
 }
 
 type attemptHandleStub struct {

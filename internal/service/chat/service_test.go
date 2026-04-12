@@ -8,9 +8,16 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
 
+const (
+	chatTestDefaultModel      = "gpt-4o-mini"
+	chatTestCompletionID      = "chatcmpl-mock"
+	chatCompletionChunkObject = "chat.completion.chunk"
+	chatStreamCompletionError = "stream completion: %v"
+)
+
 func TestCreateCompletionRequiresMessages(t *testing.T) {
 	providerStub := &stubProvider{}
-	service := NewService("gpt-4o-mini", providerStub)
+	service := NewService(chatTestDefaultModel, providerStub)
 
 	_, err := service.CreateCompletion(context.Background(), CompletionRequest{})
 	if !errors.Is(err, ErrInvalidRequest) {
@@ -25,10 +32,10 @@ func TestCreateCompletionRequiresMessages(t *testing.T) {
 func TestCreateCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 	providerStub := &stubProvider{
 		response: provider.ChatCompletionResponse{
-			ID:      "chatcmpl-mock",
+			ID:      chatTestCompletionID,
 			Object:  "chat.completion",
 			Created: 123,
-			Model:   "gpt-4o-mini",
+			Model:   chatTestDefaultModel,
 			Choices: []provider.ChatChoice{
 				{
 					Index: 0,
@@ -42,7 +49,7 @@ func TestCreateCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 			Usage: provider.Usage{},
 		},
 	}
-	service := NewService("gpt-4o-mini", providerStub)
+	service := NewService(chatTestDefaultModel, providerStub)
 
 	resp, err := service.CreateCompletion(context.Background(), CompletionRequest{
 		Messages: []Message{
@@ -60,12 +67,12 @@ func TestCreateCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 		t.Fatal("expected provider to be called")
 	}
 
-	if providerStub.request.Model != "gpt-4o-mini" {
+	if providerStub.request.Model != chatTestDefaultModel {
 		t.Fatalf("expected default model to be forwarded, got %s", providerStub.request.Model)
 	}
 
-	if resp.Model != "gpt-4o-mini" {
-		t.Fatalf("expected response model gpt-4o-mini, got %s", resp.Model)
+	if resp.Model != chatTestDefaultModel {
+		t.Fatalf("expected response model %s, got %s", chatTestDefaultModel, resp.Model)
 	}
 }
 
@@ -74,10 +81,10 @@ func TestStreamCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 		streamResponse: []provider.ChatCompletionStreamEvent{
 			{
 				Chunk: provider.ChatCompletionChunk{
-					ID:      "chatcmpl-mock",
-					Object:  "chat.completion.chunk",
+					ID:      chatTestCompletionID,
+					Object:  chatCompletionChunkObject,
 					Created: 123,
-					Model:   "gpt-4o-mini",
+					Model:   chatTestDefaultModel,
 					Choices: []provider.ChatChoice{
 						{
 							Index: 0,
@@ -92,7 +99,7 @@ func TestStreamCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 			},
 		},
 	}
-	service := NewService("gpt-4o-mini", providerStub)
+	service := NewService(chatTestDefaultModel, providerStub)
 
 	stream, err := service.StreamCompletion(context.Background(), CompletionRequest{
 		Stream: true,
@@ -104,7 +111,7 @@ func TestStreamCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("stream completion: %v", err)
+		t.Fatalf(chatStreamCompletionError, err)
 	}
 
 	var events []CompletionEvent
@@ -120,7 +127,7 @@ func TestStreamCompletionAppliesDefaultModelAndUsesProvider(t *testing.T) {
 		t.Fatal("expected stream flag to be forwarded to provider")
 	}
 
-	if len(events) != 1 || events[0].Chunk.Object != "chat.completion.chunk" {
+	if len(events) != 1 || events[0].Chunk.Object != chatCompletionChunkObject {
 		t.Fatalf("expected one chat completion chunk event, got %#v", events)
 	}
 
@@ -138,10 +145,10 @@ func TestStreamCompletionStopsOnContextCancellation(t *testing.T) {
 		streamResponse: []provider.ChatCompletionStreamEvent{
 			{
 				Chunk: provider.ChatCompletionChunk{
-					ID:      "chatcmpl-mock",
-					Object:  "chat.completion.chunk",
+					ID:      chatTestCompletionID,
+					Object:  chatCompletionChunkObject,
 					Created: 123,
-					Model:   "gpt-4o-mini",
+					Model:   chatTestDefaultModel,
 					Choices: []provider.ChatChoice{
 						{
 							Index: 0,
@@ -155,7 +162,7 @@ func TestStreamCompletionStopsOnContextCancellation(t *testing.T) {
 			},
 		},
 	}
-	service := NewService("gpt-4o-mini", providerStub)
+	service := NewService(chatTestDefaultModel, providerStub)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -169,7 +176,7 @@ func TestStreamCompletionStopsOnContextCancellation(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("stream completion: %v", err)
+		t.Fatalf(chatStreamCompletionError, err)
 	}
 
 	if event, ok := <-stream; ok {
@@ -182,10 +189,10 @@ func TestStreamCompletionPropagatesTerminalStreamError(t *testing.T) {
 		streamResponse: []provider.ChatCompletionStreamEvent{
 			{
 				Chunk: provider.ChatCompletionChunk{
-					ID:      "chatcmpl-mock",
-					Object:  "chat.completion.chunk",
+					ID:      chatTestCompletionID,
+					Object:  chatCompletionChunkObject,
 					Created: 123,
-					Model:   "gpt-4o-mini",
+					Model:   chatTestDefaultModel,
 					Choices: []provider.ChatChoice{
 						{
 							Index: 0,
@@ -200,7 +207,7 @@ func TestStreamCompletionPropagatesTerminalStreamError(t *testing.T) {
 			{Err: errors.New("stream interrupted")},
 		},
 	}
-	service := NewService("gpt-4o-mini", providerStub)
+	service := NewService(chatTestDefaultModel, providerStub)
 
 	stream, err := service.StreamCompletion(context.Background(), CompletionRequest{
 		Stream: true,
@@ -212,7 +219,7 @@ func TestStreamCompletionPropagatesTerminalStreamError(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("stream completion: %v", err)
+		t.Fatalf(chatStreamCompletionError, err)
 	}
 
 	first, ok := <-stream

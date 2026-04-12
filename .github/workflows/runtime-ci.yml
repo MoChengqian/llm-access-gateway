@@ -31,6 +31,14 @@ jobs:
           REQUIRE_K8S_PRODUCTION_RENDER: "true"
         run: ./scripts/stage7-verify.sh static
 
+      - name: Dump Stage 7 static diagnostics
+        if: failure()
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
+        run: |
+          echo "Stage 7 static contract failed; rerunning with shell trace for diagnostics."
+          bash -x ./scripts/stage7-verify.sh static || true
+
   runtime:
     runs-on: ubuntu-latest
     needs: test
