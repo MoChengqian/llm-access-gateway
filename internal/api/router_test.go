@@ -351,21 +351,7 @@ func TestChatCompletions(t *testing.T) {
 		},
 	}, nil, nil, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
-	req.Header.Set("Authorization", routerLiveAuthorization)
+	req := newChatCompletionRequest(t, routerLiveAuthorization, "hello", false)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -402,22 +388,7 @@ func TestChatCompletionsStream(t *testing.T) {
 		},
 	}, nil, nil, nil, registry)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-		"stream": true,
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
-	req.Header.Set("Authorization", routerLiveAuthorization)
+	req := newChatCompletionRequest(t, routerLiveAuthorization, "hello", true)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -471,20 +442,7 @@ func TestChatCompletionsStream(t *testing.T) {
 func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
 	router := newTestRouter(stubAuthStore{}, nil, nil, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	req := newChatCompletionRequest(t, "", "hello", false)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -530,21 +488,7 @@ func TestChatCompletionsRejectsOversizedRequestBody(t *testing.T) {
 func TestChatCompletionsRejectsInvalidAPIKey(t *testing.T) {
 	router := newTestRouter(stubAuthStore{err: auth.ErrAPIKeyNotFound}, nil, nil, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
-	req.Header.Set("Authorization", "Bearer bad-key")
+	req := newChatCompletionRequest(t, "Bearer bad-key", "hello", false)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -571,21 +515,7 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 		},
 	}, nil, nil, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
-	req.Header.Set("Authorization", "Bearer disabled-key")
+	req := newChatCompletionRequest(t, "Bearer disabled-key", "hello", false)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -609,21 +539,7 @@ func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
 		},
 	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrRateLimitExceeded}, nil, registry)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
-	req.Header.Set("Authorization", routerLiveAuthorization)
+	req := newChatCompletionRequest(t, routerLiveAuthorization, "hello", false)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -654,21 +570,7 @@ func TestChatCompletionsRejectsTokenRateLimitExceeded(t *testing.T) {
 		},
 	}, &stubGovernanceStore{insertID: 10}, &stubLimiter{admitErr: governance.ErrTokenLimitExceeded}, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello world",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
-	req.Header.Set("Authorization", routerLiveAuthorization)
+	req := newChatCompletionRequest(t, routerLiveAuthorization, "hello world", false)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -691,21 +593,7 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 		},
 	}, &stubGovernanceStore{tokensTotal: 1, insertID: 10}, &stubLimiter{}, nil, nil)
 
-	body, err := json.Marshal(map[string]any{
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": "hello world",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf(routerMarshalRequestFormat, err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
-	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
-	req.Header.Set("Authorization", routerLiveAuthorization)
+	req := newChatCompletionRequest(t, routerLiveAuthorization, "hello world", false)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -717,6 +605,34 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"budget exceeded\"") {
 		t.Fatalf("expected budget exceeded error, got %s", bodyText)
 	}
+}
+
+func newChatCompletionRequest(t *testing.T, authorization string, content string, stream bool) *http.Request {
+	t.Helper()
+
+	payload := map[string]any{
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": content,
+			},
+		},
+	}
+	if stream {
+		payload["stream"] = true
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf(routerMarshalRequestFormat, err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	return req
 }
 
 func newTestRouter(store stubAuthStore, governanceStore *stubGovernanceStore, limiter *stubLimiter, providers handlers.ProviderHealthReader, registry *metrics.Registry) http.Handler {
