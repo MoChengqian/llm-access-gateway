@@ -39,6 +39,12 @@ type providerStatus struct {
 	unhealthyUntil      time.Time
 }
 
+const (
+	metricsHelpPrefix    = "# HELP "
+	metricsTypePrefix    = "# TYPE "
+	metricsCounterSuffix = " counter\n"
+)
+
 func NewRegistry() *Registry {
 	return &Registry{
 		httpRequests:         make(map[string]uint64),
@@ -232,8 +238,8 @@ func recordsProviderDuration(eventType string) bool {
 }
 
 func writeCounter(builder *strings.Builder, metric string, help string, values map[string]uint64) {
-	builder.WriteString("# HELP " + metric + " " + help + "\n")
-	builder.WriteString("# TYPE " + metric + " counter\n")
+	builder.WriteString(metricsHelpPrefix + metric + " " + help + "\n")
+	builder.WriteString(metricsTypePrefix + metric + metricsCounterSuffix)
 	for _, key := range sortedKeys(values) {
 		builder.WriteString(metric + "{")
 		builder.WriteString(key)
@@ -243,8 +249,8 @@ func writeCounter(builder *strings.Builder, metric string, help string, values m
 }
 
 func writeDurationSamples(builder *strings.Builder, sumMetric string, sumHelp string, countMetric string, countHelp string, values map[string]durationSample) {
-	builder.WriteString("# HELP " + sumMetric + " " + sumHelp + "\n")
-	builder.WriteString("# TYPE " + sumMetric + " counter\n")
+	builder.WriteString(metricsHelpPrefix + sumMetric + " " + sumHelp + "\n")
+	builder.WriteString(metricsTypePrefix + sumMetric + metricsCounterSuffix)
 	for _, key := range sortedKeys(values) {
 		builder.WriteString(sumMetric + "{")
 		builder.WriteString(key)
@@ -252,8 +258,8 @@ func writeDurationSamples(builder *strings.Builder, sumMetric string, sumHelp st
 		builder.WriteString(fmt.Sprintf("%d\n", values[key].sumMS))
 	}
 
-	builder.WriteString("# HELP " + countMetric + " " + countHelp + "\n")
-	builder.WriteString("# TYPE " + countMetric + " counter\n")
+	builder.WriteString(metricsHelpPrefix + countMetric + " " + countHelp + "\n")
+	builder.WriteString(metricsTypePrefix + countMetric + metricsCounterSuffix)
 	for _, key := range sortedKeys(values) {
 		builder.WriteString(countMetric + "{")
 		builder.WriteString(key)

@@ -64,7 +64,6 @@ type modelPayload struct {
 }
 
 type streamState struct {
-	ctx           context.Context
 	events        chan<- provider.ChatCompletionStreamEvent
 	attemptHandle provider.AttemptHandle
 	defaultModel  string
@@ -156,27 +155,26 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		state := streamState{
-			ctx:           ctx,
 			events:        events,
 			attemptHandle: attemptHandle,
 			defaultModel:  p.resolveModel(req.Model),
 		}
 		for scanner.Scan() {
-			done, ok := state.consumeLine(scanner.Text())
+			done, ok := state.consumeLine(ctx, scanner.Text())
 			if done || !ok {
 				return
 			}
 		}
 
 		if err := scanner.Err(); err != nil {
-			state.publishFailure(err, state.defaultModel)
+			state.publishFailure(ctx, err, state.defaultModel)
 		}
 	}()
 
 	return events, nil
 }
 
-func (s *streamState) consumeLine(line string) (bool, bool) {
+func (s *streamState) consumeLine(ctx context.Context, line string) (bool, bool) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
 		return false, true
@@ -184,7 +182,7 @@ func (s *streamState) consumeLine(line string) (bool, bool) {
 
 	payload, err := decodeStreamPayload(trimmed)
 	if err != nil {
-		s.publishFailure(err, s.defaultModel)
+		s.publishFailure(ctx, err, s.defaultModel)
 		return false, false
 	}
 	if isDoneSentinel(payload) {
@@ -192,7 +190,7 @@ func (s *streamState) consumeLine(line string) (bool, bool) {
 	}
 
 	model := payloadModel(payload, s.defaultModel)
-	if !s.publishChunk(payload, model) {
+	if !s.publishChunk(ctx, payload, model) {
 		return false, false
 	}
 	return payload.Done, !payload.Done
@@ -221,7 +219,7 @@ func payloadModel(payload responsePayload, fallback string) string {
 	return fallback
 }
 
-func (s *streamState) publishChunk(payload responsePayload, model string) bool {
+func (s *streamState) publishChunk(ctx context.Context, payload responsePayload, model string) bool {
 	created := parseTimestamp(payload.CreatedAt)
 	event := provider.ChatCompletionStreamEvent{
 		Chunk: provider.ChatCompletionChunk{
@@ -238,17 +236,17 @@ func (s *streamState) publishChunk(payload responsePayload, model string) bool {
 	}
 
 	select {
-	case <-s.ctx.Done():
-		s.publishFailure(s.ctx.Err(), model)
+	case <-ctx.Done():
+		s.publishFailure(ctx, ctx.Err(), model)
 		return false
 	case s.events <- event:
 		return true
 	}
 }
 
-func (s *streamState) publishFailure(err error, model string) {
-	_ = failAttempt(s.ctx, s.attemptHandle, model)
-	publishStreamError(s.ctx, s.events, err)
+func (s *streamState) publishFailure(ctx context.Context, err error, model string) {
+	_ = failAttempt(ctx, s.attemptHandle, model)
+	publishStreamError(ctx, s.events, err)
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {

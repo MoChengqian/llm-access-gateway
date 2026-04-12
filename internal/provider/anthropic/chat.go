@@ -110,7 +110,6 @@ type streamDeltaPayload struct {
 }
 
 type streamState struct {
-	ctx                 context.Context
 	events              chan<- provider.ChatCompletionStreamEvent
 	attemptHandle       provider.AttemptHandle
 	streamCreated       int64
@@ -227,7 +226,6 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 
 		reader := bufio.NewReader(resp.Body)
 		state := streamState{
-			ctx:           ctx,
 			events:        events,
 			attemptHandle: attemptHandle,
 			streamCreated: time.Now().UTC().Unix(),
@@ -239,16 +237,16 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 			event, err := readSSEEvent(reader)
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					state.publishFailure(errors.New("upstream stream ended before message_stop"))
+					state.publishFailure(ctx, errors.New("upstream stream ended before message_stop"))
 					return
 				}
-				state.publishFailure(err)
+				state.publishFailure(ctx, err)
 				return
 			}
 			if strings.TrimSpace(event.data) == "" {
 				continue
 			}
-			done, ok := state.consumeEvent(event)
+			done, ok := state.consumeEvent(ctx, event)
 			if done || !ok {
 				return
 			}
@@ -258,27 +256,27 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 	return events, nil
 }
 
-func (s *streamState) consumeEvent(event sseEvent) (bool, bool) {
+func (s *streamState) consumeEvent(ctx context.Context, event sseEvent) (bool, bool) {
 	payload, err := decodeStreamEventPayload(event.data)
 	if err != nil {
-		s.publishFailure(err)
+		s.publishFailure(ctx, err)
 		return false, false
 	}
 
-	switch streamEventKind(event.name, payload.Type) {
+	switch streamEventKind(streamEventKindInput{eventName: event.name, payloadType: payload.Type}) {
 	case "ping", "content_block_start", "content_block_stop":
 		return false, true
 	case "message_start":
 		s.consumeMessageStart(payload)
 		return false, true
 	case "content_block_delta":
-		return false, s.publishContentDelta(payload)
+		return false, s.publishContentDelta(ctx, payload)
 	case "message_delta":
-		return false, s.publishMessageDelta(payload)
+		return false, s.publishMessageDelta(ctx, payload)
 	case "message_stop":
-		return true, s.publishMessageStop()
+		return true, s.publishMessageStop(ctx)
 	case "error":
-		s.publishFailure(errors.New("anthropic stream error"))
+		s.publishFailure(ctx, errors.New("anthropic stream error"))
 		return false, false
 	default:
 		return false, true
@@ -296,12 +294,17 @@ func decodeStreamEventPayload(data string) (streamEventPayload, error) {
 	return payload, nil
 }
 
-func streamEventKind(eventName string, payloadType string) string {
-	kind := strings.TrimSpace(eventName)
+type streamEventKindInput struct {
+	eventName   string
+	payloadType string
+}
+
+func streamEventKind(input streamEventKindInput) string {
+	kind := strings.TrimSpace(input.eventName)
 	if kind != "" {
 		return kind
 	}
-	return strings.TrimSpace(payloadType)
+	return strings.TrimSpace(input.payloadType)
 }
 
 func (s *streamState) consumeMessageStart(payload streamEventPayload) {
@@ -320,7 +323,7 @@ func (s *streamState) consumeMessageStart(payload streamEventPayload) {
 	}
 }
 
-func (s *streamState) publishContentDelta(payload streamEventPayload) bool {
+func (s *streamState) publishContentDelta(ctx context.Context, payload streamEventPayload) bool {
 	if strings.TrimSpace(payload.Delta.Type) != "text_delta" || payload.Delta.Text == "" {
 		return true
 	}
@@ -330,31 +333,45 @@ func (s *streamState) publishContentDelta(payload streamEventPayload) bool {
 		message.Role = s.pendingRole
 		s.roleEmitted = true
 	}
-	return s.publishChunk(message, "")
+	return s.publishChunk(ctx, message, "")
 }
 
-func (s *streamState) publishMessageDelta(payload streamEventPayload) bool {
+func (s *streamState) publishMessageDelta(ctx context.Context, payload streamEventPayload) bool {
 	if payload.Delta.StopReason == "" {
 		return true
 	}
 	s.finishReasonEmitted = true
-	return s.publishChunk(provider.ChatMessage{}, finishReason(payload.Delta.StopReason))
+	return s.publishChunk(ctx, provider.ChatMessage{}, finishReason(payload.Delta.StopReason))
 }
 
-func (s *streamState) publishMessageStop() bool {
+func (s *streamState) publishMessageStop(ctx context.Context) bool {
 	if s.finishReasonEmitted {
 		return true
 	}
-	return s.publishChunk(provider.ChatMessage{}, "stop")
+	return s.publishChunk(ctx, provider.ChatMessage{}, "stop")
 }
 
-func (s *streamState) publishChunk(message provider.ChatMessage, finishReason string) bool {
-	return publishStreamChunk(s.ctx, s.events, s.streamID, s.streamModel, s.streamCreated, message, finishReason)
+func (s *streamState) publishChunk(ctx context.Context, message provider.ChatMessage, finishReason string) bool {
+	return publishStreamChunk(ctx, s.events, streamChunkMetadata{
+		id:           s.streamID,
+		model:        s.streamModel,
+		created:      s.streamCreated,
+		message:      message,
+		finishReason: finishReason,
+	})
 }
 
-func (s *streamState) publishFailure(err error) {
-	_ = failAttempt(s.ctx, s.attemptHandle, s.streamModel)
-	publishStreamError(s.ctx, s.events, err)
+func (s *streamState) publishFailure(ctx context.Context, err error) {
+	_ = failAttempt(ctx, s.attemptHandle, s.streamModel)
+	publishStreamError(ctx, s.events, err)
+}
+
+type streamChunkMetadata struct {
+	id           string
+	model        string
+	created      int64
+	message      provider.ChatMessage
+	finishReason string
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
@@ -455,21 +472,21 @@ func parseTimestamp(value string) time.Time {
 	return parsed.UTC()
 }
 
-func publishStreamChunk(ctx context.Context, events chan<- provider.ChatCompletionStreamEvent, id string, model string, created int64, message provider.ChatMessage, finishReason string) bool {
+func publishStreamChunk(ctx context.Context, events chan<- provider.ChatCompletionStreamEvent, chunk streamChunkMetadata) bool {
 	select {
 	case <-ctx.Done():
 		publishStreamError(ctx, events, ctx.Err())
 		return false
 	case events <- provider.ChatCompletionStreamEvent{
 		Chunk: provider.ChatCompletionChunk{
-			ID:      id,
+			ID:      chunk.id,
 			Object:  "chat.completion.chunk",
-			Created: created,
-			Model:   model,
+			Created: chunk.created,
+			Model:   chunk.model,
 			Choices: []provider.ChatChoice{{
 				Index:        0,
-				Message:      message,
-				FinishReason: finishReason,
+				Message:      chunk.message,
+				FinishReason: chunk.finishReason,
 			}},
 		},
 	}:
@@ -484,24 +501,37 @@ func readSSEEvent(reader *bufio.Reader) (sseEvent, error) {
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				eventName, dataLines = consumeSSELine(strings.TrimRight(line, "\r\n"), eventName, dataLines)
-				if eventName != "" || len(dataLines) > 0 {
-					return sseEvent{name: eventName, data: strings.Join(dataLines, "\n")}, nil
-				}
-			}
-			return sseEvent{}, err
+			return finalizeSSERead(err, strings.TrimRight(line, "\r\n"), eventName, dataLines)
 		}
 
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
-			if eventName == "" && len(dataLines) == 0 {
-				continue
+			if event, ok := buildSSEEvent(eventName, dataLines); ok {
+				return event, nil
 			}
-			return sseEvent{name: eventName, data: strings.Join(dataLines, "\n")}, nil
+			continue
 		}
 		eventName, dataLines = consumeSSELine(line, eventName, dataLines)
 	}
+}
+
+func finalizeSSERead(err error, line string, eventName string, dataLines []string) (sseEvent, error) {
+	if !errors.Is(err, io.EOF) {
+		return sseEvent{}, err
+	}
+
+	eventName, dataLines = consumeSSELine(line, eventName, dataLines)
+	if event, ok := buildSSEEvent(eventName, dataLines); ok {
+		return event, nil
+	}
+	return sseEvent{}, err
+}
+
+func buildSSEEvent(eventName string, dataLines []string) (sseEvent, bool) {
+	if eventName == "" && len(dataLines) == 0 {
+		return sseEvent{}, false
+	}
+	return sseEvent{name: eventName, data: strings.Join(dataLines, "\n")}, true
 }
 
 func consumeSSELine(line string, eventName string, dataLines []string) (string, []string) {
