@@ -9,15 +9,15 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/service/usage"
 )
 
-type UsageService interface {
+type TenantUsageGetter interface {
 	GetTenantUsage(ctx context.Context, limit int) (usage.Response, error)
 }
 
 type UsageHandler struct {
-	service UsageService
+	service TenantUsageGetter
 }
 
-func NewUsageHandler(service UsageService) UsageHandler {
+func NewUsageHandler(service TenantUsageGetter) UsageHandler {
 	return UsageHandler{service: service}
 }
 
