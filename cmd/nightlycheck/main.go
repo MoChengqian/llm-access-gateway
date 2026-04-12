@@ -243,6 +243,12 @@ func validateBenchmarkSummary(expectation benchmarkExpectation, summary benchmar
 	return findings
 }
 
+type contentCheck struct {
+	label  string
+	body   string
+	needle string
+}
+
 func validateStreamFailureMode(cfg config) []string {
 	var findings []string
 	primaryBackend := strings.TrimSpace(cfg.PrimaryBackendName)
@@ -262,18 +268,18 @@ func validateStreamFailureMode(cfg config) []string {
 	if err != nil {
 		findings = append(findings, fmt.Sprintf(labelErrorFormat, prechunkOutputLabel, err))
 	} else {
-		findings = append(findings, requireContains(prechunkOutputLabel, prechunkOutput, httpStatusOKLine)...)
-		findings = append(findings, requireContains(prechunkOutputLabel, prechunkOutput, streamDoneMarker)...)
-		findings = append(findings, requireContains(prechunkOutputLabel, prechunkOutput, "chatcmpl-mock")...)
+		findings = append(findings, requireContains(contentCheck{label: prechunkOutputLabel, body: prechunkOutput, needle: httpStatusOKLine})...)
+		findings = append(findings, requireContains(contentCheck{label: prechunkOutputLabel, body: prechunkOutput, needle: streamDoneMarker})...)
+		findings = append(findings, requireContains(contentCheck{label: prechunkOutputLabel, body: prechunkOutput, needle: "chatcmpl-mock"})...)
 	}
 
 	partialOutput, err := readFile(cfg.PartialOutputPath)
 	if err != nil {
 		findings = append(findings, fmt.Sprintf(labelErrorFormat, partialOutputLabel, err))
 	} else {
-		findings = append(findings, requireContains(partialOutputLabel, partialOutput, httpStatusOKLine)...)
-		findings = append(findings, requireContains(partialOutputLabel, partialOutput, partialNeedle)...)
-		findings = append(findings, requireAbsent(partialOutputLabel, partialOutput, streamDoneMarker)...)
+		findings = append(findings, requireContains(contentCheck{label: partialOutputLabel, body: partialOutput, needle: httpStatusOKLine})...)
+		findings = append(findings, requireContains(contentCheck{label: partialOutputLabel, body: partialOutput, needle: partialNeedle})...)
+		findings = append(findings, requireAbsent(contentCheck{label: partialOutputLabel, body: partialOutput, needle: streamDoneMarker})...)
 	}
 
 	prechunkMetrics, err := loadMetrics(cfg.PrechunkMetricsPath)
@@ -316,8 +322,8 @@ func validateAnthropicAdapterMode(cfg config) []string {
 	if err != nil {
 		findings = append(findings, fmt.Sprintf("system output: %v", err))
 	} else {
-		findings = append(findings, requireContains("system output", systemOutput, httpStatusOKLine)...)
-		findings = append(findings, requireContains("system output", systemOutput, "messages=1;first_role=user")...)
+		findings = append(findings, requireContains(contentCheck{label: "system output", body: systemOutput, needle: httpStatusOKLine})...)
+		findings = append(findings, requireContains(contentCheck{label: "system output", body: systemOutput, needle: "messages=1;first_role=user"})...)
 	}
 
 	request, err := loadRecordedUpstreamRequest(cfg.UpstreamRequestPath)
@@ -425,18 +431,18 @@ func readFile(path string) (string, error) {
 	return string(body), nil
 }
 
-func requireContains(label string, body string, needle string) []string {
-	if strings.Contains(body, needle) {
+func requireContains(check contentCheck) []string {
+	if strings.Contains(check.body, check.needle) {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s missing %q", label, needle)}
+	return []string{fmt.Sprintf("%s missing %q", check.label, check.needle)}
 }
 
-func requireAbsent(label string, body string, needle string) []string {
-	if !strings.Contains(body, needle) {
+func requireAbsent(check contentCheck) []string {
+	if !strings.Contains(check.body, check.needle) {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s unexpectedly contained %q", label, needle)}
+	return []string{fmt.Sprintf("%s unexpectedly contained %q", check.label, check.needle)}
 }
 
 func requireMetricAtLeast(label string, metrics map[string]float64, key string, minValue float64) []string {

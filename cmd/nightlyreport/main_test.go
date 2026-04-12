@@ -86,7 +86,7 @@ func TestWriteReportFileCreatesParentDir(t *testing.T) {
 	root := t.TempDir()
 	outputPath := filepath.Join(root, "nested", "report", "nightly-summary.md")
 
-	if err := writeReportFile(outputPath, "# hello\n"); err != nil {
+	if err := writeReportFile(reportFile{path: outputPath, body: "# hello\n"}); err != nil {
 		t.Fatalf("writeReportFile() error = %v", err)
 	}
 

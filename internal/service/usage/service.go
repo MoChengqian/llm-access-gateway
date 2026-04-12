@@ -27,9 +27,11 @@ type Store interface {
 	ListRecentUsageRecords(ctx context.Context, tenantID uint64, limit int) ([]RecentUsageRecord, error)
 }
 
-type Service interface {
+type TenantUsageGetter interface {
 	GetTenantUsage(ctx context.Context, limit int) (Response, error)
 }
+
+type Service = TenantUsageGetter
 
 type service struct {
 	store Store
@@ -87,7 +89,7 @@ type RecentUsageRecord struct {
 	UpdatedAt        time.Time
 }
 
-func NewService(store Store) Service {
+func NewService(store Store) TenantUsageGetter {
 	return service{
 		store: store,
 		now:   time.Now,

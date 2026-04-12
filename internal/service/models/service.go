@@ -8,16 +8,20 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
 
-type Service interface {
+type ModelLister interface {
 	ListModels(ctx context.Context) (ListResponse, error)
 }
 
-type Source interface {
+type Service = ModelLister
+
+type ProviderModelLister interface {
 	ListModels(ctx context.Context) ([]provider.Model, error)
 }
 
+type Source = ProviderModelLister
+
 type service struct {
-	sources []Source
+	sources []ProviderModelLister
 }
 
 type ListResponse struct {
@@ -25,8 +29,8 @@ type ListResponse struct {
 	Data   []provider.Model `json:"data"`
 }
 
-func NewService(sources []Source) Service {
-	copied := make([]Source, 0, len(sources))
+func NewService(sources []ProviderModelLister) ModelLister {
+	copied := make([]ProviderModelLister, 0, len(sources))
 	for _, source := range sources {
 		if source == nil {
 			continue

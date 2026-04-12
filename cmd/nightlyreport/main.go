@@ -80,6 +80,21 @@ type reportRow struct {
 	StreamChunks  string
 }
 
+type reportFile struct {
+	path string
+	body string
+}
+
+type benchmarkDataset struct {
+	baseline map[string]benchmarkSummary
+	current  map[string]benchmarkSummary
+}
+
+type benchmarkComparison struct {
+	baseline benchmarkSummary
+	current  benchmarkSummary
+}
+
 func main() {
 	cfg, err := parseFlags(os.Args[1:])
 	if err != nil {
@@ -97,19 +112,19 @@ func main() {
 		fmt.Print(report)
 		return
 	}
-	if err := writeReportFile(cfg.OutputPath, report); err != nil {
+	if err := writeReportFile(reportFile{path: cfg.OutputPath, body: report}); err != nil {
 		fmt.Fprintf(os.Stderr, "write report: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func writeReportFile(path string, report string) error {
-	if dir := filepath.Dir(path); dir != "." && dir != "" {
+func writeReportFile(file reportFile) error {
+	if dir := filepath.Dir(file.path); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(path, []byte(report), 0o644)
+	return os.WriteFile(file.path, []byte(file.body), 0o644)
 }
 
 func parseFlags(args []string) (config, error) {
@@ -179,7 +194,10 @@ func buildReport(cfg config) (string, error) {
 	builder.WriteString("| Scenario | Status | Success | Latency P95 | TTFT P95 | Total Duration | Stream Chunks |\n")
 	builder.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
 
-	rows := benchmarkRows(baseline.Benchmarks, currentSummaries)
+	rows := benchmarkRows(benchmarkDataset{
+		baseline: baseline.Benchmarks,
+		current:  currentSummaries,
+	})
 	for _, row := range rows {
 		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s |\n",
 			row.Name, row.Status, row.Success, row.LatencyP95, row.TTFTP95, row.TotalDuration, row.StreamChunks))
@@ -202,40 +220,42 @@ func buildReport(cfg config) (string, error) {
 	return builder.String(), nil
 }
 
-func benchmarkRows(baseline map[string]benchmarkSummary, current map[string]benchmarkSummary) []reportRow {
-	names := make([]string, 0, len(current))
-	for name := range current {
+func benchmarkRows(data benchmarkDataset) []reportRow {
+	names := make([]string, 0, len(data.current))
+	for name := range data.current {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
 	rows := make([]reportRow, 0, len(names))
 	for _, name := range names {
-		base := baseline[name]
-		now := current[name]
+		comparison := benchmarkComparison{
+			baseline: data.baseline[name],
+			current:  data.current[name],
+		}
 		rows = append(rows, reportRow{
 			Name:          name,
-			Status:        benchmarkStatus(base, now),
-			Success:       fmt.Sprintf("%d/%d", now.Success, now.Requests),
-			LatencyP95:    formatDelta(base.LatencyP95MS, now.LatencyP95MS, "ms"),
-			TTFTP95:       formatOptionalDelta(base.TTFTP95MS, now.TTFTP95MS, "ms"),
-			TotalDuration: formatDelta(base.TotalDurationMS, now.TotalDurationMS, "ms"),
-			StreamChunks:  formatOptionalDelta(int64(base.StreamChunks), int64(now.StreamChunks), ""),
+			Status:        benchmarkStatus(comparison),
+			Success:       fmt.Sprintf("%d/%d", comparison.current.Success, comparison.current.Requests),
+			LatencyP95:    formatDelta(comparison.baseline.LatencyP95MS, comparison.current.LatencyP95MS, "ms"),
+			TTFTP95:       formatOptionalDelta(comparison.baseline.TTFTP95MS, comparison.current.TTFTP95MS, "ms"),
+			TotalDuration: formatDelta(comparison.baseline.TotalDurationMS, comparison.current.TotalDurationMS, "ms"),
+			StreamChunks:  formatOptionalDelta(int64(comparison.baseline.StreamChunks), int64(comparison.current.StreamChunks), ""),
 		})
 	}
 	return rows
 }
 
-func benchmarkStatus(base benchmarkSummary, now benchmarkSummary) string {
-	if base.Requests == 0 {
+func benchmarkStatus(comparison benchmarkComparison) string {
+	if comparison.baseline.Requests == 0 {
 		return "no-baseline"
 	}
 	switch {
-	case now.Failure > 0 || now.Success < now.Requests:
+	case comparison.current.Failure > 0 || comparison.current.Success < comparison.current.Requests:
 		return "degraded"
-	case now.LatencyP95MS > base.LatencyP95MS:
+	case comparison.current.LatencyP95MS > comparison.baseline.LatencyP95MS:
 		return "slower"
-	case now.LatencyP95MS < base.LatencyP95MS:
+	case comparison.current.LatencyP95MS < comparison.baseline.LatencyP95MS:
 		return "faster"
 	default:
 		return "steady"

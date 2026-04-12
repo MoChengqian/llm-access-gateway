@@ -28,13 +28,17 @@ type Store interface {
 	UpdateAttemptUsageRecord(ctx context.Context, update AttemptUsageUpdate) error
 }
 
-type AtomicRequestStore interface {
+type AtomicRequestBeginner interface {
 	BeginRequestAtomic(ctx context.Context, input AtomicBeginRequest) (uint64, error)
 }
 
-type AtomicAttemptStore interface {
+type AtomicRequestStore = AtomicRequestBeginner
+
+type AtomicAttemptBeginner interface {
 	BeginAttemptAtomic(ctx context.Context, input AtomicBeginAttempt) (uint64, error)
 }
+
+type AtomicAttemptStore = AtomicAttemptBeginner
 
 type Limiter interface {
 	Admit(ctx context.Context, principal auth.Principal, promptTokens int, now time.Time) error
