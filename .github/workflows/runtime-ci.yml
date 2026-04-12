@@ -42,16 +42,35 @@ jobs:
           make k8s-production-hpa-render >/tmp/k8s-production-hpa-overlay.yaml
           test -s /tmp/k8s-production-hpa-overlay.yaml
 
-      - name: Run Stage 7 static contract
+      - name: Stage 7 Go environment
         env:
           REQUIRE_K8S_PRODUCTION_RENDER: "true"
-        run: |
-          if ./scripts/stage7-verify.sh static; then
-            exit 0
-          fi
+        run: ./scripts/stage7-verify.sh static-go-env
 
-          echo "Stage 7 static contract failed on the first attempt; retrying once with shell trace."
-          bash -x ./scripts/stage7-verify.sh static
+      - name: Stage 7 Go tests
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
+        run: ./scripts/stage7-verify.sh static-go-test
+
+      - name: Stage 7 Go vet
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
+        run: ./scripts/stage7-verify.sh static-go-vet
+
+      - name: Stage 7 deployment validation
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
+        run: ./scripts/stage7-verify.sh static-deployments
+
+      - name: Stage 7 dashboard validation
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
+        run: ./scripts/stage7-verify.sh static-dashboard
+
+      - name: Stage 7 asset inventory
+        env:
+          REQUIRE_K8S_PRODUCTION_RENDER: "true"
+        run: ./scripts/stage7-verify.sh static-assets
 
       - name: Dump Stage 7 static diagnostics
         if: failure()
