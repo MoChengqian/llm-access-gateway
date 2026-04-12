@@ -3,7 +3,6 @@ package router
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,14 +93,14 @@ func TestStreamCompletionFallsBackWhenPrimaryErrorsBeforeFirstChunk(t *testing.T
 }
 
 func TestStreamCompletionFallsBackWhenPrimaryTimesOutBeforeFirstChunk(t *testing.T) {
-	var primaryCanceled atomic.Bool
+	primaryCanceled := make(chan struct{})
 	primary := &stubProvider{
 		streamFunc: func(ctx context.Context, _ provider.ChatCompletionRequest) (<-chan provider.ChatCompletionStreamEvent, error) {
 			events := make(chan provider.ChatCompletionStreamEvent)
 			go func() {
 				defer close(events)
 				<-ctx.Done()
-				primaryCanceled.Store(true)
+				close(primaryCanceled)
 			}()
 			return events, nil
 		},
@@ -126,7 +125,9 @@ func TestStreamCompletionFallsBackWhenPrimaryTimesOutBeforeFirstChunk(t *testing
 	if first.Err != nil || first.Chunk.Model != "secondary" {
 		t.Fatalf("expected fallback chunk from secondary, got %#v", first)
 	}
-	if !primaryCanceled.Load() {
+	select {
+	case <-primaryCanceled:
+	case <-time.After(time.Second):
 		t.Fatal("expected primary stream attempt to be canceled after first-event timeout")
 	}
 }
