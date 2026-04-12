@@ -18,6 +18,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Warm Go module cache
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then
+              exit 0
+            fi
+
+            echo "go mod download failed on attempt ${attempt}; retrying." >&2
+            sleep $((attempt * 2))
+          done
+
+          exit 1
+
       - name: Verify Kubernetes production overlay render
         run: |
           kubectl version --client=true
@@ -89,6 +102,19 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+
+      - name: Warm Go module cache
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then
+              exit 0
+            fi
+
+            echo "go mod download failed on attempt ${attempt}; retrying." >&2
+            sleep $((attempt * 2))
+          done
+
+          exit 1
 
       - name: Set up Python
         uses: actions/setup-python@v6
