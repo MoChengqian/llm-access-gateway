@@ -21,6 +21,11 @@ type Viper struct {
 	configValues map[string]any
 }
 
+type mergeMaps struct {
+	dst map[string]any
+	src map[string]any
+}
+
 type ConfigFileNotFoundError struct{}
 
 func (e ConfigFileNotFoundError) Error() string {
@@ -91,7 +96,7 @@ func (v *Viper) ReadInConfig() error {
 
 func (v *Viper) Unmarshal(target any) error {
 	merged := deepCopyMap(v.defaults)
-	deepMerge(merged, v.configValues)
+	deepMerge(mergeMaps{dst: merged, src: v.configValues})
 
 	if v.autoEnv {
 		applyEnvOverrides(merged, "", v.envPrefix, v.envReplacer)
@@ -164,17 +169,17 @@ func deepCopyMap(values map[string]any) map[string]any {
 	return copyMap
 }
 
-func deepMerge(dst map[string]any, src map[string]any) {
-	for key, value := range src {
+func deepMerge(maps mergeMaps) {
+	for key, value := range maps.src {
 		srcNested, srcIsMap := value.(map[string]any)
-		dstNested, dstIsMap := dst[key].(map[string]any)
+		dstNested, dstIsMap := maps.dst[key].(map[string]any)
 
 		if srcIsMap && dstIsMap {
-			deepMerge(dstNested, srcNested)
+			deepMerge(mergeMaps{dst: dstNested, src: srcNested})
 			continue
 		}
 
-		dst[key] = value
+		maps.dst[key] = value
 	}
 }
 
