@@ -69,6 +69,12 @@ type modelsResponsePayload struct {
 	Data   []provider.Model `json:"data"`
 }
 
+type streamState struct {
+	events        chan<- provider.ChatCompletionStreamEvent
+	attemptHandle provider.AttemptHandle
+	streamModel   string
+}
+
 func New(cfg Config) Provider {
 	client := cfg.HTTPClient
 	if client == nil {
@@ -139,67 +145,90 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 		}()
 
 		reader := bufio.NewReader(resp.Body)
-		streamModel := p.resolveModel(req.Model)
+		state := streamState{
+			events:        events,
+			attemptHandle: attemptHandle,
+			streamModel:   p.resolveModel(req.Model),
+		}
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					_ = failAttempt(ctx, attemptHandle, streamModel)
-					publishStreamError(ctx, events, errors.New("upstream stream ended before [DONE]"))
+					state.publishFailure(ctx, errors.New("upstream stream ended before [DONE]"))
 					return
 				}
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, err)
+				state.publishFailure(ctx, err)
 				return
 			}
 
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, ":") {
-				continue
-			}
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
-			if data == "[DONE]" {
+			done, ok := state.consumeLine(ctx, line)
+			if done || !ok {
 				return
-			}
-
-			var payload responsePayload
-			if err := json.Unmarshal([]byte(data), &payload); err != nil {
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, err)
-				return
-			}
-			if payload.Error != nil && payload.Error.Message != "" {
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, errors.New(payload.Error.Message))
-				return
-			}
-			if strings.TrimSpace(payload.Model) != "" {
-				streamModel = payload.Model
-			}
-
-			select {
-			case <-ctx.Done():
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, ctx.Err())
-				return
-			case events <- provider.ChatCompletionStreamEvent{
-				Chunk: provider.ChatCompletionChunk{
-					ID:      payload.ID,
-					Object:  payload.Object,
-					Created: payload.Created,
-					Model:   payload.Model,
-					Choices: toProviderStreamChoices(payload.Choices),
-				},
-			}:
 			}
 		}
 	}()
 
 	return events, nil
+}
+
+func (s *streamState) consumeLine(ctx context.Context, line string) (bool, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, ":") || !strings.HasPrefix(trimmed, "data: ") {
+		return false, true
+	}
+
+	data := strings.TrimSpace(strings.TrimPrefix(trimmed, "data: "))
+	if data == "[DONE]" {
+		return true, false
+	}
+
+	payload, err := decodeStreamPayload(data)
+	if err != nil {
+		s.publishFailure(ctx, err)
+		return false, false
+	}
+	if strings.TrimSpace(payload.Model) != "" {
+		s.streamModel = payload.Model
+	}
+
+	if !s.publishChunk(ctx, payload) {
+		return false, false
+	}
+	return false, true
+}
+
+func decodeStreamPayload(data string) (responsePayload, error) {
+	var payload responsePayload
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return responsePayload{}, err
+	}
+	if payload.Error != nil && payload.Error.Message != "" {
+		return responsePayload{}, errors.New(payload.Error.Message)
+	}
+	return payload, nil
+}
+
+func (s *streamState) publishChunk(ctx context.Context, payload responsePayload) bool {
+	select {
+	case <-ctx.Done():
+		s.publishFailure(ctx, ctx.Err())
+		return false
+	case s.events <- provider.ChatCompletionStreamEvent{
+		Chunk: provider.ChatCompletionChunk{
+			ID:      payload.ID,
+			Object:  payload.Object,
+			Created: payload.Created,
+			Model:   payload.Model,
+			Choices: toProviderStreamChoices(payload.Choices),
+		},
+	}:
+		return true
+	}
+}
+
+func (s *streamState) publishFailure(ctx context.Context, err error) {
+	_ = failAttempt(ctx, s.attemptHandle, s.streamModel)
+	publishStreamError(ctx, s.events, err)
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {

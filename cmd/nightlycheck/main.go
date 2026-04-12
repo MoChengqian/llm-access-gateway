@@ -330,40 +330,77 @@ func validateAnthropicAdapterMode(cfg config) []string {
 	if err != nil {
 		findings = append(findings, fmt.Sprintf("upstream request: %v", err))
 	} else {
-		if request.Path != "/v1/messages" {
-			findings = append(findings, fmt.Sprintf("upstream request path=%q, want /v1/messages", request.Path))
-		}
-		if strings.TrimSpace(request.Headers["anthropic-version"]) == "" {
-			findings = append(findings, "upstream request missing anthropic-version header")
-		}
-		if strings.TrimSpace(request.Headers["x-api-key"]) == "" {
-			findings = append(findings, "upstream request missing x-api-key header")
-		}
-		if request.Payload.System != "Be concise.\n\nUse JSON only." {
-			findings = append(findings, fmt.Sprintf("upstream request system=%q, want %q", request.Payload.System, "Be concise.\n\nUse JSON only."))
-		}
-		if request.Payload.MaxTokens <= 0 {
-			findings = append(findings, fmt.Sprintf("upstream request max_tokens=%d, want > 0", request.Payload.MaxTokens))
-		}
-		if len(request.Payload.Messages) != 1 {
-			findings = append(findings, fmt.Sprintf("upstream request messages=%d, want 1", len(request.Payload.Messages)))
-		} else {
-			if request.Payload.Messages[0].Role != "user" {
-				findings = append(findings, fmt.Sprintf("upstream request first role=%q, want user", request.Payload.Messages[0].Role))
-			}
-			if request.Payload.Messages[0].Content != "reply in five words" {
-				findings = append(findings, fmt.Sprintf("upstream request first content=%q, want %q", request.Payload.Messages[0].Content, "reply in five words"))
-			}
-		}
-		for _, message := range request.Payload.Messages {
-			if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
-				findings = append(findings, "upstream request unexpectedly forwarded a system role inside messages")
-				break
-			}
-		}
+		findings = append(findings, validateRecordedAnthropicRequest(request)...)
 	}
 
 	findings = append(findings, validateStreamFailureMode(cfg)...)
+	return findings
+}
+
+func validateRecordedAnthropicRequest(request recordedUpstreamRequest) []string {
+	var findings []string
+
+	if request.Path != "/v1/messages" {
+		findings = append(findings, fmt.Sprintf("upstream request path=%q, want /v1/messages", request.Path))
+	}
+	findings = append(findings, validateAnthropicRequestHeaders(request.Headers)...)
+	findings = append(findings, validateAnthropicRequestPayload(request.Payload)...)
+	return findings
+}
+
+func validateAnthropicRequestHeaders(headers map[string]string) []string {
+	var findings []string
+	if strings.TrimSpace(headers["anthropic-version"]) == "" {
+		findings = append(findings, "upstream request missing anthropic-version header")
+	}
+	if strings.TrimSpace(headers["x-api-key"]) == "" {
+		findings = append(findings, "upstream request missing x-api-key header")
+	}
+	return findings
+}
+
+func validateAnthropicRequestPayload(payload struct {
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens"`
+	System    string `json:"system"`
+	Messages  []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+}) []string {
+	var findings []string
+
+	if payload.System != "Be concise.\n\nUse JSON only." {
+		findings = append(findings, fmt.Sprintf("upstream request system=%q, want %q", payload.System, "Be concise.\n\nUse JSON only."))
+	}
+	if payload.MaxTokens <= 0 {
+		findings = append(findings, fmt.Sprintf("upstream request max_tokens=%d, want > 0", payload.MaxTokens))
+	}
+	findings = append(findings, validateAnthropicRequestMessages(payload.Messages)...)
+	return findings
+}
+
+func validateAnthropicRequestMessages(messages []struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}) []string {
+	var findings []string
+	if len(messages) != 1 {
+		findings = append(findings, fmt.Sprintf("upstream request messages=%d, want 1", len(messages)))
+	} else {
+		if messages[0].Role != "user" {
+			findings = append(findings, fmt.Sprintf("upstream request first role=%q, want user", messages[0].Role))
+		}
+		if messages[0].Content != "reply in five words" {
+			findings = append(findings, fmt.Sprintf("upstream request first content=%q, want %q", messages[0].Content, "reply in five words"))
+		}
+	}
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			findings = append(findings, "upstream request unexpectedly forwarded a system role inside messages")
+			break
+		}
+	}
 	return findings
 }
 

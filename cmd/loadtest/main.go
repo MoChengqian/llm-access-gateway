@@ -67,6 +67,13 @@ type summary struct {
 	SampleError     string      `json:"sample_error,omitempty"`
 }
 
+type streamReadState struct {
+	body       strings.Builder
+	chunkCount int
+	ttft       time.Duration
+	sawDone    bool
+}
+
 func main() {
 	cfg := parseFlags()
 
@@ -210,10 +217,7 @@ func consumeJSON(resp *http.Response, started time.Time) result {
 
 func consumeStream(resp *http.Response, started time.Time) result {
 	reader := bufio.NewReader(resp.Body)
-	var builder strings.Builder
-	chunkCount := 0
-	ttft := time.Duration(0)
-	sawDone := false
+	state := streamReadState{}
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -223,36 +227,21 @@ func consumeStream(resp *http.Response, started time.Time) result {
 			}
 			return result{status: resp.StatusCode, latency: time.Since(started), err: err}
 		}
-
-		builder.WriteString(line)
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
-		if ttft == 0 && data != "" && data != "[DONE]" {
-			ttft = time.Since(started)
-		}
-		if data == "[DONE]" {
-			sawDone = true
-			continue
-		}
-		chunkCount++
+		state.consumeLine(line, started)
 	}
 
 	latency := time.Since(started)
-	body := builder.String()
+	body := state.body.String()
 	if resp.StatusCode != http.StatusOK {
 		return result{status: resp.StatusCode, latency: latency, err: fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(body))}
 	}
-	if !sawDone {
+	if !state.sawDone {
 		return result{status: resp.StatusCode, latency: latency, err: fmt.Errorf("stream missing [DONE]: %s", strings.TrimSpace(body))}
 	}
-	if chunkCount < 1 {
+	if state.chunkCount < 1 {
 		return result{status: resp.StatusCode, latency: latency, err: fmt.Errorf("stream missing data chunks: %s", strings.TrimSpace(body))}
 	}
-	return result{status: resp.StatusCode, latency: latency, ttft: ttft, streamChunks: chunkCount}
+	return result{status: resp.StatusCode, latency: latency, ttft: state.ttft, streamChunks: state.chunkCount}
 }
 
 func buildSummary(rep report) summary {
@@ -400,4 +389,32 @@ func percentile(values []time.Duration, p int) time.Duration {
 		index = len(sorted) - 1
 	}
 	return sorted[index]
+}
+
+func (s *streamReadState) consumeLine(line string, started time.Time) {
+	s.body.WriteString(line)
+
+	data, ok := streamLineData(line)
+	if !ok {
+		return
+	}
+
+	if s.ttft == 0 && data != "" && data != "[DONE]" {
+		s.ttft = time.Since(started)
+	}
+	if data == "[DONE]" {
+		s.sawDone = true
+		return
+	}
+
+	s.chunkCount++
+}
+
+func streamLineData(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "data: ") {
+		return "", false
+	}
+
+	return strings.TrimSpace(strings.TrimPrefix(trimmed, "data: ")), true
 }

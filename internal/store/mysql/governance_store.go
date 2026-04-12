@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/MoChengqian/llm-access-gateway/internal/auth"
 	"github.com/MoChengqian/llm-access-gateway/internal/service/governance"
 	usageservice "github.com/MoChengqian/llm-access-gateway/internal/service/usage"
 )
@@ -148,66 +149,20 @@ LIMIT ?
 }
 
 func (s GovernanceStore) BeginRequestAtomic(ctx context.Context, input governance.AtomicBeginRequest) (uint64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, finish, err := s.beginAdmissionTx(ctx)
 	if err != nil {
 		return 0, err
 	}
+	defer finish(false)
 
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	if _, err := lockTenantForAdmission(ctx, tx, input.Principal.Tenant.ID); err != nil {
+	if err := s.admitRequest(ctx, tx, input); err != nil {
 		return 0, err
 	}
 
-	if input.Principal.Tenant.TokenBudget > 0 {
-		totalTokensUsed, err := sumTotalAttemptTokens(ctx, tx, input.Principal.Tenant.ID)
-		if err != nil {
-			return 0, err
-		}
-		if totalTokensUsed+input.PromptTokens > input.Principal.Tenant.TokenBudget {
-			return 0, governance.ErrBudgetExceeded
-		}
-	}
-
-	windowStart := input.CreatedAt.Add(-time.Minute)
-	if input.Principal.Tenant.RPMLimit > 0 {
-		count, err := countRequestsSince(ctx, tx, input.Principal.Tenant.ID, windowStart)
-		if err != nil {
-			return 0, err
-		}
-		if count >= input.Principal.Tenant.RPMLimit {
-			return 0, governance.ErrRateLimitExceeded
-		}
-	}
-
-	if input.Principal.Tenant.TPMLimit > 0 {
-		tokensUsedThisMinute, err := sumTotalTokensSince(ctx, tx, input.Principal.Tenant.ID, windowStart)
-		if err != nil {
-			return 0, err
-		}
-		if tokensUsedThisMinute+input.PromptTokens > input.Principal.Tenant.TPMLimit {
-			return 0, governance.ErrTokenLimitExceeded
-		}
-	}
-
-	result, err := tx.ExecContext(
-		ctx,
-		insertUsageRecordStatement,
-		input.RequestID,
-		input.Principal.Tenant.ID,
-		input.Principal.APIKeyID,
-		input.Model,
-		input.Stream,
-		"started",
-		input.PromptTokens,
-		0,
-		input.PromptTokens,
-		input.CreatedAt,
+	result, err := tx.ExecContext(ctx, insertUsageRecordStatement,
+		input.RequestID, input.Principal.Tenant.ID, input.Principal.APIKeyID,
+		input.Model, input.Stream, "started",
+		input.PromptTokens, 0, input.PromptTokens, input.CreatedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -221,52 +176,26 @@ func (s GovernanceStore) BeginRequestAtomic(ctx context.Context, input governanc
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	committed = true
+	finish(true)
 
 	return uint64(id), nil
 }
 
 func (s GovernanceStore) BeginAttemptAtomic(ctx context.Context, input governance.AtomicBeginAttempt) (uint64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, finish, err := s.beginAdmissionTx(ctx)
 	if err != nil {
 		return 0, err
 	}
+	defer finish(false)
 
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	if _, err := lockTenantForAdmission(ctx, tx, input.Principal.Tenant.ID); err != nil {
+	if err := s.admitAttempt(ctx, tx, input); err != nil {
 		return 0, err
 	}
 
-	if input.Principal.Tenant.TokenBudget > 0 {
-		totalTokensUsed, err := sumTotalAttemptTokens(ctx, tx, input.Principal.Tenant.ID)
-		if err != nil {
-			return 0, err
-		}
-		if totalTokensUsed+input.PromptTokens > input.Principal.Tenant.TokenBudget {
-			return 0, governance.ErrBudgetExceeded
-		}
-	}
-
-	result, err := tx.ExecContext(
-		ctx,
-		insertAttemptUsageRecordStatement,
-		input.RequestID,
-		input.Principal.Tenant.ID,
-		input.Principal.APIKeyID,
-		input.Backend,
-		input.Model,
-		input.Stream,
-		"started",
-		input.PromptTokens,
-		0,
-		input.PromptTokens,
-		input.CreatedAt,
+	result, err := tx.ExecContext(ctx, insertAttemptUsageRecordStatement,
+		input.RequestID, input.Principal.Tenant.ID, input.Principal.APIKeyID,
+		input.Backend, input.Model, input.Stream, "started",
+		input.PromptTokens, 0, input.PromptTokens, input.CreatedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -280,9 +209,45 @@ func (s GovernanceStore) BeginAttemptAtomic(ctx context.Context, input governanc
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	committed = true
+	finish(true)
 
 	return uint64(id), nil
+}
+
+func (s GovernanceStore) beginAdmissionTx(ctx context.Context) (*sql.Tx, func(bool), error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	committed := false
+	finish := func(success bool) {
+		committed = committed || success
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}
+	return tx, finish, nil
+}
+
+func (s GovernanceStore) admitRequest(ctx context.Context, tx *sql.Tx, input governance.AtomicBeginRequest) error {
+	if err := lockTenantAdmission(ctx, tx, input.Principal.Tenant.ID); err != nil {
+		return err
+	}
+	if err := enforceBudget(ctx, tx, input.Principal.Tenant, input.PromptTokens); err != nil {
+		return err
+	}
+	if err := enforceRateLimit(ctx, tx, input.Principal.Tenant, input.CreatedAt, input.PromptTokens); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s GovernanceStore) admitAttempt(ctx context.Context, tx *sql.Tx, input governance.AtomicBeginAttempt) error {
+	if err := lockTenantAdmission(ctx, tx, input.Principal.Tenant.ID); err != nil {
+		return err
+	}
+	return enforceBudget(ctx, tx, input.Principal.Tenant, input.PromptTokens)
 }
 
 func (s GovernanceStore) InsertUsageRecord(ctx context.Context, record governance.UsageRecord) (uint64, error) {
@@ -434,6 +399,56 @@ FOR UPDATE
 		return 0, err
 	}
 	return lockedTenantID, nil
+}
+
+func lockTenantAdmission(ctx context.Context, tx *sql.Tx, tenantID uint64) error {
+	_, err := lockTenantForAdmission(ctx, tx, tenantID)
+	return err
+}
+
+func enforceBudget(ctx context.Context, querier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, tenant auth.Tenant, promptTokens int) error {
+	if tenant.TokenBudget <= 0 {
+		return nil
+	}
+
+	totalTokensUsed, err := sumTotalAttemptTokens(ctx, querier, tenant.ID)
+	if err != nil {
+		return err
+	}
+	if totalTokensUsed+promptTokens > tenant.TokenBudget {
+		return governance.ErrBudgetExceeded
+	}
+	return nil
+}
+
+func enforceRateLimit(ctx context.Context, querier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, tenant auth.Tenant, createdAt time.Time, promptTokens int) error {
+	windowStart := createdAt.Add(-time.Minute)
+	if tenant.RPMLimit > 0 {
+		count, err := countRequestsSince(ctx, querier, tenant.ID, windowStart)
+		if err != nil {
+			return err
+		}
+		if count >= tenant.RPMLimit {
+			return governance.ErrRateLimitExceeded
+		}
+	}
+
+	if tenant.TPMLimit <= 0 {
+		return nil
+	}
+
+	tokensUsedThisMinute, err := sumTotalTokensSince(ctx, querier, tenant.ID, windowStart)
+	if err != nil {
+		return err
+	}
+	if tokensUsedThisMinute+promptTokens > tenant.TPMLimit {
+		return governance.ErrTokenLimitExceeded
+	}
+	return nil
 }
 
 func countRequestsSince(ctx context.Context, querier interface {

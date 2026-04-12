@@ -78,6 +78,13 @@ type ChunkDelta struct {
 	Content string `json:"content,omitempty"`
 }
 
+type streamEventResult struct {
+	event      CompletionEvent
+	chunkSent  bool
+	traceErr   error
+	shouldStop bool
+}
+
 func NewService(defaultModel string, chatProvider provider.ChatCompletionProvider) Service {
 	return service{
 		defaultModel: defaultModel,
@@ -148,40 +155,58 @@ func (s service) StreamCompletion(ctx context.Context, req CompletionRequest) (<
 		}()
 		defer close(serviceEvents)
 		for event := range providerChunks {
-			if ctx.Err() != nil {
-				traceErr = ctx.Err()
+			result := handleProviderStreamEvent(ctx, event, serviceEvents)
+			if result.chunkSent {
+				chunkCount++
+			}
+			if result.traceErr != nil {
+				traceErr = result.traceErr
+			}
+			if result.shouldStop {
 				return
 			}
-
-			if event.Err != nil {
-				traceErr = event.Err
-				if ctx.Err() != nil {
-					traceErr = ctx.Err()
-					return
-				}
-				serviceEvents <- CompletionEvent{Err: event.Err}
-				return
-			}
-
-			chunk := event.Chunk
-			if ctx.Err() != nil {
-				traceErr = ctx.Err()
-				return
-			}
-			serviceEvents <- CompletionEvent{
-				Chunk: CompletionChunk{
-					ID:      chunk.ID,
-					Object:  chunk.Object,
-					Created: chunk.Created,
-					Model:   chunk.Model,
-					Choices: toChunkChoices(chunk.Choices),
-				},
-			}
-			chunkCount++
 		}
 	}()
 
 	return serviceEvents, nil
+}
+
+func handleProviderStreamEvent(ctx context.Context, event provider.ChatCompletionStreamEvent, serviceEvents chan<- CompletionEvent) streamEventResult {
+	if err := ctx.Err(); err != nil {
+		return streamEventResult{
+			traceErr:   err,
+			shouldStop: true,
+		}
+	}
+
+	if event.Err != nil {
+		if err := ctx.Err(); err != nil {
+			return streamEventResult{
+				traceErr:   err,
+				shouldStop: true,
+			}
+		}
+
+		serviceEvents <- CompletionEvent{Err: event.Err}
+		return streamEventResult{
+			traceErr:   event.Err,
+			shouldStop: true,
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return streamEventResult{
+			traceErr:   err,
+			shouldStop: true,
+		}
+	}
+
+	serviceEvents <- CompletionEvent{
+		Chunk: toCompletionChunk(event.Chunk),
+	}
+	return streamEventResult{
+		chunkSent: true,
+	}
 }
 
 func (s service) prepareProviderRequest(req CompletionRequest) (provider.ChatCompletionRequest, error) {
@@ -249,4 +274,14 @@ func toChunkChoices(choices []provider.ChatChoice) []ChunkChoice {
 	}
 
 	return serviceChoices
+}
+
+func toCompletionChunk(chunk provider.ChatCompletionChunk) CompletionChunk {
+	return CompletionChunk{
+		ID:      chunk.ID,
+		Object:  chunk.Object,
+		Created: chunk.Created,
+		Model:   chunk.Model,
+		Choices: toChunkChoices(chunk.Choices),
+	}
 }

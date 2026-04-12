@@ -2,6 +2,9 @@ package main
 
 import (
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -92,5 +95,38 @@ func TestEvaluateThresholds(t *testing.T) {
 	}
 	if err := evaluateThresholds(summary{Requests: 1, Success: 1, Stream: false}, config{MaxTTFTP95: 10 * time.Millisecond}); err == nil {
 		t.Fatal("expected non-stream ttft threshold failure")
+	}
+}
+
+func TestConsumeStream(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"data: {\"id\":\"chunk-1\"}\n",
+			"data: [DONE]\n",
+		}, ""))),
+	}
+
+	got := consumeStream(resp, time.Now().Add(-10*time.Millisecond))
+	if got.err != nil {
+		t.Fatalf("expected stream to succeed, got %v", got.err)
+	}
+	if got.streamChunks != 1 {
+		t.Fatalf("expected 1 stream chunk, got %d", got.streamChunks)
+	}
+	if got.ttft <= 0 {
+		t.Fatalf("expected ttft to be recorded, got %s", got.ttft)
+	}
+}
+
+func TestConsumeStreamRequiresDoneSentinel(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("data: {\"id\":\"chunk-1\"}\n")),
+	}
+
+	got := consumeStream(resp, time.Now())
+	if got.err == nil || !strings.Contains(got.err.Error(), "stream missing [DONE]") {
+		t.Fatalf("expected missing done error, got %#v", got)
 	}
 }

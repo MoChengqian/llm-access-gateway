@@ -109,6 +109,22 @@ type streamDeltaPayload struct {
 	StopReason string `json:"stop_reason,omitempty"`
 }
 
+type streamState struct {
+	events              chan<- provider.ChatCompletionStreamEvent
+	attemptHandle       provider.AttemptHandle
+	streamCreated       int64
+	streamID            string
+	streamModel         string
+	pendingRole         string
+	roleEmitted         bool
+	finishReasonEmitted bool
+}
+
+type sseEvent struct {
+	name string
+	data string
+}
+
 func New(cfg Config) Provider {
 	client := cfg.HTTPClient
 	if client == nil {
@@ -209,100 +225,153 @@ func (p Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCom
 		}()
 
 		reader := bufio.NewReader(resp.Body)
-		streamCreated := time.Now().UTC().Unix()
-		streamID := fmt.Sprintf("anthropic-%d", time.Now().UTC().UnixNano())
-		streamModel := p.resolveModel(req.Model)
-		pendingRole := ""
-		roleEmitted := false
-		finishReasonEmitted := false
+		state := streamState{
+			events:        events,
+			attemptHandle: attemptHandle,
+			streamCreated: time.Now().UTC().Unix(),
+			streamID:      fmt.Sprintf("anthropic-%d", time.Now().UTC().UnixNano()),
+			streamModel:   p.resolveModel(req.Model),
+		}
 
 		for {
-			eventName, data, err := readSSEEvent(reader)
+			event, err := readSSEEvent(reader)
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					_ = failAttempt(ctx, attemptHandle, streamModel)
-					publishStreamError(ctx, events, errors.New("upstream stream ended before message_stop"))
+					state.publishFailure(ctx, errors.New("upstream stream ended before message_stop"))
 					return
 				}
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, err)
+				state.publishFailure(ctx, err)
 				return
 			}
-			if strings.TrimSpace(data) == "" {
+			if strings.TrimSpace(event.data) == "" {
 				continue
 			}
-
-			var payload streamEventPayload
-			if err := json.Unmarshal([]byte(data), &payload); err != nil {
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, err)
-				return
-			}
-			if payload.Error != nil && payload.Error.Message != "" {
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, errors.New(payload.Error.Message))
-				return
-			}
-
-			kind := strings.TrimSpace(eventName)
-			if kind == "" {
-				kind = strings.TrimSpace(payload.Type)
-			}
-
-			switch kind {
-			case "ping", "content_block_start", "content_block_stop":
-				continue
-			case "message_start":
-				if payload.Message != nil {
-					if strings.TrimSpace(payload.Message.ID) != "" {
-						streamID = payload.Message.ID
-					}
-					if strings.TrimSpace(payload.Message.Model) != "" {
-						streamModel = payload.Message.Model
-					}
-					if strings.TrimSpace(payload.Message.Role) != "" {
-						pendingRole = payload.Message.Role
-						roleEmitted = false
-					}
-				}
-			case "content_block_delta":
-				if strings.TrimSpace(payload.Delta.Type) != "text_delta" || payload.Delta.Text == "" {
-					continue
-				}
-				message := provider.ChatMessage{
-					Content: payload.Delta.Text,
-				}
-				if !roleEmitted && pendingRole != "" {
-					message.Role = pendingRole
-					roleEmitted = true
-				}
-				if !publishStreamChunk(ctx, events, streamID, streamModel, streamCreated, message, "") {
-					return
-				}
-			case "message_delta":
-				if payload.Delta.StopReason == "" {
-					continue
-				}
-				finishReasonEmitted = true
-				if !publishStreamChunk(ctx, events, streamID, streamModel, streamCreated, provider.ChatMessage{}, finishReason(payload.Delta.StopReason)) {
-					return
-				}
-			case "message_stop":
-				if !finishReasonEmitted {
-					if !publishStreamChunk(ctx, events, streamID, streamModel, streamCreated, provider.ChatMessage{}, "stop") {
-						return
-					}
-				}
-				return
-			case "error":
-				_ = failAttempt(ctx, attemptHandle, streamModel)
-				publishStreamError(ctx, events, errors.New("anthropic stream error"))
+			done, ok := state.consumeEvent(ctx, event)
+			if done || !ok {
 				return
 			}
 		}
 	}()
 
 	return events, nil
+}
+
+func (s *streamState) consumeEvent(ctx context.Context, event sseEvent) (bool, bool) {
+	payload, err := decodeStreamEventPayload(event.data)
+	if err != nil {
+		s.publishFailure(ctx, err)
+		return false, false
+	}
+
+	switch streamEventKind(streamEventKindInput{eventName: event.name, payloadType: payload.Type}) {
+	case "ping", "content_block_start", "content_block_stop":
+		return false, true
+	case "message_start":
+		s.consumeMessageStart(payload)
+		return false, true
+	case "content_block_delta":
+		return false, s.publishContentDelta(ctx, payload)
+	case "message_delta":
+		return false, s.publishMessageDelta(ctx, payload)
+	case "message_stop":
+		return true, s.publishMessageStop(ctx)
+	case "error":
+		s.publishFailure(ctx, errors.New("anthropic stream error"))
+		return false, false
+	default:
+		return false, true
+	}
+}
+
+func decodeStreamEventPayload(data string) (streamEventPayload, error) {
+	var payload streamEventPayload
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return streamEventPayload{}, err
+	}
+	if payload.Error != nil && payload.Error.Message != "" {
+		return streamEventPayload{}, errors.New(payload.Error.Message)
+	}
+	return payload, nil
+}
+
+type streamEventKindInput struct {
+	eventName   string
+	payloadType string
+}
+
+func streamEventKind(input streamEventKindInput) string {
+	kind := strings.TrimSpace(input.eventName)
+	if kind != "" {
+		return kind
+	}
+	return strings.TrimSpace(input.payloadType)
+}
+
+func (s *streamState) consumeMessageStart(payload streamEventPayload) {
+	if payload.Message == nil {
+		return
+	}
+	if strings.TrimSpace(payload.Message.ID) != "" {
+		s.streamID = payload.Message.ID
+	}
+	if strings.TrimSpace(payload.Message.Model) != "" {
+		s.streamModel = payload.Message.Model
+	}
+	if strings.TrimSpace(payload.Message.Role) != "" {
+		s.pendingRole = payload.Message.Role
+		s.roleEmitted = false
+	}
+}
+
+func (s *streamState) publishContentDelta(ctx context.Context, payload streamEventPayload) bool {
+	if strings.TrimSpace(payload.Delta.Type) != "text_delta" || payload.Delta.Text == "" {
+		return true
+	}
+
+	message := provider.ChatMessage{Content: payload.Delta.Text}
+	if !s.roleEmitted && s.pendingRole != "" {
+		message.Role = s.pendingRole
+		s.roleEmitted = true
+	}
+	return s.publishChunk(ctx, message, "")
+}
+
+func (s *streamState) publishMessageDelta(ctx context.Context, payload streamEventPayload) bool {
+	if payload.Delta.StopReason == "" {
+		return true
+	}
+	s.finishReasonEmitted = true
+	return s.publishChunk(ctx, provider.ChatMessage{}, finishReason(payload.Delta.StopReason))
+}
+
+func (s *streamState) publishMessageStop(ctx context.Context) bool {
+	if s.finishReasonEmitted {
+		return true
+	}
+	return s.publishChunk(ctx, provider.ChatMessage{}, "stop")
+}
+
+func (s *streamState) publishChunk(ctx context.Context, message provider.ChatMessage, finishReason string) bool {
+	return publishStreamChunk(ctx, s.events, streamChunkMetadata{
+		id:           s.streamID,
+		model:        s.streamModel,
+		created:      s.streamCreated,
+		message:      message,
+		finishReason: finishReason,
+	})
+}
+
+func (s *streamState) publishFailure(ctx context.Context, err error) {
+	_ = failAttempt(ctx, s.attemptHandle, s.streamModel)
+	publishStreamError(ctx, s.events, err)
+}
+
+type streamChunkMetadata struct {
+	id           string
+	model        string
+	created      int64
+	message      provider.ChatMessage
+	finishReason string
 }
 
 func (p Provider) ListModels(ctx context.Context) ([]provider.Model, error) {
@@ -403,21 +472,21 @@ func parseTimestamp(value string) time.Time {
 	return parsed.UTC()
 }
 
-func publishStreamChunk(ctx context.Context, events chan<- provider.ChatCompletionStreamEvent, id string, model string, created int64, message provider.ChatMessage, finishReason string) bool {
+func publishStreamChunk(ctx context.Context, events chan<- provider.ChatCompletionStreamEvent, chunk streamChunkMetadata) bool {
 	select {
 	case <-ctx.Done():
 		publishStreamError(ctx, events, ctx.Err())
 		return false
 	case events <- provider.ChatCompletionStreamEvent{
 		Chunk: provider.ChatCompletionChunk{
-			ID:      id,
+			ID:      chunk.id,
 			Object:  "chat.completion.chunk",
-			Created: created,
-			Model:   model,
+			Created: chunk.created,
+			Model:   chunk.model,
 			Choices: []provider.ChatChoice{{
 				Index:        0,
-				Message:      message,
-				FinishReason: finishReason,
+				Message:      chunk.message,
+				FinishReason: chunk.finishReason,
 			}},
 		},
 	}:
@@ -425,45 +494,56 @@ func publishStreamChunk(ctx context.Context, events chan<- provider.ChatCompleti
 	}
 }
 
-func readSSEEvent(reader *bufio.Reader) (string, string, error) {
-	var event string
+func readSSEEvent(reader *bufio.Reader) (sseEvent, error) {
+	var eventName string
 	var dataLines []string
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				line = strings.TrimRight(line, "\r\n")
-				if strings.HasPrefix(line, sseEventPrefix) {
-					event = strings.TrimSpace(strings.TrimPrefix(line, sseEventPrefix))
-				}
-				if strings.HasPrefix(line, "data:") {
-					dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-				}
-				if event != "" || len(dataLines) > 0 {
-					return event, strings.Join(dataLines, "\n"), nil
-				}
-			}
-			return "", "", err
+			return finalizeSSERead(err, strings.TrimRight(line, "\r\n"), eventName, dataLines)
 		}
 
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
-			if event == "" && len(dataLines) == 0 {
-				continue
+			if event, ok := buildSSEEvent(eventName, dataLines); ok {
+				return event, nil
 			}
-			return event, strings.Join(dataLines, "\n"), nil
-		}
-		if strings.HasPrefix(line, ":") {
 			continue
 		}
-		if strings.HasPrefix(line, sseEventPrefix) {
-			event = strings.TrimSpace(strings.TrimPrefix(line, sseEventPrefix))
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		}
+		eventName, dataLines = consumeSSELine(line, eventName, dataLines)
+	}
+}
+
+func finalizeSSERead(err error, line string, eventName string, dataLines []string) (sseEvent, error) {
+	if !errors.Is(err, io.EOF) {
+		return sseEvent{}, err
+	}
+
+	eventName, dataLines = consumeSSELine(line, eventName, dataLines)
+	if event, ok := buildSSEEvent(eventName, dataLines); ok {
+		return event, nil
+	}
+	return sseEvent{}, err
+}
+
+func buildSSEEvent(eventName string, dataLines []string) (sseEvent, bool) {
+	if eventName == "" && len(dataLines) == 0 {
+		return sseEvent{}, false
+	}
+	return sseEvent{name: eventName, data: strings.Join(dataLines, "\n")}, true
+}
+
+func consumeSSELine(line string, eventName string, dataLines []string) (string, []string) {
+	switch {
+	case strings.HasPrefix(line, ":"):
+		return eventName, dataLines
+	case strings.HasPrefix(line, sseEventPrefix):
+		return strings.TrimSpace(strings.TrimPrefix(line, sseEventPrefix)), dataLines
+	case strings.HasPrefix(line, "data:"):
+		return eventName, append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+	default:
+		return eventName, dataLines
 	}
 }
 
