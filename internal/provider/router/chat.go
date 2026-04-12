@@ -78,6 +78,25 @@ type backendState struct {
 	lastProbeError      string
 }
 
+type streamExecution struct {
+	events      <-chan provider.ChatCompletionStreamEvent
+	first       provider.ChatCompletionStreamEvent
+	routerSpan  *tracing.Span
+	backendSpan *tracing.Span
+	backend     string
+	attempt     int
+	cancel      context.CancelFunc
+}
+
+type streamForwarder struct {
+	wrapped    chan<- provider.ChatCompletionStreamEvent
+	backend    string
+	attempt    int
+	startedAt  time.Time
+	chunkCount int
+	traceErr   error
+}
+
 func New(backends []Backend, cfg Config) *Provider {
 	threshold := cfg.FailureThreshold
 	if threshold <= 0 {
@@ -271,7 +290,15 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 				Attempt:   index + 1,
 			})
 		}
-		return p.wrapStream(ctx, events, firstEvent, span, attemptSpan, backend.Name, index+1, cancel), nil
+		return p.wrapStream(ctx, streamExecution{
+			events:      events,
+			first:       firstEvent,
+			routerSpan:  span,
+			backendSpan: attemptSpan,
+			backend:     backend.Name,
+			attempt:     index + 1,
+			cancel:      cancel,
+		}), nil
 	}
 
 	span.End(lastErr)
@@ -325,34 +352,37 @@ func (p *Provider) Probe(ctx context.Context) {
 	}
 }
 
-func (p *Provider) wrapStream(ctx context.Context, events <-chan provider.ChatCompletionStreamEvent, first provider.ChatCompletionStreamEvent, routerSpan *tracing.Span, backendSpan *tracing.Span, backend string, attempt int, cancel context.CancelFunc) <-chan provider.ChatCompletionStreamEvent {
+func (p *Provider) wrapStream(ctx context.Context, exec streamExecution) <-chan provider.ChatCompletionStreamEvent {
 	wrapped := make(chan provider.ChatCompletionStreamEvent)
 
 	go func() {
-		var traceErr error
-		chunkCount := 0
-		streamStartedAt := time.Now()
+		forwarder := streamForwarder{
+			wrapped:   wrapped,
+			backend:   exec.backend,
+			attempt:   exec.attempt,
+			startedAt: time.Now(),
+		}
 		defer close(wrapped)
-		defer cancel()
+		defer exec.cancel()
 		defer func() {
-			backendSpan.End(traceErr, zap.Int("chunk_count", chunkCount))
-			routerSpan.End(traceErr, zap.String("backend", backend), zap.Int("attempt", attempt), zap.Int("chunk_count", chunkCount))
+			exec.backendSpan.End(forwarder.traceErr, zap.Int("chunk_count", forwarder.chunkCount))
+			exec.routerSpan.End(forwarder.traceErr, zap.String("backend", exec.backend), zap.Int("attempt", exec.attempt), zap.Int("chunk_count", forwarder.chunkCount))
 		}()
 
-		if !p.forwardStreamEvent(ctx, wrapped, first, backend, attempt, streamStartedAt, &chunkCount, &traceErr) {
+		if !p.forwardStreamEvent(ctx, &forwarder, exec.first) {
 			return
 		}
 
 		for {
 			select {
 			case <-ctx.Done():
-				traceErr = ctx.Err()
+				forwarder.traceErr = ctx.Err()
 				return
-			case event, ok := <-events:
+			case event, ok := <-exec.events:
 				if !ok {
 					return
 				}
-				if !p.forwardStreamEvent(ctx, wrapped, event, backend, attempt, streamStartedAt, &chunkCount, &traceErr) {
+				if !p.forwardStreamEvent(ctx, &forwarder, event) {
 					return
 				}
 			}
@@ -401,33 +431,33 @@ func awaitStreamEvent(ctx context.Context, events <-chan provider.ChatCompletion
 	}
 }
 
-func (p *Provider) forwardStreamEvent(ctx context.Context, wrapped chan<- provider.ChatCompletionStreamEvent, event provider.ChatCompletionStreamEvent, backend string, attempt int, streamStartedAt time.Time, chunkCount *int, traceErr *error) bool {
+func (p *Provider) forwardStreamEvent(ctx context.Context, forwarder *streamForwarder, event provider.ChatCompletionStreamEvent) bool {
 	if event.Err != nil {
-		*traceErr = event.Err
-		failures, unhealthyUntil := p.markFailure(backend)
+		forwarder.traceErr = event.Err
+		failures, unhealthyUntil := p.markFailure(forwarder.backend)
 		p.observe(Event{
 			Type:                "provider_stream_interrupted",
 			Operation:           "stream",
-			Backend:             backend,
-			Attempt:             attempt,
-			Duration:            time.Since(streamStartedAt),
+			Backend:             forwarder.backend,
+			Attempt:             forwarder.attempt,
+			Duration:            time.Since(forwarder.startedAt),
 			ConsecutiveFailures: failures,
 			UnhealthyUntil:      unhealthyUntil,
 			Error:               event.Err.Error(),
 		})
 		select {
 		case <-ctx.Done():
-		case wrapped <- event:
+		case forwarder.wrapped <- event:
 		}
 		return false
 	}
 
 	select {
 	case <-ctx.Done():
-		*traceErr = ctx.Err()
+		forwarder.traceErr = ctx.Err()
 		return false
-	case wrapped <- event:
-		*chunkCount = *chunkCount + 1
+	case forwarder.wrapped <- event:
+		forwarder.chunkCount++
 		return true
 	}
 }
