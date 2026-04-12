@@ -29,6 +29,7 @@ import (
 	usageservice "github.com/MoChengqian/llm-access-gateway/internal/service/usage"
 	mysqlstore "github.com/MoChengqian/llm-access-gateway/internal/store/mysql"
 	redisstore "github.com/MoChengqian/llm-access-gateway/internal/store/redis"
+	// Register the MySQL driver for sql.Open("mysql", ...).
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
 )

@@ -387,7 +387,9 @@ func (p Provider) doRequest(ctx context.Context, metadata *provider.AttemptMetad
 
 func (p Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if p.timeout <= 0 {
-		return ctx, func() {}
+		return ctx, func() {
+			// No timeout was configured, so there is no derived context to cancel.
+		}
 	}
 	return context.WithTimeout(ctx, p.timeout)
 }

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: llm-access-gateway:latest
+          image: llm-access-gateway:v0.0.0-local
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

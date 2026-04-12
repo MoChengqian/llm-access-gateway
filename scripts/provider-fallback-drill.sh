@@ -7,7 +7,9 @@ BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
 API_KEY="${API_KEY:-lag-local-dev-key}"
 
 print_section() {
-  printf '\n== %s ==\n' "$1"
+  local title="$1"
+  printf '\n== %s ==\n' "${title}"
+  return 0
 }
 
 call_status_endpoints() {
@@ -18,6 +20,7 @@ call_status_endpoints() {
   print_section "GET /readyz"
   curl -i -sS "${BASE_URL}/readyz"
   printf '\n'
+  return 0
 }
 
 call_non_stream() {
@@ -27,6 +30,7 @@ call_non_stream() {
     -H 'Content-Type: application/json' \
     -d '{"messages":[{"role":"user","content":"hello"}]}'
   printf '\n'
+  return 0
 }
 
 call_stream() {
@@ -36,6 +40,7 @@ call_stream() {
     -H 'Content-Type: application/json' \
     -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
   printf '\n'
+  return 0
 }
 
 case "${MODE}" in

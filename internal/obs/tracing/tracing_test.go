@@ -42,10 +42,10 @@ func TestStartRequestSpanGeneratesTraceIDWhenRequestIDMissing(t *testing.T) {
 	ctx, span := StartRequestSpan(context.Background(), zap.NewNop(), "", requestSpanName)
 	defer span.End(nil)
 
-	if got := TraceIDFromContext(ctx); got == "" {
+	if TraceIDFromContext(ctx) == "" {
 		t.Fatal("expected generated trace id")
 	}
-	if got := SpanIDFromContext(ctx); got == "" {
+	if SpanIDFromContext(ctx) == "" {
 		t.Fatal("expected generated span id")
 	}
 }

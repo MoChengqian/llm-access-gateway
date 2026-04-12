@@ -13,7 +13,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: devinit
-          image: llm-access-gateway:latest
+          image: llm-access-gateway:v0.0.0-local
           imagePullPolicy: IfNotPresent
           command: ["/app/devinit"]
           envFrom:
