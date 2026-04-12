@@ -15,6 +15,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const internalServerErrorMessage = "internal server error"
+
 type ChatHandler struct {
 	service    chat.Service
 	governance governance.Service
@@ -179,7 +181,7 @@ func (h ChatHandler) streamCompletion(w http.ResponseWriter, r *http.Request, re
 	if !headersWritten {
 		traceErr = errors.New("stream ended before first chunk")
 		_ = tracker.Fail(ctx)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalServerErrorMessage})
 		return
 	}
 
@@ -202,7 +204,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		return
 	}
 
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalServerErrorMessage})
 }
 
 func writeGovernanceError(w http.ResponseWriter, err error) {
@@ -228,7 +230,7 @@ func writeGovernanceErrorWithMetrics(w http.ResponseWriter, err error, metrics M
 		return
 	}
 
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalServerErrorMessage})
 }
 
 func recordGovernanceRejection(metrics MetricsRecorder, reason string) {

@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+const (
+	httpStatusOKLine = "HTTP/1.1 200 OK"
+	streamDoneMarker = "data: [DONE]"
+	okObservedSignal = "200 OK observed"
+)
+
 type config struct {
 	BaselinePath string
 
@@ -259,18 +265,18 @@ func buildStreamScenarioSummaries(cfg config) ([]streamScenarioSummary, error) {
 		{
 			Name: "Pre-first-chunk fallback",
 			Status: boolStatus(
-				strings.Contains(prechunkOutput, "HTTP/1.1 200 OK") &&
+				strings.Contains(prechunkOutput, httpStatusOKLine) &&
 					strings.Contains(prechunkOutput, "chatcmpl-mock") &&
-					strings.Contains(prechunkOutput, "data: [DONE]") &&
+					strings.Contains(prechunkOutput, streamDoneMarker) &&
 					metricAtLeast(prechunkMetrics, `lag_provider_events_total{type="provider_request_failed",operation="stream",backend="openai-primary"}`, 1) &&
 					metricAtLeast(prechunkMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`, 1),
 			),
-			Signals: []string{"200 OK observed", "fallback stream body observed", "[DONE] observed", "provider_request_failed recorded", "provider_fallback_succeeded recorded"},
+			Signals: []string{okObservedSignal, "fallback stream body observed", "[DONE] observed", "provider_request_failed recorded", "provider_fallback_succeeded recorded"},
 		},
 		{
 			Name:    "Post-first-chunk interruption",
-			Status:  boolStatus(strings.Contains(partialOutput, "HTTP/1.1 200 OK") && strings.Contains(partialOutput, "partial ") && !strings.Contains(partialOutput, "data: [DONE]") && metricAtLeast(partialMetrics, `lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="openai-primary"}`, 1) && !metricPresent(partialMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`)),
-			Signals: []string{"200 OK observed", "partial chunk observed", "no [DONE] marker", "interrupt metric recorded", "no fallback-after-first-chunk metric"},
+			Status:  boolStatus(strings.Contains(partialOutput, httpStatusOKLine) && strings.Contains(partialOutput, "partial ") && !strings.Contains(partialOutput, streamDoneMarker) && metricAtLeast(partialMetrics, `lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="openai-primary"}`, 1) && !metricPresent(partialMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`)),
+			Signals: []string{okObservedSignal, "partial chunk observed", "no [DONE] marker", "interrupt metric recorded", "no fallback-after-first-chunk metric"},
 		},
 	}, nil
 }
@@ -315,7 +321,7 @@ func buildAnthropicScenarioSummaries(cfg config) ([]streamScenarioSummary, error
 		return nil, fmt.Errorf("anthropic partial metrics: %w", err)
 	}
 
-	systemOK := strings.Contains(systemOutput, "HTTP/1.1 200 OK") &&
+	systemOK := strings.Contains(systemOutput, httpStatusOKLine) &&
 		strings.Contains(systemOutput, "messages=1;first_role=user") &&
 		upstreamRequest.Path == "/v1/messages" &&
 		strings.TrimSpace(upstreamRequest.Headers["anthropic-version"]) != "" &&
@@ -325,15 +331,15 @@ func buildAnthropicScenarioSummaries(cfg config) ([]streamScenarioSummary, error
 		upstreamRequest.Payload.Messages[0].Role == "user" &&
 		upstreamRequest.Payload.Messages[0].Content == "reply in five words"
 
-	prechunkOK := strings.Contains(prechunkOutput, "HTTP/1.1 200 OK") &&
+	prechunkOK := strings.Contains(prechunkOutput, httpStatusOKLine) &&
 		strings.Contains(prechunkOutput, "chatcmpl-mock") &&
-		strings.Contains(prechunkOutput, "data: [DONE]") &&
+		strings.Contains(prechunkOutput, streamDoneMarker) &&
 		metricAtLeast(prechunkMetrics, `lag_provider_events_total{type="provider_request_failed",operation="stream",backend="anthropic-primary"}`, 1) &&
 		metricAtLeast(prechunkMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`, 1)
 
-	partialOK := strings.Contains(partialOutput, "HTTP/1.1 200 OK") &&
+	partialOK := strings.Contains(partialOutput, httpStatusOKLine) &&
 		strings.Contains(partialOutput, "anthropic partial ") &&
-		!strings.Contains(partialOutput, "data: [DONE]") &&
+		!strings.Contains(partialOutput, streamDoneMarker) &&
 		metricAtLeast(partialMetrics, `lag_provider_events_total{type="provider_stream_interrupted",operation="stream",backend="anthropic-primary"}`, 1) &&
 		!metricPresent(partialMetrics, `lag_provider_events_total{type="provider_fallback_succeeded",operation="stream",backend="secondary"}`)
 
@@ -342,7 +348,7 @@ func buildAnthropicScenarioSummaries(cfg config) ([]streamScenarioSummary, error
 			Name:   "System prompt translation",
 			Status: boolStatus(systemOK),
 			Signals: []string{
-				"200 OK observed",
+				okObservedSignal,
 				"gateway response confirms system join",
 				"upstream captured /v1/messages",
 				"anthropic-version header observed",
@@ -353,7 +359,7 @@ func buildAnthropicScenarioSummaries(cfg config) ([]streamScenarioSummary, error
 			Name:   "Anthropic pre-first-chunk fallback",
 			Status: boolStatus(prechunkOK),
 			Signals: []string{
-				"200 OK observed",
+				okObservedSignal,
 				"fallback stream body observed",
 				"[DONE] observed",
 				"provider_request_failed recorded",
@@ -364,7 +370,7 @@ func buildAnthropicScenarioSummaries(cfg config) ([]streamScenarioSummary, error
 			Name:   "Anthropic post-first-chunk interruption",
 			Status: boolStatus(partialOK),
 			Signals: []string{
-				"200 OK observed",
+				okObservedSignal,
 				"anthropic partial chunk observed",
 				"no [DONE] marker",
 				"interrupt metric recorded",

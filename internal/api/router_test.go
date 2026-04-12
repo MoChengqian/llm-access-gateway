@@ -21,7 +21,21 @@ import (
 	"go.uber.org/zap"
 )
 
-const routerTestDefaultModel = "gpt-4o-mini"
+const (
+	routerTestDefaultModel     = "gpt-4o-mini"
+	routerExpectedStatusFormat = "expected status %d, got %d"
+	routerRequestIDHeader      = "X-Request-Id"
+	routerTraceIDHeader        = "X-Trace-Id"
+	routerReadyzPath           = "/readyz"
+	routerMetricsPath          = "/metrics"
+	routerMockPrimary          = "mock-primary"
+	routerMockSecondary        = "mock-secondary"
+	routerLiveAuthorization    = "Bearer live-key"
+	routerMarshalRequestFormat = "marshal request: %v"
+	routerChatCompletionPath   = "/v1/chat/completions"
+	routerContentTypeHeader    = "Content-Type"
+	routerJSONContentType      = "application/json"
+)
 
 func TestHealthz(t *testing.T) {
 	router := newTestRouter(stubAuthStore{
@@ -38,17 +52,17 @@ func TestHealthz(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 
-	if rec.Header().Get("X-Request-Id") == "" {
+	if rec.Header().Get(routerRequestIDHeader) == "" {
 		t.Fatal("expected X-Request-Id header to be set")
 	}
-	if rec.Header().Get("X-Trace-Id") == "" {
+	if rec.Header().Get(routerTraceIDHeader) == "" {
 		t.Fatal("expected X-Trace-Id header to be set")
 	}
-	if rec.Header().Get("X-Trace-Id") != rec.Header().Get("X-Request-Id") {
-		t.Fatalf("expected X-Trace-Id to match X-Request-Id, got trace=%s request=%s", rec.Header().Get("X-Trace-Id"), rec.Header().Get("X-Request-Id"))
+	if rec.Header().Get(routerTraceIDHeader) != rec.Header().Get(routerRequestIDHeader) {
+		t.Fatalf("expected X-Trace-Id to match X-Request-Id, got trace=%s request=%s", rec.Header().Get(routerTraceIDHeader), rec.Header().Get(routerRequestIDHeader))
 	}
 }
 
@@ -61,13 +75,13 @@ func TestReadyz(t *testing.T) {
 		},
 	}, nil, nil, nil, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req := httptest.NewRequest(http.MethodGet, routerReadyzPath, nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 }
 
@@ -81,18 +95,18 @@ func TestReadyzReturnsServiceUnavailableWhenProvidersUnready(t *testing.T) {
 	}, nil, nil, providerHealthStub{
 		ready: false,
 		statuses: []handlers.ProviderBackendStatus{
-			{Name: "mock-primary", Healthy: false, ConsecutiveFailures: 1},
-			{Name: "mock-secondary", Healthy: false, ConsecutiveFailures: 1},
+			{Name: routerMockPrimary, Healthy: false, ConsecutiveFailures: 1},
+			{Name: routerMockSecondary, Healthy: false, ConsecutiveFailures: 1},
 		},
 	}, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req := httptest.NewRequest(http.MethodGet, routerReadyzPath, nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusServiceUnavailable, rec.Code)
 	}
 }
 
@@ -107,14 +121,14 @@ func TestDebugProviders(t *testing.T) {
 		ready: true,
 		statuses: []handlers.ProviderBackendStatus{
 			{
-				Name:                "mock-primary",
+				Name:                routerMockPrimary,
 				Healthy:             false,
 				ConsecutiveFailures: 1,
 				RouteRules: []handlers.RouteRule{
 					{Model: routerTestDefaultModel, Priority: 10},
 				},
 			},
-			{Name: "mock-secondary", Healthy: true, ConsecutiveFailures: 0},
+			{Name: routerMockSecondary, Healthy: true, ConsecutiveFailures: 0},
 		},
 	}, nil)
 
@@ -124,11 +138,11 @@ func TestDebugProviders(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 
 	bodyText := rec.Body.String()
-	if !strings.Contains(bodyText, "\"ready\":true") || !strings.Contains(bodyText, "\"mock-primary\"") {
+	if !strings.Contains(bodyText, "\"ready\":true") || !strings.Contains(bodyText, "\""+routerMockPrimary+"\"") {
 		t.Fatalf("expected provider status payload, got %s", bodyText)
 	}
 	if !strings.Contains(bodyText, "\"route_rules\"") || !strings.Contains(bodyText, "\"model\":\""+routerTestDefaultModel+"\"") {
@@ -147,8 +161,8 @@ func TestMetricsEndpoint(t *testing.T) {
 	}, nil, nil, providerHealthStub{
 		ready: true,
 		statuses: []handlers.ProviderBackendStatus{
-			{Name: "mock-primary", Healthy: true, ConsecutiveFailures: 0},
-			{Name: "mock-secondary", Healthy: true, ConsecutiveFailures: 0},
+			{Name: routerMockPrimary, Healthy: true, ConsecutiveFailures: 0},
+			{Name: routerMockSecondary, Healthy: true, ConsecutiveFailures: 0},
 		},
 	}, registry)
 
@@ -156,19 +170,19 @@ func TestMetricsEndpoint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req = httptest.NewRequest(http.MethodGet, routerMetricsPath, nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 
 	bodyText := rec.Body.String()
 	if !strings.Contains(bodyText, `lag_http_requests_total{method="GET",path="/healthz",status="200"} 1`) {
 		t.Fatalf("expected healthz metric, got %s", bodyText)
 	}
-	if !strings.Contains(bodyText, `lag_provider_backend_healthy{backend="mock-primary"} 1`) {
+	if !strings.Contains(bodyText, `lag_provider_backend_healthy{backend="`+routerMockPrimary+`"} 1`) {
 		t.Fatalf("expected provider health gauge, got %s", bodyText)
 	}
 	if !strings.Contains(bodyText, "lag_provider_ready 1") {
@@ -186,11 +200,11 @@ func TestMetricsCountsReadyzFailure(t *testing.T) {
 		},
 	}, nil, nil, providerHealthStub{ready: false}, registry)
 
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req := httptest.NewRequest(http.MethodGet, routerReadyzPath, nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req = httptest.NewRequest(http.MethodGet, routerMetricsPath, nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -209,13 +223,13 @@ func TestModelsList(t *testing.T) {
 	}, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer live-key")
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 
 	bodyText := rec.Body.String()
@@ -233,7 +247,7 @@ func TestModelsListRejectsMissingAPIKey(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusUnauthorized, rec.Code)
 	}
 }
 
@@ -268,13 +282,13 @@ func TestUsageReturnsTenantSummaryAndRecentRecords(t *testing.T) {
 	}, governanceStore, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/usage?limit=5", nil)
-	req.Header.Set("Authorization", "Bearer live-key")
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 
 	bodyText := rec.Body.String()
@@ -298,7 +312,7 @@ func TestUsageRejectsMissingAPIKey(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusUnauthorized, rec.Code)
 	}
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, `"error":"missing api key"`) {
 		t.Fatalf("expected missing api key error, got %s", bodyText)
@@ -315,13 +329,13 @@ func TestUsageRejectsInvalidLimit(t *testing.T) {
 	}, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/usage?limit=bad", nil)
-	req.Header.Set("Authorization", "Bearer live-key")
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusBadRequest, rec.Code)
 	}
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, `"error":"invalid limit"`) {
 		t.Fatalf("expected invalid limit error, got %s", bodyText)
@@ -346,18 +360,18 @@ func TestChatCompletions(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer live-key")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 
 	var resp chat.CompletionResponse
@@ -398,21 +412,21 @@ func TestChatCompletionsStream(t *testing.T) {
 		"stream": true,
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer live-key")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusOK, rec.Code)
 	}
 
-	if got := rec.Header().Get("Content-Type"); got != "text/event-stream" {
+	if got := rec.Header().Get(routerContentTypeHeader); got != "text/event-stream" {
 		t.Fatalf("expected content-type text/event-stream, got %s", got)
 	}
 
@@ -438,7 +452,7 @@ func TestChatCompletionsStream(t *testing.T) {
 		t.Fatalf("expected final DONE marker, got %s", bodyText)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req = httptest.NewRequest(http.MethodGet, routerMetricsPath, nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -466,17 +480,17 @@ func TestChatCompletionsRejectsMissingAPIKey(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusUnauthorized, rec.Code)
 	}
 
 	if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
@@ -498,15 +512,15 @@ func TestChatCompletionsRejectsOversizedRequestBody(t *testing.T) {
 	}, nil, nil, nil, nil, 64)
 
 	body := `{"messages":[{"role":"user","content":"` + strings.Repeat("x", 128) + `"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer live-key")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, strings.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("expected status %d, got %d", http.StatusRequestEntityTooLarge, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusRequestEntityTooLarge, rec.Code)
 	}
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, `"error":"request body too large"`) {
 		t.Fatalf("expected request body too large error, got %s", bodyText)
@@ -525,18 +539,18 @@ func TestChatCompletionsRejectsInvalidAPIKey(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
 	req.Header.Set("Authorization", "Bearer bad-key")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusUnauthorized, rec.Code)
 	}
 
 	if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
@@ -566,18 +580,18 @@ func TestChatCompletionsRejectsDisabledAPIKey(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
 	req.Header.Set("Authorization", "Bearer disabled-key")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusUnauthorized, rec.Code)
 	}
 
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"disabled api key\"") {
@@ -604,25 +618,25 @@ func TestChatCompletionsRejectsRateLimitExceeded(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer live-key")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected status %d, got %d", http.StatusTooManyRequests, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusTooManyRequests, rec.Code)
 	}
 
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"rate limit exceeded\"") {
 		t.Fatalf("expected rate limit exceeded error, got %s", bodyText)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req = httptest.NewRequest(http.MethodGet, routerMetricsPath, nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -649,18 +663,18 @@ func TestChatCompletionsRejectsTokenRateLimitExceeded(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer live-key")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected status %d, got %d", http.StatusTooManyRequests, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusTooManyRequests, rec.Code)
 	}
 
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"token rate limit exceeded\"") {
@@ -686,18 +700,18 @@ func TestChatCompletionsRejectsBudgetExceeded(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf(routerMarshalRequestFormat, err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer live-key")
+	req := httptest.NewRequest(http.MethodPost, routerChatCompletionPath, bytes.NewReader(body))
+	req.Header.Set(routerContentTypeHeader, routerJSONContentType)
+	req.Header.Set("Authorization", routerLiveAuthorization)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		t.Fatalf(routerExpectedStatusFormat, http.StatusForbidden, rec.Code)
 	}
 
 	if bodyText := rec.Body.String(); !strings.Contains(bodyText, "\"error\":\"budget exceeded\"") {

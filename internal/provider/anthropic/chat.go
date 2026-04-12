@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	defaultAPIVersion = "2023-06-01"
-	defaultMaxTokens  = 1024
+	defaultAPIVersion          = "2023-06-01"
+	defaultMaxTokens           = 1024
+	sseEventPrefix             = "event:"
+	upstreamStatusDetailFormat = "upstream status %d: %s"
 )
 
 type Config struct {
@@ -432,8 +434,8 @@ func readSSEEvent(reader *bufio.Reader) (string, string, error) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				line = strings.TrimRight(line, "\r\n")
-				if strings.HasPrefix(line, "event:") {
-					event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+				if strings.HasPrefix(line, sseEventPrefix) {
+					event = strings.TrimSpace(strings.TrimPrefix(line, sseEventPrefix))
 				}
 				if strings.HasPrefix(line, "data:") {
 					dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
@@ -455,8 +457,8 @@ func readSSEEvent(reader *bufio.Reader) (string, string, error) {
 		if strings.HasPrefix(line, ":") {
 			continue
 		}
-		if strings.HasPrefix(line, "event:") {
-			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		if strings.HasPrefix(line, sseEventPrefix) {
+			event = strings.TrimSpace(strings.TrimPrefix(line, sseEventPrefix))
 			continue
 		}
 		if strings.HasPrefix(line, "data:") {
@@ -562,21 +564,21 @@ func readHTTPError(resp *http.Response) error {
 
 	var payload responsePayload
 	if err := json.Unmarshal(body, &payload); err == nil && payload.Error != nil && payload.Error.Message != "" {
-		return fmt.Errorf("upstream status %d: %s", resp.StatusCode, payload.Error.Message)
+		return fmt.Errorf(upstreamStatusDetailFormat, resp.StatusCode, payload.Error.Message)
 	}
 
 	var fallback struct {
 		Error *responseErrorPayload `json:"error"`
 	}
 	if err := json.Unmarshal(body, &fallback); err == nil && fallback.Error != nil && fallback.Error.Message != "" {
-		return fmt.Errorf("upstream status %d: %s", resp.StatusCode, fallback.Error.Message)
+		return fmt.Errorf(upstreamStatusDetailFormat, resp.StatusCode, fallback.Error.Message)
 	}
 
 	text := strings.TrimSpace(string(body))
 	if text == "" {
 		return fmt.Errorf("upstream status %d", resp.StatusCode)
 	}
-	return fmt.Errorf("upstream status %d: %s", resp.StatusCode, text)
+	return fmt.Errorf(upstreamStatusDetailFormat, resp.StatusCode, text)
 }
 
 func (p Provider) doRequest(ctx context.Context, metadata *provider.AttemptMetadata, method string, url string, body []byte, accept string) (*http.Response, provider.AttemptHandle, error) {

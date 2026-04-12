@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const testBearerAPIKey = "Bearer test-key"
+
 func TestAuthenticateRequestRejectsMissingAPIKey(t *testing.T) {
 	service := NewService(stubStore{})
 
@@ -19,7 +21,7 @@ func TestAuthenticateRequestRejectsMissingAPIKey(t *testing.T) {
 func TestAuthenticateRequestRejectsInvalidAPIKey(t *testing.T) {
 	service := NewService(stubStore{err: ErrAPIKeyNotFound})
 
-	_, err := service.AuthenticateRequest(context.Background(), "Bearer test-key")
+	_, err := service.AuthenticateRequest(context.Background(), testBearerAPIKey)
 	if !errors.Is(err, ErrInvalidAPIKey) {
 		t.Fatalf("expected ErrInvalidAPIKey, got %v", err)
 	}
@@ -28,7 +30,7 @@ func TestAuthenticateRequestRejectsInvalidAPIKey(t *testing.T) {
 func TestAuthenticateRequestRejectsInvalidAPIKeyWhenStoreReturnsNoRows(t *testing.T) {
 	service := NewService(stubStore{err: sql.ErrNoRows})
 
-	_, err := service.AuthenticateRequest(context.Background(), "Bearer test-key")
+	_, err := service.AuthenticateRequest(context.Background(), testBearerAPIKey)
 	if !errors.Is(err, ErrInvalidAPIKey) {
 		t.Fatalf("expected ErrInvalidAPIKey, got %v", err)
 	}
@@ -43,7 +45,7 @@ func TestAuthenticateRequestRejectsDisabledAPIKey(t *testing.T) {
 		},
 	})
 
-	_, err := service.AuthenticateRequest(context.Background(), "Bearer test-key")
+	_, err := service.AuthenticateRequest(context.Background(), testBearerAPIKey)
 	if !errors.Is(err, ErrDisabledAPIKey) {
 		t.Fatalf("expected ErrDisabledAPIKey, got %v", err)
 	}
@@ -58,7 +60,7 @@ func TestAuthenticateRequestRejectsDisabledTenant(t *testing.T) {
 		},
 	})
 
-	_, err := service.AuthenticateRequest(context.Background(), "Bearer test-key")
+	_, err := service.AuthenticateRequest(context.Background(), testBearerAPIKey)
 	if !errors.Is(err, ErrDisabledAPIKey) {
 		t.Fatalf("expected ErrDisabledAPIKey, got %v", err)
 	}

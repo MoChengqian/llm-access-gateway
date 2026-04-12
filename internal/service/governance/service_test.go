@@ -12,6 +12,12 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/service/chat"
 )
 
+const (
+	governanceTestModel        = "gpt-4o-mini"
+	governanceHelloWorld       = "hello world"
+	governanceBeginRequestFail = "begin request: %v"
+)
+
 func TestBeginRequestRejectsWhenPrincipalMissing(t *testing.T) {
 	service := NewService(&stubStore{}, &stubLimiter{})
 
@@ -47,7 +53,7 @@ func TestBeginRequestRejectsWhenTPMLimitExceeded(t *testing.T) {
 
 	_, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-1",
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	})
 	if !errors.Is(err, ErrTokenLimitExceeded) {
 		t.Fatalf("expected ErrTokenLimitExceeded, got %v", err)
@@ -64,7 +70,7 @@ func TestBeginRequestRejectsWhenBudgetExceeded(t *testing.T) {
 
 	_, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-1",
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	})
 	if !errors.Is(err, ErrBudgetExceeded) {
 		t.Fatalf("expected ErrBudgetExceeded, got %v", err)
@@ -84,12 +90,12 @@ func TestBeginRequestInsertsStartedUsageRecord(t *testing.T) {
 
 	tracker, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-1",
-		Model:     "gpt-4o-mini",
+		Model:     governanceTestModel,
 		Stream:    true,
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	})
 	if err != nil {
-		t.Fatalf("begin request: %v", err)
+		t.Fatalf(governanceBeginRequestFail, err)
 	}
 
 	if tracker == nil {
@@ -124,16 +130,16 @@ func TestCompleteNonStreamUsesProviderUsageWhenPresent(t *testing.T) {
 
 	tracker, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-1",
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	})
 	if err != nil {
-		t.Fatalf("begin request: %v", err)
+		t.Fatalf(governanceBeginRequestFail, err)
 	}
 
 	err = tracker.CompleteNonStream(context.Background(), chat.CompletionRequest{
-		Messages: []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages: []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	}, chat.CompletionResponse{
-		Model: "gpt-4o-mini",
+		Model: governanceTestModel,
 		Usage: chat.Usage{
 			PromptTokens:     5,
 			CompletionTokens: 7,
@@ -165,26 +171,26 @@ func TestCompleteStreamAggregatesChunkContent(t *testing.T) {
 	tracker, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-2",
 		Stream:    true,
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	})
 	if err != nil {
-		t.Fatalf("begin request: %v", err)
+		t.Fatalf(governanceBeginRequestFail, err)
 	}
 
 	tracker.ObserveStreamChunk(chat.CompletionChunk{
-		Model: "gpt-4o-mini",
+		Model: governanceTestModel,
 		Choices: []chat.ChunkChoice{
-			{Delta: chat.ChunkDelta{Content: "hello world"}},
+			{Delta: chat.ChunkDelta{Content: governanceHelloWorld}},
 		},
 	})
 
 	if err := tracker.CompleteStream(context.Background(), chat.CompletionRequest{
-		Messages: []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages: []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	}); err != nil {
 		t.Fatalf("complete stream: %v", err)
 	}
 
-	if store.updated.Status != "succeeded" || store.updated.Model != "gpt-4o-mini" {
+	if store.updated.Status != "succeeded" || store.updated.Model != governanceTestModel {
 		t.Fatalf("expected succeeded stream update, got %#v", store.updated)
 	}
 
@@ -209,10 +215,10 @@ func TestCompleteStreamFinalizesLatestAttemptUsage(t *testing.T) {
 	tracker, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-3",
 		Stream:    true,
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	})
 	if err != nil {
-		t.Fatalf("begin request: %v", err)
+		t.Fatalf(governanceBeginRequestFail, err)
 	}
 
 	recorder := provider.AttemptRecorderFromContext(tracker.BindContext(ctx))
@@ -220,7 +226,7 @@ func TestCompleteStreamFinalizesLatestAttemptUsage(t *testing.T) {
 		t.Fatal("expected attempt recorder in bound context")
 	}
 	handle, err := recorder.BeginAttempt(ctx, provider.AttemptMetadata{
-		Model:        "gpt-4o-mini",
+		Model:        governanceTestModel,
 		Stream:       true,
 		PromptTokens: 3,
 		CreatedAt:    time.Unix(123, 0),
@@ -231,14 +237,14 @@ func TestCompleteStreamFinalizesLatestAttemptUsage(t *testing.T) {
 	_ = handle
 
 	tracker.ObserveStreamChunk(chat.CompletionChunk{
-		Model: "gpt-4o-mini",
+		Model: governanceTestModel,
 		Choices: []chat.ChunkChoice{
-			{Delta: chat.ChunkDelta{Content: "hello world"}},
+			{Delta: chat.ChunkDelta{Content: governanceHelloWorld}},
 		},
 	})
 
 	if err := tracker.CompleteStream(context.Background(), chat.CompletionRequest{
-		Messages: []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages: []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	}); err != nil {
 		t.Fatalf("complete stream: %v", err)
 	}
@@ -260,12 +266,12 @@ func TestBeginRequestUsesAtomicStoreForMySQLLimiter(t *testing.T) {
 
 	tracker, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-atomic",
-		Model:     "gpt-4o-mini",
+		Model:     governanceTestModel,
 		Stream:    true,
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	})
 	if err != nil {
-		t.Fatalf("begin request: %v", err)
+		t.Fatalf(governanceBeginRequestFail, err)
 	}
 	if tracker == nil {
 		t.Fatal("expected tracker")
@@ -273,7 +279,7 @@ func TestBeginRequestUsesAtomicStoreForMySQLLimiter(t *testing.T) {
 	if store.atomicCalls != 1 {
 		t.Fatalf("expected atomic store to be used once, got %d", store.atomicCalls)
 	}
-	if store.lastAtomicInput.RequestID != "req-atomic" || store.lastAtomicInput.Model != "gpt-4o-mini" {
+	if store.lastAtomicInput.RequestID != "req-atomic" || store.lastAtomicInput.Model != governanceTestModel {
 		t.Fatalf("unexpected atomic input %#v", store.lastAtomicInput)
 	}
 	if store.inserted.RequestID != "" {
@@ -294,9 +300,9 @@ func TestBeginRequestFallsBackToAtomicStoreWhenLimiterUnavailable(t *testing.T) 
 
 	if _, err := service.BeginRequest(ctx, RequestMetadata{
 		RequestID: "req-fallback",
-		Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+		Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 	}); err != nil {
-		t.Fatalf("begin request: %v", err)
+		t.Fatalf(governanceBeginRequestFail, err)
 	}
 	if store.atomicCalls != 1 {
 		t.Fatalf("expected atomic fallback to run once, got %d", store.atomicCalls)
@@ -321,7 +327,7 @@ func TestAttemptRecorderRejectsExtraAttemptWhenBudgetWouldBeExceeded(t *testing.
 		Messages:  []chat.Message{{Role: "user", Content: "hi"}},
 	})
 	if err != nil {
-		t.Fatalf("begin request: %v", err)
+		t.Fatalf(governanceBeginRequestFail, err)
 	}
 
 	recorder := provider.AttemptRecorderFromContext(tracker.BindContext(ctx))
@@ -330,7 +336,7 @@ func TestAttemptRecorderRejectsExtraAttemptWhenBudgetWouldBeExceeded(t *testing.
 	}
 
 	firstAttempt, err := recorder.BeginAttempt(ctx, provider.AttemptMetadata{
-		Model:        "gpt-4o-mini",
+		Model:        governanceTestModel,
 		PromptTokens: 2,
 		CreatedAt:    time.Unix(123, 0),
 	})
@@ -338,14 +344,14 @@ func TestAttemptRecorderRejectsExtraAttemptWhenBudgetWouldBeExceeded(t *testing.
 		t.Fatalf("first attempt: %v", err)
 	}
 	if err := firstAttempt.Complete(ctx, provider.AttemptResult{
-		Model:  "gpt-4o-mini",
+		Model:  governanceTestModel,
 		Status: "failed",
 	}); err != nil {
 		t.Fatalf("complete first attempt: %v", err)
 	}
 
 	_, err = recorder.BeginAttempt(ctx, provider.AttemptMetadata{
-		Model:        "gpt-4o-mini",
+		Model:        governanceTestModel,
 		PromptTokens: 2,
 		CreatedAt:    time.Unix(124, 0),
 	})
@@ -372,7 +378,7 @@ func TestBeginRequestAtomicPathClosesConcurrentRPMLimitGap(t *testing.T) {
 			defer wg.Done()
 			_, err := service.BeginRequest(ctx, RequestMetadata{
 				RequestID: "req-concurrent",
-				Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+				Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 			})
 			results <- err
 		}(i)
@@ -416,7 +422,7 @@ func TestBeginRequestAtomicPathClosesConcurrentTPMLimitGap(t *testing.T) {
 			defer wg.Done()
 			_, err := service.BeginRequest(ctx, RequestMetadata{
 				RequestID: "req-concurrent-tpm",
-				Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+				Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 			})
 			results <- err
 		}(i)
@@ -460,7 +466,7 @@ func TestBeginRequestAtomicPathClosesConcurrentBudgetGap(t *testing.T) {
 			defer wg.Done()
 			_, err := service.BeginRequest(ctx, RequestMetadata{
 				RequestID: "req-concurrent-budget",
-				Messages:  []chat.Message{{Role: "user", Content: "hello world"}},
+				Messages:  []chat.Message{{Role: "user", Content: governanceHelloWorld}},
 			})
 			results <- err
 		}(i)

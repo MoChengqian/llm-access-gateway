@@ -11,12 +11,15 @@ import (
 )
 
 const (
-	routerDefaultModel = "gpt-4o-mini"
-	routerOtherModel   = "claude-3-7-sonnet"
+	routerDefaultModel          = "gpt-4o-mini"
+	routerOtherModel            = "claude-3-7-sonnet"
+	routerPrimaryFailedError    = "primary failed"
+	routerCreateCompletionError = "create completion: %v"
+	routerStreamCompletionError = "stream completion: %v"
 )
 
 func TestCreateCompletionFallsBackToSecondary(t *testing.T) {
-	primary := &stubProvider{createErr: errors.New("primary failed")}
+	primary := &stubProvider{createErr: errors.New(routerPrimaryFailedError)}
 	secondary := &stubProvider{
 		response: provider.ChatCompletionResponse{Model: "secondary"},
 	}
@@ -28,7 +31,7 @@ func TestCreateCompletionFallsBackToSecondary(t *testing.T) {
 
 	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
-		t.Fatalf("create completion: %v", err)
+		t.Fatalf(routerCreateCompletionError, err)
 	}
 
 	if !primary.createCalled || !secondary.createCalled {
@@ -53,7 +56,7 @@ func TestStreamCompletionFallsBackBeforeFirstChunk(t *testing.T) {
 
 	chunks, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
-		t.Fatalf("stream completion: %v", err)
+		t.Fatalf(routerStreamCompletionError, err)
 	}
 
 	event := <-chunks
@@ -81,7 +84,7 @@ func TestStreamCompletionFallsBackWhenPrimaryErrorsBeforeFirstChunk(t *testing.T
 
 	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
-		t.Fatalf("stream completion: %v", err)
+		t.Fatalf(routerStreamCompletionError, err)
 	}
 
 	first := <-events
@@ -116,7 +119,7 @@ func TestStreamCompletionFallsBackWhenPrimaryTimesOutBeforeFirstChunk(t *testing
 
 	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
-		t.Fatalf("stream completion: %v", err)
+		t.Fatalf(routerStreamCompletionError, err)
 	}
 
 	first := <-events
@@ -148,7 +151,7 @@ func TestStreamCompletionDoesNotFallbackAfterFirstChunk(t *testing.T) {
 
 	events, err := routed.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel, Stream: true})
 	if err != nil {
-		t.Fatalf("stream completion: %v", err)
+		t.Fatalf(routerStreamCompletionError, err)
 	}
 
 	first := <-events
@@ -167,7 +170,7 @@ func TestStreamCompletionDoesNotFallbackAfterFirstChunk(t *testing.T) {
 
 func TestUnhealthyPrimaryIsSkippedDuringCooldown(t *testing.T) {
 	now := time.Unix(123, 0)
-	primary := &stubProvider{createErr: errors.New("primary failed")}
+	primary := &stubProvider{createErr: errors.New(routerPrimaryFailedError)}
 	secondary := &stubProvider{
 		response: provider.ChatCompletionResponse{Model: "secondary"},
 	}
@@ -179,14 +182,14 @@ func TestUnhealthyPrimaryIsSkippedDuringCooldown(t *testing.T) {
 	routed.now = func() time.Time { return now }
 
 	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
-		t.Fatalf("first create completion: %v", err)
+		t.Fatalf("first "+routerCreateCompletionError, err)
 	}
 
 	primary.createCalled = false
 	secondary.createCalled = false
 
 	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
-		t.Fatalf("second create completion: %v", err)
+		t.Fatalf("second "+routerCreateCompletionError, err)
 	}
 
 	if primary.createCalled {
@@ -217,7 +220,7 @@ func TestCreateCompletionPrefersModelMatchedHigherPriorityBackend(t *testing.T) 
 
 	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
-		t.Fatalf("create completion: %v", err)
+		t.Fatalf(routerCreateCompletionError, err)
 	}
 
 	if resp.Model != "matched" {
@@ -251,7 +254,7 @@ func TestCreateCompletionFallsBackFromMatchedBackendToGenericBackend(t *testing.
 
 	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
-		t.Fatalf("create completion: %v", err)
+		t.Fatalf(routerCreateCompletionError, err)
 	}
 
 	if resp.Model != "generic" {
@@ -299,7 +302,7 @@ func TestCreateCompletionRouteRulesPreferExactAndGenericFallback(t *testing.T) {
 
 	resp, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
-		t.Fatalf("create completion: %v", err)
+		t.Fatalf(routerCreateCompletionError, err)
 	}
 
 	if resp.Model != "matched" {
@@ -347,7 +350,7 @@ func TestCreateCompletionFallbackPropagatesBackendNameToAttemptRecorder(t *testi
 			if err := handle.Complete(ctx, provider.AttemptResult{Model: req.Model, Status: "failed"}); err != nil {
 				return provider.ChatCompletionResponse{}, err
 			}
-			return provider.ChatCompletionResponse{}, errors.New("primary failed")
+			return provider.ChatCompletionResponse{}, errors.New(routerPrimaryFailedError)
 		},
 	}
 	secondary := &stubProvider{
@@ -382,7 +385,7 @@ func TestCreateCompletionFallbackPropagatesBackendNameToAttemptRecorder(t *testi
 	ctx := provider.WithAttemptRecorder(context.Background(), recorder)
 	resp, err := routed.CreateChatCompletion(ctx, provider.ChatCompletionRequest{Model: routerDefaultModel})
 	if err != nil {
-		t.Fatalf("create completion: %v", err)
+		t.Fatalf(routerCreateCompletionError, err)
 	}
 	if resp.Model != "secondary" {
 		t.Fatalf("expected fallback response, got %#v", resp)
@@ -397,7 +400,7 @@ func TestCreateCompletionFallbackPropagatesBackendNameToAttemptRecorder(t *testi
 
 func TestReadyAndBackendStatusesReflectCooldown(t *testing.T) {
 	now := time.Unix(123, 0)
-	primary := &stubProvider{createErr: errors.New("primary failed")}
+	primary := &stubProvider{createErr: errors.New(routerPrimaryFailedError)}
 	secondary := &stubProvider{createErr: errors.New("secondary failed")}
 
 	routed := New([]Backend{
@@ -431,7 +434,7 @@ func TestReadyAndBackendStatusesReflectCooldown(t *testing.T) {
 
 func TestObserverSeesFallbackAndFailureEvents(t *testing.T) {
 	observer := &stubObserver{}
-	primary := &stubProvider{createErr: errors.New("primary failed")}
+	primary := &stubProvider{createErr: errors.New(routerPrimaryFailedError)}
 	secondary := &stubProvider{
 		response: provider.ChatCompletionResponse{Model: "secondary"},
 	}
@@ -446,7 +449,7 @@ func TestObserverSeesFallbackAndFailureEvents(t *testing.T) {
 	})
 
 	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
-		t.Fatalf("create completion: %v", err)
+		t.Fatalf(routerCreateCompletionError, err)
 	}
 
 	if !observer.contains("provider_request_failed") {
@@ -460,7 +463,7 @@ func TestObserverSeesFallbackAndFailureEvents(t *testing.T) {
 func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
 	now := time.Unix(123, 0)
 	observer := &stubObserver{}
-	primary := &stubProvider{createErr: errors.New("primary failed")}
+	primary := &stubProvider{createErr: errors.New(routerPrimaryFailedError)}
 	secondary := &stubProvider{
 		response: provider.ChatCompletionResponse{Model: "secondary"},
 	}
@@ -476,7 +479,7 @@ func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
 	routed.now = func() time.Time { return now }
 
 	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
-		t.Fatalf("first create completion: %v", err)
+		t.Fatalf("first "+routerCreateCompletionError, err)
 	}
 
 	observer.events = nil
@@ -484,7 +487,7 @@ func TestObserverSeesSkippedBackendDuringCooldown(t *testing.T) {
 	secondary.createCalled = false
 
 	if _, err := routed.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{Model: routerDefaultModel}); err != nil {
-		t.Fatalf("second create completion: %v", err)
+		t.Fatalf("second "+routerCreateCompletionError, err)
 	}
 
 	if !observer.contains("provider_skipped_unhealthy") {

@@ -13,6 +13,17 @@ import (
 	"github.com/MoChengqian/llm-access-gateway/internal/provider"
 )
 
+const (
+	anthropicTestContentTypeHeader    = "Content-Type"
+	anthropicTestJSONContentType      = "application/json"
+	anthropicTestEventStreamType      = "text/event-stream"
+	anthropicTestDefaultModel         = "claude-3-5-sonnet-latest"
+	anthropicMessageStartEvent        = "event: message_start\n"
+	anthropicContentBlockDeltaEvent   = "event: content_block_delta\n"
+	anthropicCompletionResponsePrefix = `{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"`
+	anthropicCompletionResponseSuffix = `","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`
+)
+
 func TestCreateChatCompletion(t *testing.T) {
 	var apiKeyHeader string
 	var versionHeader string
@@ -25,15 +36,15 @@ func TestCreateChatCompletion(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"claude-3-5-sonnet-latest","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestJSONContentType)
+		_, _ = w.Write([]byte(anthropicCompletionResponsePrefix + anthropicTestDefaultModel + anthropicCompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
 		APIKey:       "test-key",
-		DefaultModel: "claude-3-5-sonnet-latest",
+		DefaultModel: anthropicTestDefaultModel,
 		MaxTokens:    2048,
 	})
 
@@ -50,10 +61,10 @@ func TestCreateChatCompletion(t *testing.T) {
 	if versionHeader != defaultAPIVersion {
 		t.Fatalf("expected anthropic-version header %q, got %q", defaultAPIVersion, versionHeader)
 	}
-	if payload.Model != "claude-3-5-sonnet-latest" || payload.MaxTokens != 2048 {
+	if payload.Model != anthropicTestDefaultModel || payload.MaxTokens != 2048 {
 		t.Fatalf("unexpected request payload %#v", payload)
 	}
-	if resp.Model != "claude-3-5-sonnet-latest" || resp.Choices[0].Message.Content != "hello" {
+	if resp.Model != anthropicTestDefaultModel || resp.Choices[0].Message.Content != "hello" {
 		t.Fatalf("unexpected response %#v", resp)
 	}
 	if resp.Usage.TotalTokens != 5 {
@@ -69,14 +80,14 @@ func TestCreateChatCompletionMapsSystemMessagesToTopLevelSystemPrompt(t *testing
 			t.Fatalf("decode request: %v", err)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"claude-3-5-sonnet-latest","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestJSONContentType)
+		_, _ = w.Write([]byte(anthropicCompletionResponsePrefix + anthropicTestDefaultModel + anthropicCompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "claude-3-5-sonnet-latest",
+		DefaultModel: anthropicTestDefaultModel,
 	})
 
 	_, err := p.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{
@@ -103,12 +114,12 @@ func TestCreateChatCompletionMapsSystemMessagesToTopLevelSystemPrompt(t *testing
 
 func TestStreamChatCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: message_start\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-latest\",\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n"))
-		_, _ = w.Write([]byte("event: content_block_delta\n"))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestEventStreamType)
+		_, _ = w.Write([]byte(anthropicMessageStartEvent))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"" + anthropicTestDefaultModel + "\",\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n"))
+		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n"))
-		_, _ = w.Write([]byte("event: content_block_delta\n"))
+		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\n"))
 		_, _ = w.Write([]byte("event: message_delta\n"))
 		_, _ = w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"))
@@ -119,7 +130,7 @@ func TestStreamChatCompletion(t *testing.T) {
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "claude-3-5-sonnet-latest",
+		DefaultModel: anthropicTestDefaultModel,
 	})
 
 	chunks, err := p.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{
@@ -164,7 +175,7 @@ func TestCreateChatCompletionReturnsUpstreamError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := New(Config{BaseURL: server.URL, DefaultModel: "claude-3-5-sonnet-latest"})
+	p := New(Config{BaseURL: server.URL, DefaultModel: anthropicTestDefaultModel})
 
 	_, err := p.CreateChatCompletion(context.Background(), provider.ChatCompletionRequest{
 		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
@@ -179,8 +190,8 @@ func TestListModels(t *testing.T) {
 		if r.URL.Path != "/models" {
 			t.Fatalf("expected /models, got %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"claude-3-5-sonnet-latest","type":"model","created_at":"2026-04-09T09:00:00Z"}]}`))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestJSONContentType)
+		_, _ = w.Write([]byte(`{"data":[{"id":"` + anthropicTestDefaultModel + `","type":"model","created_at":"2026-04-09T09:00:00Z"}]}`))
 	}))
 	defer server.Close()
 
@@ -190,7 +201,7 @@ func TestListModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list models: %v", err)
 	}
-	if len(models) != 1 || models[0].ID != "claude-3-5-sonnet-latest" || models[0].OwnedBy != "anthropic" {
+	if len(models) != 1 || models[0].ID != anthropicTestDefaultModel || models[0].OwnedBy != "anthropic" {
 		t.Fatalf("unexpected models %#v", models)
 	}
 }
@@ -205,14 +216,14 @@ func TestCreateChatCompletionRetriesRetryableStatus(t *testing.T) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"claude-3-5-sonnet-latest","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestJSONContentType)
+		_, _ = w.Write([]byte(anthropicCompletionResponsePrefix + anthropicTestDefaultModel + anthropicCompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "claude-3-5-sonnet-latest",
+		DefaultModel: anthropicTestDefaultModel,
 		MaxRetries:   1,
 		RetryBackoff: time.Millisecond,
 	})
@@ -241,10 +252,10 @@ func TestStreamChatCompletionRetriesBeforeFirstEvent(t *testing.T) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: message_start\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-latest\",\"content\":[]}}\n\n"))
-		_, _ = w.Write([]byte("event: content_block_delta\n"))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestEventStreamType)
+		_, _ = w.Write([]byte(anthropicMessageStartEvent))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"" + anthropicTestDefaultModel + "\",\"content\":[]}}\n\n"))
+		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"))
 		_, _ = w.Write([]byte("event: message_delta\n"))
 		_, _ = w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"))
@@ -255,7 +266,7 @@ func TestStreamChatCompletionRetriesBeforeFirstEvent(t *testing.T) {
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "claude-3-5-sonnet-latest",
+		DefaultModel: anthropicTestDefaultModel,
 		MaxRetries:   1,
 		RetryBackoff: time.Millisecond,
 	})
@@ -287,14 +298,14 @@ func TestStreamChatCompletionRetriesBeforeFirstEvent(t *testing.T) {
 func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"claude-3-5-sonnet-latest","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestJSONContentType)
+		_, _ = w.Write([]byte(anthropicCompletionResponsePrefix + anthropicTestDefaultModel + anthropicCompletionResponseSuffix))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "claude-3-5-sonnet-latest",
+		DefaultModel: anthropicTestDefaultModel,
 		Timeout:      10 * time.Millisecond,
 	})
 
@@ -311,17 +322,17 @@ func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 
 func TestStreamChatCompletionPropagatesMidstreamError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: message_start\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-latest\",\"content\":[]}}\n\n"))
-		_, _ = w.Write([]byte("event: content_block_delta\n"))
+		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestEventStreamType)
+		_, _ = w.Write([]byte(anthropicMessageStartEvent))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"" + anthropicTestDefaultModel + "\",\"content\":[]}}\n\n"))
+		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n"))
 	}))
 	defer server.Close()
 
 	p := New(Config{
 		BaseURL:      server.URL,
-		DefaultModel: "claude-3-5-sonnet-latest",
+		DefaultModel: anthropicTestDefaultModel,
 	})
 
 	events, err := p.StreamChatCompletion(context.Background(), provider.ChatCompletionRequest{
