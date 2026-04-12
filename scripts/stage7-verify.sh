@@ -29,22 +29,60 @@ require_file() {
 run_static_contract() {
   cd "${REPO_ROOT}"
 
+  run_static_go_environment
+  run_static_go_tests
+  run_static_go_vet
+  run_static_deployment_validation
+  run_static_dashboard_validation
+  run_static_asset_inventory
+  printf 'Stage 7 static contract passed\n'
+  return 0
+}
+
+run_static_go_environment() {
+  cd "${REPO_ROOT}"
+
   print_section "go environment"
   go version
   go env GOOS GOARCH GOCACHE GOMODCACHE
+  return 0
+}
+
+run_static_go_tests() {
+  cd "${REPO_ROOT}"
 
   print_section "go test ./..."
   go clean -testcache
-  go test -count=1 ./...
+  go test -p 1 -count=1 ./...
+  return 0
+}
+
+run_static_go_vet() {
+  cd "${REPO_ROOT}"
 
   print_section "go vet ./..."
   go vet ./...
+  return 0
+}
+
+run_static_deployment_validation() {
+  cd "${REPO_ROOT}"
 
   print_section "deployment manifest validation"
   ./scripts/validate-deployments.rb
+  return 0
+}
+
+run_static_dashboard_validation() {
+  cd "${REPO_ROOT}"
 
   print_section "grafana dashboard JSON validation"
   ruby -rjson -e 'JSON.parse(File.read("deployments/grafana/dashboards/llm-access-gateway.json")); puts "dashboard json ok"'
+  return 0
+}
+
+run_static_asset_inventory() {
+  cd "${REPO_ROOT}"
 
   print_section "required Stage 7 assets"
   local required_assets=(
@@ -96,7 +134,6 @@ run_static_contract() {
   for asset in "${required_assets[@]}"; do
     require_file "${asset}"
   done
-  printf 'Stage 7 static contract passed\n'
   return 0
 }
 
@@ -113,6 +150,24 @@ case "${MODE}" in
   static)
     run_static_contract
     ;;
+  static-go-env)
+    run_static_go_environment
+    ;;
+  static-go-test)
+    run_static_go_tests
+    ;;
+  static-go-vet)
+    run_static_go_vet
+    ;;
+  static-deployments)
+    run_static_deployment_validation
+    ;;
+  static-dashboard)
+    run_static_dashboard_validation
+    ;;
+  static-assets)
+    run_static_asset_inventory
+    ;;
   runtime)
     run_runtime_contract
     ;;
@@ -121,6 +176,6 @@ case "${MODE}" in
     run_runtime_contract
     ;;
   *)
-    fail "usage: $0 [static|runtime|all]"
+    fail "usage: $0 [static|static-go-env|static-go-test|static-go-vet|static-deployments|static-dashboard|static-assets|runtime|all]"
     ;;
 esac
