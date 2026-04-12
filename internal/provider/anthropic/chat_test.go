@@ -20,6 +20,13 @@ const (
 	anthropicTestDefaultModel         = "claude-3-5-sonnet-latest"
 	anthropicMessageStartEvent        = "event: message_start\n"
 	anthropicContentBlockDeltaEvent   = "event: content_block_delta\n"
+	anthropicMessageDeltaEvent        = "event: message_delta\n"
+	anthropicMessageStopEvent         = "event: message_stop\n"
+	anthropicMessageStartDataPrefix   = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\""
+	anthropicMessageStartDataSuffix   = "\",\"content\":[]}}\n\n"
+	anthropicMessageStartUsageSuffix  = "\",\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n"
+	anthropicMessageDeltaStopData     = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"
+	anthropicMessageStopData          = "data: {\"type\":\"message_stop\"}\n\n"
 	anthropicCompletionResponsePrefix = `{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"`
 	anthropicCompletionResponseSuffix = `","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`
 )
@@ -116,15 +123,15 @@ func TestStreamChatCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestEventStreamType)
 		_, _ = w.Write([]byte(anthropicMessageStartEvent))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"" + anthropicTestDefaultModel + "\",\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n"))
+		_, _ = w.Write([]byte(anthropicMessageStartDataPrefix + anthropicTestDefaultModel + anthropicMessageStartUsageSuffix))
 		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n"))
 		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\n"))
-		_, _ = w.Write([]byte("event: message_delta\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"))
-		_, _ = w.Write([]byte("event: message_stop\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+		_, _ = w.Write([]byte(anthropicMessageDeltaEvent))
+		_, _ = w.Write([]byte(anthropicMessageDeltaStopData))
+		_, _ = w.Write([]byte(anthropicMessageStopEvent))
+		_, _ = w.Write([]byte(anthropicMessageStopData))
 	}))
 	defer server.Close()
 
@@ -254,13 +261,13 @@ func TestStreamChatCompletionRetriesBeforeFirstEvent(t *testing.T) {
 
 		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestEventStreamType)
 		_, _ = w.Write([]byte(anthropicMessageStartEvent))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"" + anthropicTestDefaultModel + "\",\"content\":[]}}\n\n"))
+		_, _ = w.Write([]byte(anthropicMessageStartDataPrefix + anthropicTestDefaultModel + anthropicMessageStartDataSuffix))
 		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"))
-		_, _ = w.Write([]byte("event: message_delta\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"))
-		_, _ = w.Write([]byte("event: message_stop\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+		_, _ = w.Write([]byte(anthropicMessageDeltaEvent))
+		_, _ = w.Write([]byte(anthropicMessageDeltaStopData))
+		_, _ = w.Write([]byte(anthropicMessageStopEvent))
+		_, _ = w.Write([]byte(anthropicMessageStopData))
 	}))
 	defer server.Close()
 
@@ -324,7 +331,7 @@ func TestStreamChatCompletionPropagatesMidstreamError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(anthropicTestContentTypeHeader, anthropicTestEventStreamType)
 		_, _ = w.Write([]byte(anthropicMessageStartEvent))
-		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"" + anthropicTestDefaultModel + "\",\"content\":[]}}\n\n"))
+		_, _ = w.Write([]byte(anthropicMessageStartDataPrefix + anthropicTestDefaultModel + anthropicMessageStartDataSuffix))
 		_, _ = w.Write([]byte(anthropicContentBlockDeltaEvent))
 		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n"))
 	}))

@@ -3,6 +3,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,9 +66,9 @@ func TestCreateChatCompletion(t *testing.T) {
 func TestStreamChatCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(ollamaTestContentTypeHeader, "application/x-ndjson")
-		_, _ = w.Write([]byte("{\"model\":\"" + ollamaTestDefaultModel + "\",\"created_at\":\"2026-04-09T09:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},\"done\":false}\n"))
-		_, _ = w.Write([]byte("{\"model\":\"" + ollamaTestDefaultModel + "\",\"created_at\":\"2026-04-09T09:00:01Z\",\"message\":{\"content\":\"lo\"},\"done\":false}\n"))
-		_, _ = w.Write([]byte("{\"model\":\"" + ollamaTestDefaultModel + "\",\"created_at\":\"2026-04-09T09:00:02Z\",\"message\":{},\"done\":true,\"done_reason\":\"stop\"}\n"))
+		_, _ = w.Write([]byte(ollamaStreamChunk(ollamaTestDefaultModel, "2026-04-09T09:00:00Z", `{"role":"assistant","content":"hel"}`, false, "")))
+		_, _ = w.Write([]byte(ollamaStreamChunk(ollamaTestDefaultModel, "2026-04-09T09:00:01Z", `{"content":"lo"}`, false, "")))
+		_, _ = w.Write([]byte(ollamaStreamChunk(ollamaTestDefaultModel, "2026-04-09T09:00:02Z", `{}`, true, "stop")))
 	}))
 	defer server.Close()
 
@@ -179,4 +180,25 @@ func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
+}
+
+func ollamaStreamChunk(model string, createdAt string, messageJSON string, done bool, doneReason string) string {
+	if doneReason == "" {
+		return fmt.Sprintf(
+			"{\"model\":\"%s\",\"created_at\":\"%s\",\"message\":%s,\"done\":%t}\n",
+			model,
+			createdAt,
+			messageJSON,
+			done,
+		)
+	}
+
+	return fmt.Sprintf(
+		"{\"model\":\"%s\",\"created_at\":\"%s\",\"message\":%s,\"done\":%t,\"done_reason\":\"%s\"}\n",
+		model,
+		createdAt,
+		messageJSON,
+		done,
+		doneReason,
+	)
 }

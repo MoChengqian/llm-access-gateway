@@ -16,6 +16,7 @@ const (
 
 	httpStatusOKLine    = "HTTP/1.1 200 OK"
 	streamDoneMarker    = "data: [DONE]"
+	labelErrorFormat    = "%s: %v"
 	prechunkOutputLabel = "prechunk output"
 	partialOutputLabel  = "partial output"
 
@@ -200,7 +201,7 @@ func validateBenchmarkMode(cfg config) []string {
 		}
 		summary, err := loadBenchmarkSummary(expectation.Path)
 		if err != nil {
-			findings = append(findings, fmt.Sprintf("%s: %v", expectation.Name, err))
+			findings = append(findings, fmt.Sprintf(labelErrorFormat, expectation.Name, err))
 			continue
 		}
 		findings = append(findings, validateBenchmarkSummary(expectation, summary)...)
@@ -259,7 +260,7 @@ func validateStreamFailureMode(cfg config) []string {
 
 	prechunkOutput, err := readFile(cfg.PrechunkOutputPath)
 	if err != nil {
-		findings = append(findings, fmt.Sprintf("%s: %v", prechunkOutputLabel, err))
+		findings = append(findings, fmt.Sprintf(labelErrorFormat, prechunkOutputLabel, err))
 	} else {
 		findings = append(findings, requireContains(prechunkOutputLabel, prechunkOutput, httpStatusOKLine)...)
 		findings = append(findings, requireContains(prechunkOutputLabel, prechunkOutput, streamDoneMarker)...)
@@ -268,7 +269,7 @@ func validateStreamFailureMode(cfg config) []string {
 
 	partialOutput, err := readFile(cfg.PartialOutputPath)
 	if err != nil {
-		findings = append(findings, fmt.Sprintf("%s: %v", partialOutputLabel, err))
+		findings = append(findings, fmt.Sprintf(labelErrorFormat, partialOutputLabel, err))
 	} else {
 		findings = append(findings, requireContains(partialOutputLabel, partialOutput, httpStatusOKLine)...)
 		findings = append(findings, requireContains(partialOutputLabel, partialOutput, partialNeedle)...)

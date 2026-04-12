@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,8 +65,8 @@ func TestCreateChatCompletion(t *testing.T) {
 func TestStreamChatCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(openAITestContentTypeHeader, openAITestEventStreamType)
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"" + openAITestDefaultModel + "\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":\"\"}]}\n\n"))
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"" + openAITestDefaultModel + "\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"role":"assistant","content":"hel"}`, "")))
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"content":"lo"}`, "stop")))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
@@ -223,7 +224,7 @@ func TestStreamChatCompletionRetriesBeforeOpen(t *testing.T) {
 		}
 
 		w.Header().Set(openAITestContentTypeHeader, openAITestEventStreamType)
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"" + openAITestDefaultModel + "\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"role":"assistant","content":"ok"}`, "stop")))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
@@ -288,7 +289,7 @@ func TestCreateChatCompletionHonorsTimeout(t *testing.T) {
 func TestStreamChatCompletionPropagatesMidstreamError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(openAITestContentTypeHeader, openAITestEventStreamType)
-		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"" + openAITestDefaultModel + "\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":\"\"}]}\n\n"))
+		_, _ = w.Write([]byte(openAIStreamChunk(openAITestDefaultModel, `{"role":"assistant","content":"hel"}`, "")))
 	}))
 	defer server.Close()
 
@@ -335,6 +336,15 @@ func (r *attemptRecorderStub) BeginAttempt(_ context.Context, metadata provider.
 	record := &attemptRecord{metadata: metadata}
 	r.records = append(r.records, record)
 	return attemptHandleStub{record: record}, nil
+}
+
+func openAIStreamChunk(model string, deltaJSON string, finishReason string) string {
+	return fmt.Sprintf(
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"%s\",\"choices\":[{\"index\":0,\"delta\":%s,\"finish_reason\":\"%s\"}]}\n\n",
+		model,
+		deltaJSON,
+		finishReason,
+	)
 }
 
 type attemptHandleStub struct {
