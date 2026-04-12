@@ -79,7 +79,6 @@ type backendState struct {
 }
 
 type streamExecution struct {
-	ctx         context.Context
 	events      <-chan provider.ChatCompletionStreamEvent
 	first       provider.ChatCompletionStreamEvent
 	routerSpan  *tracing.Span
@@ -90,7 +89,6 @@ type streamExecution struct {
 }
 
 type streamForwarder struct {
-	ctx        context.Context
 	wrapped    chan<- provider.ChatCompletionStreamEvent
 	backend    string
 	attempt    int
@@ -292,8 +290,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req provider.ChatCo
 				Attempt:   index + 1,
 			})
 		}
-		return p.wrapStream(streamExecution{
-			ctx:         ctx,
+		return p.wrapStream(ctx, streamExecution{
 			events:      events,
 			first:       firstEvent,
 			routerSpan:  span,
@@ -355,12 +352,11 @@ func (p *Provider) Probe(ctx context.Context) {
 	}
 }
 
-func (p *Provider) wrapStream(exec streamExecution) <-chan provider.ChatCompletionStreamEvent {
+func (p *Provider) wrapStream(ctx context.Context, exec streamExecution) <-chan provider.ChatCompletionStreamEvent {
 	wrapped := make(chan provider.ChatCompletionStreamEvent)
 
 	go func() {
 		forwarder := streamForwarder{
-			ctx:       exec.ctx,
 			wrapped:   wrapped,
 			backend:   exec.backend,
 			attempt:   exec.attempt,
@@ -373,20 +369,20 @@ func (p *Provider) wrapStream(exec streamExecution) <-chan provider.ChatCompleti
 			exec.routerSpan.End(forwarder.traceErr, zap.String("backend", exec.backend), zap.Int("attempt", exec.attempt), zap.Int("chunk_count", forwarder.chunkCount))
 		}()
 
-		if !p.forwardStreamEvent(&forwarder, exec.first) {
+		if !p.forwardStreamEvent(ctx, &forwarder, exec.first) {
 			return
 		}
 
 		for {
 			select {
-			case <-exec.ctx.Done():
-				forwarder.traceErr = exec.ctx.Err()
+			case <-ctx.Done():
+				forwarder.traceErr = ctx.Err()
 				return
 			case event, ok := <-exec.events:
 				if !ok {
 					return
 				}
-				if !p.forwardStreamEvent(&forwarder, event) {
+				if !p.forwardStreamEvent(ctx, &forwarder, event) {
 					return
 				}
 			}
@@ -435,7 +431,7 @@ func awaitStreamEvent(ctx context.Context, events <-chan provider.ChatCompletion
 	}
 }
 
-func (p *Provider) forwardStreamEvent(forwarder *streamForwarder, event provider.ChatCompletionStreamEvent) bool {
+func (p *Provider) forwardStreamEvent(ctx context.Context, forwarder *streamForwarder, event provider.ChatCompletionStreamEvent) bool {
 	if event.Err != nil {
 		forwarder.traceErr = event.Err
 		failures, unhealthyUntil := p.markFailure(forwarder.backend)
@@ -450,15 +446,15 @@ func (p *Provider) forwardStreamEvent(forwarder *streamForwarder, event provider
 			Error:               event.Err.Error(),
 		})
 		select {
-		case <-forwarder.ctx.Done():
+		case <-ctx.Done():
 		case forwarder.wrapped <- event:
 		}
 		return false
 	}
 
 	select {
-	case <-forwarder.ctx.Done():
-		forwarder.traceErr = forwarder.ctx.Err()
+	case <-ctx.Done():
+		forwarder.traceErr = ctx.Err()
 		return false
 	case forwarder.wrapped <- event:
 		forwarder.chunkCount++
