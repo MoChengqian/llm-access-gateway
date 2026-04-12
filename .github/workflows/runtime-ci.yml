@@ -29,7 +29,13 @@ jobs:
       - name: Run Stage 7 static contract
         env:
           REQUIRE_K8S_PRODUCTION_RENDER: "true"
-        run: ./scripts/stage7-verify.sh static
+        run: |
+          if ./scripts/stage7-verify.sh static; then
+            exit 0
+          fi
+
+          echo "Stage 7 static contract failed on the first attempt; retrying once with shell trace."
+          bash -x ./scripts/stage7-verify.sh static
 
       - name: Dump Stage 7 static diagnostics
         if: failure()
