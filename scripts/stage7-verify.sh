@@ -53,7 +53,12 @@ run_static_go_tests() {
 
   print_section "go test ./..."
   go clean -testcache
-  go test -p 1 -count=1 ./...
+
+  local package_path
+  while IFS= read -r package_path; do
+    printf 'testing %s\n' "${package_path}"
+    go test -count=1 -parallel=1 "${package_path}"
+  done < <(go list ./...)
   return 0
 }
 
