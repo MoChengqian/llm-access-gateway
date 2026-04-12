@@ -27,6 +27,38 @@ warn() {
   return 0
 }
 
+current_context() {
+  kubectl config current-context 2>/dev/null || true
+  return 0
+}
+
+current_cluster_server() {
+  kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true
+  return 0
+}
+
+diagnose_cluster_access_failure() {
+  local command_name="$1"
+  local log_file="$2"
+  local context_name
+  local cluster_server
+  context_name="$(current_context)"
+  cluster_server="$(current_cluster_server)"
+
+  warn "${command_name} failed for context=${context_name:-unknown} server=${cluster_server:-unknown}"
+
+  if grep -Eq 'certificate signed by unknown authority|failed to verify certificate|x509:' "${log_file}"; then
+    fail "cluster TLS trust failed; refresh kubeconfig certificate-authority-data or replace kubeconfig from the control-plane admin.conf, then rerun server-dry-run"
+  fi
+
+  if grep -Eq 'Unauthorized|provide credentials|You must be logged in to the server' "${log_file}"; then
+    fail "cluster credentials were rejected; refresh the kubeconfig user credentials or replace kubeconfig from the control-plane admin.conf, then rerun server-dry-run"
+  fi
+
+  fail "${command_name} failed; inspect ${log_file} for details"
+  return 1
+}
+
 require_command() {
   local command_name="$1"
   command -v "${command_name}" >/dev/null 2>&1 || fail "${command_name} is required"
@@ -106,8 +138,15 @@ render_overlay() {
 }
 
 require_cluster_api() {
+  local cluster_info_log="/tmp/lag-k8s-cluster-info.log"
+
   print_section "cluster api discovery"
-  kubectl cluster-info >/dev/null
+  printf 'context=%s\n' "$(current_context)"
+  printf 'server=%s\n' "$(current_cluster_server)"
+  if ! kubectl cluster-info >"${cluster_info_log}" 2>&1; then
+    cat "${cluster_info_log}" >&2
+    diagnose_cluster_access_failure "kubectl cluster-info" "${cluster_info_log}"
+  fi
   kubectl api-resources --api-group=networking.k8s.io | grep -q '^networkpolicies' || fail "cluster does not expose networking.k8s.io NetworkPolicy"
   kubectl api-resources --api-group=policy | grep -q '^poddisruptionbudgets' || fail "cluster does not expose policy PodDisruptionBudget"
   kubectl api-resources --api-group=autoscaling | grep -q '^horizontalpodautoscalers' || fail "cluster does not expose autoscaling HorizontalPodAutoscaler"

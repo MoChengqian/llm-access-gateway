@@ -49,6 +49,35 @@ This checks:
 - `kubectl apply --server-side --dry-run=server -k deployments/k8s-overlays/production-hpa` succeeds
 - `metrics.k8s.io` is available before applying the HPA overlay
 
+Before trusting any dry-run result, verify the cluster access baseline is still
+valid:
+
+- the current `kubectl` context points at the intended cluster
+- kubeconfig CA data still matches the current apiserver trust chain
+- kubeconfig user credentials are still accepted by the apiserver
+
+The cluster-check script now prints the active context and server first, then
+turns common TLS and credential failures into explicit remediation guidance
+instead of surfacing only a raw `kubectl` exit code.
+
+## Latest Recorded Attempt
+
+The latest target-cluster evidence is recorded in
+[`k8s-production-server-dry-run-2026-04-12.md`](k8s-production-server-dry-run-2026-04-12.md).
+
+That attempt proved the repository overlays still render locally, but the
+operator workstation's kubeconfig had drifted from the target cluster:
+
+- kubeconfig CA data no longer matched the apiserver certificate chain
+- the embedded `kubernetes-admin` client credentials were rejected by the
+  apiserver even when TLS verification was bypassed
+- SSH access from the workstation to the control-plane node was not available,
+  so `/etc/kubernetes/admin.conf` could not be refreshed in-place
+
+Treat this as an environment-owned blocker. The Stage 7 repository contract
+remains complete, but target-cluster dry-run evidence is not current again
+until the workstation regains valid Kubernetes admin access.
+
 ## Manual Cluster Checks
 
 Before real apply, confirm:
