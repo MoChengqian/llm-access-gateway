@@ -1,7 +1,7 @@
 # LLM Access Gateway
 
-LLM Access Gateway is a Go-based multi-tenant model access and governance
-gateway. It keeps the external API OpenAI-compatible while making routing
+LLM Access Gateway is a Go-based multi-tenant AI gateway for model access
+governance: it keeps the external API OpenAI-compatible while making routing
 policy, quota enforcement, fallback behavior, observability, and delivery
 verification explicit and reviewable.
 
