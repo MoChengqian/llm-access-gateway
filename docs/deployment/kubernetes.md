@@ -178,8 +178,8 @@ testing or provider-side rate-limit planning.
 
 ## Cluster Preflight
 
-Before applying either production overlay to a real cluster, run the repository
-preflight:
+Before applying either production overlay to a real cluster, and only when such
+a cluster exists, run the repository preflight:
 
 ```bash
 make k8s-production-server-dry-run
@@ -190,6 +190,10 @@ This uses `kubectl apply --server-side --dry-run=server -k ...` against the
 target cluster and checks that the API server accepts the production and
 optional HPA overlays. It also checks the metrics API before the HPA overlay is
 considered safe to apply.
+
+This is an environment acceptance gate, not a repository completion
+requirement. If you are validating the repository without a real cluster, stop
+after `make k8s-production-local-check`.
 
 NetworkPolicy server-side acceptance does not prove enforcement. Confirm your
 CNI enforces NetworkPolicy before relying on the boundary policy.

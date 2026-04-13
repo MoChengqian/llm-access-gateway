@@ -184,6 +184,10 @@ kubectl -n llm-access-gateway rollout status deployment/llm-access-gateway --tim
 before real apply so API compatibility, HPA metrics support, and server-side
 schema validation fail before rollout time.
 
+If no real cluster exists yet, stop after `make k8s-production-local-check` and
+treat the server-side dry-run as deferred environment validation rather than a
+repository gap.
+
 ### Post-rollout checks
 
 ```bash
