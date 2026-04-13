@@ -1,181 +1,129 @@
 # LLM Access Gateway Documentation
 
-Welcome to the LLM Access Gateway documentation. This index organizes all documentation by audience to help you find what you need quickly.
+This documentation is organized around decisions, runnable paths, and evidence.
+If you are new to the repository, do not read it folder by folder. Start with
+the path that matches your goal.
 
-## Quick Navigation by Audience
+## Start With One Path
 
-### 🔧 For Engineers
-**Goal:** Understand, deploy, or contribute to the gateway
+### 1. Understand The Project Quickly
 
-**Suggested Reading Path:**
-1. [Quick Start Guide](quick-start-guide.md) ⭐ **Start here** - 10-minute overview
-2. [Local Development](local-development.md) - Get the gateway running locally
-3. [API Documentation](api.md) - Complete API reference
-4. [Architecture Overview](architecture.md) - System design and components
-5. [Deployment Guides](#deployment-documentation) - Docker Compose and Kubernetes
+Read these in order:
 
-**Key Documents:**
-- [API Reference](api.md) - All HTTP endpoints with curl examples ✅
-- [Architecture](architecture.md) - System design and request flow ✅
-- [Local Development](local-development.md) - Step-by-step local setup ✅
-- [Deployment: Docker Compose](deployment/docker-compose.md) - Container deployment ✅
-- [Deployment: Kubernetes](deployment/kubernetes.md) - K8s deployment ✅
-- [Configuration Reference](deployment/configuration.md) - Environment variables and config ✅
+1. [Quick Start Guide](quick-start-guide.md)
+2. [Architecture Overview](architecture/overview.md)
+3. [Execution Roadmap](execution-roadmap.md)
 
-### 🎯 For Interviewers & Recruiters
-**Goal:** Assess technical depth and engineering quality in under 10 minutes
+Use this path when you want the shortest explanation of:
 
-**Suggested Reading Path:**
-1. [Quick Start Guide](quick-start-guide.md) ⭐ **Start here** - Project scope and key decisions
-2. [Architecture Overview](architecture.md) - Design decisions and trade-offs
-3. [Performance Benchmarks](#performance-verification) - Quantitative evidence
-4. [Failure Drills](#resilience-verification) - Resilience testing results
+- what the project is
+- what it is not
+- what v1 is trying to prove
+- which stages are already complete
 
-**Key Documents:**
-- [Quick Start Guide](quick-start-guide.md) - 10-minute project overview ✅
-- [Architecture](architecture.md) - System design and boundaries ✅
-- [Benchmark Reports](verification/benchmarks/) - Performance metrics ✅
-- [Failure Drill Reports](verification/failure-drills/) - Resilience evidence ✅
+### 2. Run The Gateway Locally
 
-### 📚 For Learners & Blog Readers
-**Goal:** Learn from engineering decisions and implementation details
+Read these in order:
 
-**Suggested Reading Path:**
-1. [Project Overview Article](blog/001-project-overview.md) - Why this gateway exists
-2. [SSE Streaming Implementation](blog/002-sse-streaming.md) - Building streaming proxies
-3. [Resilience & Failure Handling](blog/003-resilience.md) - Retry, fallback, health checks
-4. [Observability Implementation](blog/004-observability.md) - Metrics, tracing, logs
-5. [Performance Benchmarking](blog/005-performance.md) - How to measure system performance
-6. [Multi-Tenant Governance](blog/006-multi-tenant-governance.md) - Tenant isolation and quotas
+1. [Local Development](local-development.md)
+2. [API Reference](api.md)
+3. [Deployment: Docker Compose](deployment/docker-compose.md)
 
-**Key Documents:**
-- [Blog Articles](blog/) - Technical deep-dives and lessons learned ✅
+Use this path when you want to:
 
----
+- start MySQL, Redis, `devinit`, and the gateway
+- call `/v1/chat/completions`, `/v1/models`, and `/v1/usage`
+- inspect `/healthz`, `/readyz`, `/debug/providers`, and `/metrics`
 
-## Documentation by Category
+### 3. Verify The Engineering Evidence
 
-### API Documentation
-Complete reference for all HTTP endpoints with request/response examples.
+Read these in order:
 
-- [API Reference](api.md) - All endpoints, auth, streaming format ✅
-- [API Endpoints](api/endpoints.md) - Detailed endpoint specifications ✅
-- [Authentication](api/authentication.md) - Auth requirements and flows ✅
-- [SSE Streaming](api/streaming.md) - Streaming format details ✅
+1. [Verification Index](verification/README.md)
+2. [Stage 7 Delivery Contract](verification/stage7-delivery-contract.md)
+3. [Stage 7 Production Readiness](verification/stage7-production-readiness.md)
 
-### Architecture Documentation
-Deep technical explanation of system design, components, and decisions.
+Use this path when you want to see:
 
-- [Architecture Overview](architecture.md) - System layers and boundaries ✅
-- [Request Flow](architecture/request-flow.md) - Request path through layers ✅
-- [Provider Adapters](architecture/provider-adapters.md) - Provider abstraction design ✅
-- [Streaming Proxy](architecture/streaming-proxy.md) - SSE proxy implementation ✅
-- [Governance Model](architecture/governance.md) - Auth, tenant, quota enforcement ✅
-- [Routing & Resilience](architecture/routing-resilience.md) - Routing, retry, fallback ✅
-- [Observability Design](architecture/observability.md) - Metrics, tracing, logs ✅
+- which commands are the real verification entrypoints
+- what Stage 5, Stage 6, and Stage 7 currently prove
+- which checks are local repository checks versus environment-owned rollout
+  checks
 
-### Deployment Documentation
-Practical guides for deploying the gateway in different environments.
+## Core Reading Paths
 
-- [Local Development](local-development.md) - Local setup with Docker Compose ✅
-- [Docker Compose Deployment](deployment/docker-compose.md) - Container deployment guide ✅
-- [Kubernetes Deployment](deployment/kubernetes.md) - K8s deployment guide ✅
-- [Configuration Reference](deployment/configuration.md) - All config options ✅
-- [Production Considerations](deployment/production-considerations.md) - Production deployment advice ✅
+### Product Boundary And System Shape
 
-### Performance Verification
-Benchmark reports with quantitative performance metrics.
+- [Execution Roadmap](execution-roadmap.md)
+- [Architecture Overview](architecture/overview.md)
+- [API Reference](api.md)
 
-- [Non-Streaming Benchmarks](verification/benchmarks/non-streaming.md) - QPS and latency ✅
-- [Streaming Benchmarks](verification/benchmarks/streaming.md) - TTFT metrics ✅
-- [Benchmark Methodology](verification/benchmarks/methodology.md) - Test approach and environment ✅
+These documents define the system boundary: multi-tenant model access,
+governance, routing, observability, and delivery verification. They are the
+best starting point for understanding what belongs in this repository and what
+does not.
 
-### Resilience Verification
-Failure drill reports demonstrating system behavior under failure conditions.
+### Routing, Governance, And Fallback
 
-- [Provider Timeout Drill](verification/failure-drills/provider-timeout.md) - Timeout and fallback ✅
-- [Provider Error Drill](verification/failure-drills/provider-errors.md) - 5xx error handling ✅
-- [Quota Enforcement Drill](verification/failure-drills/quota-enforcement.md) - Rate limiting ✅
-- [Streaming Failure Drill](verification/failure-drills/streaming-failures.md) - Stream failure scenarios ✅
-- [Anthropic Adapter Drill](verification/failure-drills/anthropic-adapter.md) - Anthropic request translation and stream handling ✅
+- [Routing & Resilience](architecture/routing-resilience.md)
+- [Authentication](api/authentication.md)
+- [API Endpoints](api/endpoints.md)
+- [Provider Error Drill](verification/failure-drills/provider-errors.md)
+- [Streaming Failure Drill](verification/failure-drills/streaming-failures.md)
 
-### Blog Articles
-Educational articles showcasing engineering decisions and implementation evidence.
+Use this path for the Stage 5 core:
 
-- [001: Project Overview](blog/001-project-overview.md) - Gateway positioning and scope ✅
-- [002: SSE Streaming Implementation](blog/002-sse-streaming.md) - Building streaming proxies ✅
-- [003: Resilience & Failure Handling](blog/003-resilience.md) - Retry, fallback, health checks ✅
-- [004: Observability Implementation](blog/004-observability.md) - Metrics, tracing, logs ✅
-- [005: Performance Benchmarking](blog/005-performance.md) - Measuring system performance ✅
-- [006: Multi-Tenant Governance](blog/006-multi-tenant-governance.md) - Tenant isolation and quotas ✅
+- MySQL-backed `route_rules`
+- quota and usage governance
+- health-aware deterministic fallback
+- streaming first-chunk fallback boundary
 
-### Maintenance & Guidelines
-Templates and guidelines for creating consistent documentation.
+### Observability
 
-- [Documentation Templates](maintenance/templates/) - Reusable document structures ✅
-- [Writing Guidelines](maintenance/guidelines/) - Style and formatting standards ✅
+- [Observability Design](architecture/observability.md)
+- [OTLP Export Verification](verification/otlp-export.md)
+- [Observability Demo Runtime](verification/observability-demo-runtime.md)
 
----
+Use this path for the Stage 6 core:
 
-## Document Status Legend
+- `X-Request-Id` and `X-Trace-Id`
+- structured logs and trace/span correlation
+- `/metrics`
+- optional OTLP export and local Grafana/Prometheus evidence
 
-- ✅ **Complete** - Document is finished and up-to-date
-- 🚧 **Draft** - Document is in progress or incomplete
-- ⚠️ **Outdated** - Document needs updating to match current code
+### Delivery, Load, And Deployment
 
----
+- [Stage 7 Delivery Contract](verification/stage7-delivery-contract.md)
+- [Stage 7 Production Readiness](verification/stage7-production-readiness.md)
+- [Deployment: Docker Compose](deployment/docker-compose.md)
+- [Deployment: Kubernetes](deployment/kubernetes.md)
+- [Production Considerations](deployment/production-considerations.md)
+- [Benchmark Methodology](verification/benchmarks/methodology.md)
 
-## Additional Resources
+Use this path for the Stage 7 core:
 
-### Repository Links
-- [Main README](../README.md) - Project overview and quick start
-- [PRD v1](prd-v1.md) - Original product requirements
+- local delivery and smoke verification
+- built-in load tooling and nightly regression
+- Kubernetes render and preflight checks
+- the boundary between repository completion and environment rollout readiness
 
-### Quick Reference
-- **Local Dev Key:** `lag-local-dev-key` (after running `go run ./cmd/devinit`)
-- **Base URL:** `http://127.0.0.1:8080`
-- **Auth Header:** `Authorization: Bearer <api-key>`
-- **Health Check:** `GET /healthz`
-- **Readiness Check:** `GET /readyz`
-- **Metrics:** `GET /metrics`
+## If You Only Read Three Documents
 
-### Common Commands
-```bash
-# Start local environment
-docker compose -f deployments/docker/docker-compose.yml up -d
-export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
-export APP_REDIS_ADDRESS='127.0.0.1:6379'
-go run ./cmd/devinit
-go run ./cmd/gateway
+- [Quick Start Guide](quick-start-guide.md)
+- [Architecture Overview](architecture/overview.md)
+- [Verification Index](verification/README.md)
 
-# Run tests
-go test ./...
-make test
+That set gives a new engineer, reviewer, or interviewer the fastest route to
+the project position, internal shape, and proof trail.
 
-# Run load tests
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream
+## Blog And Long-Form Evidence
 
-# Verify deployment
-make verify
-./scripts/gateway-smoke-check.sh
-```
+If you want the narrative layer behind the implementation:
 
----
+- [001: Project Overview](blog/001-project-overview.md)
+- [003: Resilience & Failure Handling](blog/003-resilience.md)
+- [004: Observability Implementation](blog/004-observability.md)
+- [006: Multi-Tenant Governance](blog/006-multi-tenant-governance.md)
 
-## Contributing to Documentation
-
-When adding new documentation:
-
-1. Use the appropriate [template](maintenance/templates/) for your document type
-2. Follow the [writing guidelines](maintenance/guidelines/)
-3. Update this index with a link to your new document
-4. Mark the document status appropriately (✅ 🚧 ⚠️)
-5. Add bidirectional links to related documents
-
-For questions or suggestions, please open an issue in the repository.
-
----
-
-**Last Updated:** 2026-04-07
-**Documentation Version:** 1.0
+These articles are strongest when read after the architecture and verification
+entrypoints above. They are supporting evidence, not the main navigation path.

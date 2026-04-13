@@ -1,551 +1,149 @@
 # LLM Access Gateway
 
-LLM Access Gateway is a Go service that exposes an OpenAI-compatible
-`POST /v1/chat/completions` and `GET /v1/models` APIs with:
+LLM Access Gateway is a Go-based multi-tenant model access and governance
+gateway. It keeps the external API OpenAI-compatible while making routing
+policy, quota enforcement, fallback behavior, observability, and delivery
+verification explicit and reviewable.
 
-- API key authentication backed by MySQL
-- Redis-backed RPM / TPM limiting with MySQL fallback
-- tenant resolution from API key
-- MySQL-backed `route_rules` control for backend selection and model-specific priority
-- provider routing with model-aware priority and configurable OpenAI-compatible, Anthropic, Ollama, or mock backends
-- active provider probing via the models endpoint
-- mock non-streaming chat completions
-- SSE streaming chat completions
-- provider health and debug status endpoints
-- request ID propagation in responses and logs
+This repository is not a chatbot app, a RAG stack, or a model-serving kernel.
+Its focus is the control path in front of model providers: who can call, where
+traffic goes, how failures fall back, how requests are observed, and how the
+system is verified.
 
-The current codebase is intentionally small. It is suitable for local
-development, auth validation, and API contract verification while already
-covering real provider adapters, richer routing, and production-facing
-observability basics.
+## What This Repository Proves
+
+- gateway access can be treated as a bounded infrastructure problem
+- routing policy can move into MySQL `route_rules` instead of living only in
+  process config
+- the request path can combine MySQL auth, Redis-backed limit checks, MySQL
+  usage records, and deterministic fallback without collapsing into framework
+  sprawl
+- SSE streaming fallback has a real first-chunk boundary that is implemented,
+  tested, and documented
+- observability and delivery can be verified locally without pretending the
+  repository owns every production dependency
 
 ## Core Capabilities
 
-- `POST /v1/chat/completions`
-- `GET /v1/models`
-- `GET /v1/usage`
-- `Authorization: Bearer <key>` authentication
-- MySQL-backed tenant and API key lookup
-- `stream=false` JSON response
-- `stream=true` SSE response with `Content-Type: text/event-stream`
-- final streaming marker `data: [DONE]`
-- health endpoints: `GET /healthz` and `GET /readyz`
-- provider status endpoint: `GET /debug/providers`
-- tenant usage endpoint: `GET /v1/usage`
-- metrics endpoint: `GET /metrics`
-- tracing header: `X-Trace-Id` on every HTTP response
-- configurable OpenAI-compatible upstream provider adapter
-- configurable Anthropic upstream provider adapter
-- configurable Ollama upstream provider adapter
-- provider-level timeout and pre-stream retry policy for hosted HTTP upstreams
-- Anthropic system prompt translation plus named-SSE normalization
-- model-aware failover ordering using exact model matches plus explicit backend priority
+### Stage 5: Governance, Routing, and Fallback
 
-## Project Structure
+- OpenAI-compatible `POST /v1/chat/completions` and `GET /v1/models`
+- MySQL-backed tenant and API key authentication
+- Redis-backed RPM and TPM limiting with MySQL-backed usage persistence
+- MySQL-backed `route_rules` for backend selection and model-specific priority
+- deterministic provider fallback with passive health, active probes, and
+  `/readyz` plus `/debug/providers`
+- provider adapters for OpenAI-compatible, Anthropic, Ollama, and mock backends
 
-```text
-cmd/
-  devinit/     Initialize local MySQL schema and seed one development tenant/key
-  gateway/     Start the HTTP gateway
-  loadtest/    Run a built-in load test against chat completions
-  routerulectl/ Manage persisted route_rules from the command line
+### Stage 6: Observability
 
-configs/
-  config.yaml  Default app configuration
+- `X-Request-Id` and `X-Trace-Id` on every HTTP response
+- structured logs with request, trace, and span correlation
+- Prometheus-style `/metrics`
+- optional OTLP/HTTP trace export
+- a local Prometheus, Grafana, and OTLP demo path with committed verification
+  evidence
 
-deployments/
-  docker/
-    docker-compose.yml  Local MySQL, Redis, devinit, and gateway stack
-  k8s/
-    *.yaml      Namespace, ConfigMap, Secret example, Deployment, Service
+### Stage 7: Delivery and Verification
 
-docs/
-  local-development.md  Step-by-step local setup and troubleshooting
+- Docker Compose local stack
+- baseline Kubernetes manifests plus production and optional HPA overlays
+- built-in load testing through `cmd/loadtest`
+- repeatable failure drills for provider errors, timeouts, quota rejection, and
+  streaming interruption
+- nightly benchmark and drill regression workflow
+- shared repository verification commands for static, runtime, observability,
+  Kubernetes, and SonarCloud checks
 
-internal/
-  api/         Router and HTTP handlers
-  auth/        Bearer auth and tenant resolution
-  config/      Config loading
-  provider/    Provider interface plus mock, OpenAI-compatible, Anthropic, and Ollama adapters
-  provider/router Failover router with passive backend health
-  service/chat Chat request validation and response shaping
-  store/mysql/ MySQL auth lookup, usage storage, and local bootstrap helpers
-  store/redis/ Minimal Redis client for limiter counters
+## Start Here
 
-migrations/
-  001_init.sql Initial tenants, API keys, request usage, attempt usage, and route rule schema
-```
+Choose the shortest path for what you want to do next:
 
-## Quick Start
+- understand the project in 10 minutes:
+  [docs/quick-start-guide.md](docs/quick-start-guide.md)
+- run the gateway locally:
+  [docs/local-development.md](docs/local-development.md)
+- understand the architecture and boundaries:
+  [docs/architecture/overview.md](docs/architecture/overview.md)
+- inspect routing and fallback behavior:
+  [docs/architecture/routing-resilience.md](docs/architecture/routing-resilience.md)
+- inspect observability design:
+  [docs/architecture/observability.md](docs/architecture/observability.md)
+- inspect the proof and verification trail:
+  [docs/verification/README.md](docs/verification/README.md)
 
-The quickest local path is:
+## Fast Local Path
+
+If you want the quickest shell-based local path:
 
 ```bash
-docker compose -f deployments/docker/docker-compose.yml up -d
-
-until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql)" = "healthy" ]; do
-  sleep 1
-done
-
-until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-redis)" = "healthy" ]; do
-  sleep 1
-done
-
+docker compose -f deployments/docker/docker-compose.yml up -d mysql redis
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
 export APP_REDIS_ADDRESS='127.0.0.1:6379'
-
 go run ./cmd/devinit
 go run ./cmd/gateway
-```
-
-Expected output:
-
-```text
-# go run ./cmd/devinit
-development auth seed ready
-tenant=local-dev
-api_key=lag-local-dev-key
-rpm_limit=60
-tpm_limit=4000
-token_budget=1000000
-route_rules=2
-
-# go run ./cmd/gateway
-INFO gateway starting address=:8080
-```
-
-For a full walkthrough, see [docs/local-development.md](docs/local-development.md).
-
-To inspect or update persisted routing policy:
-
-```bash
-go run ./cmd/routerulectl list
-go run ./cmd/routerulectl sync-from-config
-go run ./cmd/routerulectl replace \
-  -rule 'fast-gpt4o,gpt-4o-mini,10' \
-  -rule 'generic-fallback,,20'
-```
-
-Route rule changes are persisted immediately, and the current gateway process
-applies them on the next start.
-
-## Documentation
-
-The repository now includes a structured documentation index under [docs/README.md](docs/README.md). Good entry points are:
-
-- [docs/quick-start-guide.md](docs/quick-start-guide.md) for a 10-minute project overview
-- [docs/architecture/overview.md](docs/architecture/overview.md) for the system layers and boundaries
-- [docs/local-development.md](docs/local-development.md) for the runnable local path
-- [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md) and [docs/deployment/kubernetes.md](docs/deployment/kubernetes.md) for deployment guidance
-
-## Container Quick Start
-
-To start the full local stack in containers:
-
-```bash
-docker compose -f deployments/docker/docker-compose.yml up -d --build
-docker compose -f deployments/docker/docker-compose.yml ps
-docker compose -f deployments/docker/docker-compose.yml logs devinit
 curl -i http://127.0.0.1:8080/healthz
 ```
 
-Expected result:
-
-- `mysql`, `redis`, and `gateway` become healthy
-- `devinit` exits with code `0`
-- `curl` returns `200` plus `X-Request-Id` and `X-Trace-Id`
-
-## K8s Basics
-
-The repo now includes baseline Kubernetes manifests in [deployments/k8s](deployments/k8s):
-
-- `namespace.yaml`
-- `kustomization.yaml`
-- `configmap.yaml`
-- `secret.example.yaml`
-- `job.yaml`
-- `deployment.yaml`
-- `service.yaml`
-
-Apply them in this order after replacing the MySQL DSN in `secret.example.yaml`:
-
-```bash
-kubectl apply -f deployments/k8s/namespace.yaml
-kubectl apply -f deployments/k8s/configmap.yaml
-kubectl apply -f deployments/k8s/secret.example.yaml
-kubectl apply -f deployments/k8s/job.yaml
-kubectl -n llm-access-gateway wait --for=condition=complete job/llm-access-gateway-devinit --timeout=120s
-kubectl apply -f deployments/k8s/deployment.yaml
-kubectl apply -f deployments/k8s/service.yaml
-kubectl -n llm-access-gateway get pods,svc
-```
-
-The deployment uses:
-
-- `/healthz` as liveness probe
-- `/readyz` as readiness probe
-- `APP_*` environment variables from ConfigMap and Secret
-- port `8080` for both API and `/metrics`
-
-For a production-oriented render, use the Kustomize overlay in
-[deployments/k8s-overlays/production](deployments/k8s-overlays/production):
-
-```bash
-make k8s-production-render
-kubectl apply -k deployments/k8s-overlays/production
-```
-
-Replace the overlay image tag, ingress host/TLS secret, MySQL DSN, Redis
-address, provider keys, and OTLP collector URL before applying it to a real
-cluster.
-
-The production overlay also includes a `NetworkPolicy` for gateway ingress and
-egress boundaries. If your cluster has `metrics-server` and you want resource
-based autoscaling, render or apply the optional HPA overlay:
-
-```bash
-make k8s-production-hpa-render
-kubectl apply -k deployments/k8s-overlays/production-hpa
-```
-
-Before applying to a real cluster, run the standardized preflight checks:
-
-```bash
-make k8s-production-local-check
-make k8s-production-server-dry-run
-```
-
-The server-side dry run requires access to the target Kubernetes cluster.
-
-## Auth
-
-The chat completions endpoint requires:
-
-```text
-Authorization: Bearer <api-key>
-```
-
-Current auth behavior:
-
-- missing `Authorization` -> `401` with `{"error":"missing api key"}`
-- invalid key -> `401` with `{"error":"invalid api key"}`
-- disabled key or disabled tenant -> `401`
-- tenant RPM limit exceeded -> `429` with `{"error":"rate limit exceeded"}`
-- tenant TPM limit exceeded -> `429` with `{"error":"token rate limit exceeded"}`
-- tenant token budget exceeded -> `403` with `{"error":"budget exceeded"}`
-- valid key -> request continues to chat service
-
-For local development, `go run ./cmd/devinit` seeds:
+Expected local seed output from `go run ./cmd/devinit` includes:
 
 - tenant: `local-dev`
 - API key: `lag-local-dev-key`
-- tenant RPM limit: `60 req/min`
-- tenant TPM limit: `4000 tokens/min`
-- tenant token budget: `1000000 tokens`
-
-The gateway stores and looks up the SHA-256 hash of the API key. It does not
-store raw API keys in MySQL.
-
-## API Quick Checks
-
-After `go run ./cmd/devinit` and `go run ./cmd/gateway`, you can use this
-single-screen checklist directly:
-
-```bash
-# missing key -> 401
-curl -i http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"hello"}]}'
-
-# invalid key -> 401
-curl -i http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer invalid-key' \
-  -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"hello"}]}'
-
-# valid key, non-stream -> 200 JSON
-curl -i http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer lag-local-dev-key' \
-  -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"hello"}]}'
-
-# valid key, models -> 200 JSON list
-curl -i http://127.0.0.1:8080/v1/models \
-  -H 'Authorization: Bearer lag-local-dev-key'
-
-# valid key, usage -> 200 JSON summary + recent records
-curl -i 'http://127.0.0.1:8080/v1/usage?limit=5' \
-  -H 'Authorization: Bearer lag-local-dev-key'
-
-# valid key, stream -> text/event-stream + [DONE]
-curl -i -N http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer lag-local-dev-key' \
-  -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
-```
-
-Expected results:
-
-- missing key -> `401` and `{"error":"missing api key"}`
-- invalid key -> `401` and `{"error":"invalid api key"}`
-- valid key -> `200` with `"object":"chat.completion"`
-- models -> `200` with `"object":"list"` and partial aggregation from healthy providers when at least one source succeeds
-- usage -> `200` with `"object":"usage"`, tenant quota summary, and recent usage records for the authenticated tenant only
-- `stream:true` -> `Content-Type: text/event-stream` and final `data: [DONE]`
-- if an upstream stream is interrupted after the first chunk, the gateway closes the stream without a false `[DONE]`, and fallback is not attempted after output has started
-- with Redis enabled, RPM / TPM counters are enforced from Redis first and fall back to MySQL if Redis is unavailable
-- if the primary mock provider fails before any response is produced, the secondary mock provider is used automatically
-- `GET /debug/providers` shows backend health, failure count, cooldown state, and effective `route_rules`
-- `GET /metrics` exposes request count, provider failures, fallback count, and readyz failures
-- `/metrics` also exposes governance rejection counts, stream request/chunk/TTFT counters, HTTP request latency, provider operation latency, and probe success/failure totals
-- every request returns `X-Trace-Id`, and logs now include `trace_id`, `span_id`, and provider span events for request -> handler -> provider correlation
-- optional OTLP/HTTP trace export is available through `APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT`
-- OTLP export can be smoke-checked locally with `./scripts/otlp-export-check.sh`
-- the Grafana dashboard asset lives at `deployments/grafana/dashboards/llm-access-gateway.json`
-- a repo-owned observability demo stack can boot OpenTelemetry Collector,
-  Prometheus, and Grafana with `make observability-demo-up`
-
-## Local Development Entry
-
-Common local entry points:
-
-```bash
-go run ./cmd/devinit
-go run ./cmd/gateway
-make test
-make fmt
-make loadtest
-make verify
-make otlp-check
-make observability-demo-prepull
-make observability-demo-up
-make observability-demo-check
-make observability-demo-verify
-```
-
-Environment variables currently used by the code:
-
-```bash
-export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
-export APP_REDIS_ADDRESS='127.0.0.1:6379'
-export APP_SERVER_ADDRESS=':8080'
-export APP_SERVER_READ_HEADER_TIMEOUT_SECONDS='5'
-export APP_SERVER_READ_TIMEOUT_SECONDS='15'
-export APP_SERVER_WRITE_TIMEOUT_SECONDS='60'
-export APP_SERVER_IDLE_TIMEOUT_SECONDS='60'
-export APP_SERVER_MAX_REQUEST_BODY_BYTES='1048576'
-export APP_OBSERVABILITY_SERVICE_NAME='llm-access-gateway'
-export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT=''
-export APP_OBSERVABILITY_OTLP_TRACES_INSECURE='false'
-export APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS='5'
-export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
-export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
-export APP_GATEWAY_PROVIDER_PROBE_INTERVAL_SECONDS='30'
-export APP_PROVIDER_PRIMARY_TYPE='mock'
-export APP_PROVIDER_PRIMARY_BASE_URL=''
-export APP_PROVIDER_PRIMARY_API_KEY=''
-export APP_PROVIDER_PRIMARY_MODEL=''
-export APP_PROVIDER_PRIMARY_MAX_TOKENS='1024'
-export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
-export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
-export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
-export APP_PROVIDER_SECONDARY_TYPE='mock'
-export APP_PROVIDER_SECONDARY_BASE_URL=''
-export APP_PROVIDER_SECONDARY_API_KEY=''
-export APP_PROVIDER_SECONDARY_MODEL=''
-export APP_PROVIDER_SECONDARY_MAX_TOKENS='1024'
-export APP_PROVIDER_SECONDARY_TIMEOUT_SECONDS='15'
-export APP_PROVIDER_SECONDARY_MAX_RETRIES='1'
-export APP_PROVIDER_SECONDARY_RETRY_BACKOFF_MILLISECONDS='200'
-```
-
-To run the full local observability demo stack, start the gateway with OTLP
-export pointed at the local collector and then run:
-
-```bash
-export APP_OBSERVABILITY_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
-export APP_OBSERVABILITY_OTLP_EXPORT_TIMEOUT_SECONDS='1'
-go run ./cmd/gateway
-make observability-demo-up
-make observability-demo-check
-```
-
-That flow proves all three pieces together:
-
-- the gateway exposes `/metrics`
-- the collector accepts OTLP/HTTP spans from the gateway
-- Grafana boots with the provisioned Prometheus datasource and dashboard
-
-For a repo-owned end-to-end path that also boots MySQL, Redis, seeds the
-database, starts the gateway, runs the observability check, and then cleans up,
-use:
-
-```bash
-make observability-demo-verify
-```
-
-If Docker Hub or a registry mirror is slow in your environment, warm the images
-first:
-
-```bash
-make observability-demo-prepull
-```
-
-Server hardening defaults:
-
-- request header timeout: `5s`
-- request read timeout: `15s`
-- response write timeout: `60s`
-- idle timeout: `60s`
-- max request body size: `1048576` bytes
-
-To use a real OpenAI-compatible upstream as the primary backend:
-
-```bash
-export APP_PROVIDER_PRIMARY_TYPE='openai'
-export APP_PROVIDER_PRIMARY_BASE_URL='https://api.openai.com/v1'
-export APP_PROVIDER_PRIMARY_API_KEY='sk-...'
-export APP_PROVIDER_PRIMARY_MODEL='gpt-4.1-mini'
-export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
-export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
-export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
-```
-
-The gateway will keep the configured secondary backend for fallback, and streaming fallback still only happens before the first chunk is emitted.
-Provider readiness is also refreshed by a background probe loop that uses the configured provider model listing path.
-For OpenAI-compatible upstreams, timeout applies to non-stream requests and model probing, while retries only happen before a stream is opened.
-
-To use Anthropic as the primary backend:
-
-```bash
-export APP_PROVIDER_PRIMARY_TYPE='anthropic'
-export APP_PROVIDER_PRIMARY_BASE_URL='https://api.anthropic.com/v1'
-export APP_PROVIDER_PRIMARY_API_KEY='sk-ant-...'
-export APP_PROVIDER_PRIMARY_MODEL='claude-3-5-sonnet-latest'
-export APP_PROVIDER_PRIMARY_MAX_TOKENS='1024'
-export APP_PROVIDER_PRIMARY_TIMEOUT_SECONDS='15'
-export APP_PROVIDER_PRIMARY_MAX_RETRIES='1'
-export APP_PROVIDER_PRIMARY_RETRY_BACKOFF_MILLISECONDS='200'
-```
-
-The Anthropic adapter automatically sends the required `anthropic-version` header, maps OpenAI-style `system` messages into Anthropic's top-level `system` field, and normalizes Anthropic streaming events into the gateway's standard SSE contract.
-
-## Load Testing
-
-The repo includes a built-in load test command so you can get a quick baseline without external tools:
-
-```bash
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream
-```
-
-Expected output includes:
-
-- total request count and concurrency
-- success / failure counts
-- status code distribution
-- latency p50 / p95 / max
-- for streaming: TTFT p50 / p95 / max and total streamed chunk count
-
-For local fallback verification you can temporarily force the primary mock
-provider to fail before a response starts:
-
-```bash
-export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='true'
-go run ./cmd/gateway
-
-export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='true'
-go run ./cmd/gateway
-```
-
-Expected result:
-
-- non-stream requests still return `200`
-- stream requests still return `text/event-stream` and final `data: [DONE]`
-- `curl -i http://127.0.0.1:8080/readyz` returns `503` when all providers are in cooldown
-- `curl -i http://127.0.0.1:8080/debug/providers` shows which backend is unhealthy
-
-There is also a small drill helper:
-
-```bash
-./scripts/provider-fallback-drill.sh status
-./scripts/provider-fallback-drill.sh create-fail
-./scripts/provider-fallback-drill.sh stream-fail
-./scripts/gateway-smoke-check.sh
-```
-
-The smoke script now checks:
-
-- `/healthz`
-- `/metrics`
-- `/v1/models`
-- `/v1/usage`
-- non-stream chat
-- stream chat
-- built-in load test for both non-stream and stream
-
-For machine-verifiable local acceptance instead of visual inspection:
-
-```bash
-make verify
-make stage7-static
-make stage7-runtime
-make stage7-verify
-```
-
-The Stage 7 production-readiness matrix is documented in
-[docs/verification/stage7-production-readiness.md](docs/verification/stage7-production-readiness.md).
-
-`make verify` and `make stage7-runtime` run the same smoke/load flow with
-assertions enabled and exit non-zero if any core runtime contract check fails.
-`make stage7-static` validates tests, vet, deployment manifests, the production
-Kubernetes overlay, dashboard JSON, and required delivery assets without
-requiring a running gateway. CI also forces `kubectl`-backed production overlay
-and optional HPA overlay rendering before this static contract runs. `make
-stage7-verify` combines both paths when a local gateway is already running.
-
-The built-in load test also supports machine-readable and threshold-driven runs:
-
-```bash
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -json
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 20 -concurrency 4 -min-success-rate 1.0
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -json
-go run ./cmd/loadtest -auth-key lag-local-dev-key -requests 10 -concurrency 2 -stream -min-success-rate 1.0 -max-ttft-p95 2s
-```
-
-Stage 7 treats `cmd/loadtest` as the canonical load tool. External tools such as
-`k6` are intentionally deferred until they prove coverage that the built-in JSON
-and threshold-driven load contract cannot provide.
-
-Default config file: [`configs/config.yaml`](configs/config.yaml)
-
-## Common Questions
-
-### Why does `go run ./cmd/gateway` fail with `mysql dsn is required`?
-
-Because the gateway now requires MySQL-backed auth on startup. Export
-`APP_MYSQL_DSN` before starting the service.
-
-### How do I create a valid local API key?
-
-Run:
-
-```bash
-go run ./cmd/devinit
-```
-
-It will create or update one development tenant and one valid key:
-`lag-local-dev-key`.
-
-### Why do I get `401 missing api key`?
-
-Your request is missing the `Authorization: Bearer <key>` header.
-
-### Why do I get `401 invalid api key`?
-
-The key was not found in MySQL. For a known-good local key, run
-`go run ./cmd/devinit` and use `lag-local-dev-key`.
-
-### Where is the full local setup guide?
-
-See [docs/local-development.md](docs/local-development.md).
+- default route rules seeded from the current provider config
+
+If you prefer a full container path instead of running the gateway in your
+shell, use [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md).
+
+## Verification Entrypoints
+
+These are the main commands that turn the repository into evidence rather than
+just source files:
+
+- `make stage7-static`
+  validates tests, vet, deployment assets, dashboard JSON, and required Stage 7
+  assets
+- `make stage7-runtime`
+  runs the smoke and built-in load contract against a live local gateway
+- `make observability-demo-verify`
+  proves the local metrics, OTLP export, collector, Prometheus, and Grafana
+  loop
+- `make k8s-production-local-check`
+  validates the production and optional HPA overlays without requiring a real
+  cluster
+- `make k8s-production-server-dry-run`
+  is an environment gate only, and should be run only when a real cluster
+  exists
+- `make sonar-quality-gate-check`
+  verifies the external SonarCloud release gate on `main`
+
+The full evidence map lives in
+[docs/verification/README.md](docs/verification/README.md).
+
+## Documentation Map
+
+- project boundary and staged roadmap:
+  [docs/execution-roadmap.md](docs/execution-roadmap.md)
+- API shape and endpoint behavior:
+  [docs/api.md](docs/api.md)
+- local setup and troubleshooting:
+  [docs/local-development.md](docs/local-development.md)
+- deployment guidance:
+  [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md),
+  [docs/deployment/kubernetes.md](docs/deployment/kubernetes.md)
+- verification and readiness:
+  [docs/verification/stage7-production-readiness.md](docs/verification/stage7-production-readiness.md)
+- full docs entry:
+  [docs/README.md](docs/README.md)
+
+## Non-Goals
+
+This repository intentionally does not try to be:
+
+- a frontend chat UI
+- a RAG or vector retrieval stack
+- an agent workflow platform
+- a model training or inference optimization system
+- a generic AI demo repository
+
+That boundary is what keeps the project coherent as infrastructure and gateway
+engineering evidence.

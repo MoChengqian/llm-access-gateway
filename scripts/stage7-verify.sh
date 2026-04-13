@@ -124,6 +124,7 @@ run_static_asset_inventory() {
     ".github/workflows/runtime-ci.yml"
     ".github/workflows/nightly-verification.yml"
     ".github/nightly/benchmark-baseline.json"
+    "docs/verification/README.md"
     "docs/verification/stage7-delivery-contract.md"
     "docs/verification/stage7-production-readiness.md"
     "docs/verification/sonar-quality-gate.md"

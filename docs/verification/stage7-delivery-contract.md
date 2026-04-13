@@ -11,6 +11,9 @@ Use [`stage7-production-readiness.md`](stage7-production-readiness.md) as the
 operator-facing matrix that connects this contract to deployment, observability,
 load, drill, and cluster preflight evidence.
 
+Use [`README.md`](README.md) in this directory as the shortest public-facing
+verification map. This page defines the stricter repository contract behind it.
+
 ## Canonical Verification Entrypoints
 
 ### Static Contract
