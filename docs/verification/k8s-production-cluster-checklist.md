@@ -1,6 +1,6 @@
 # Kubernetes Production Cluster Checklist
 
-Date: 2026-04-11
+Date: 2026-04-13
 
 ## Purpose
 
@@ -11,6 +11,18 @@ Local render checks prove that manifests compose correctly. They do not prove
 that a target cluster accepts the objects, has metrics for HPA, or enforces
 NetworkPolicy. This checklist closes that gap without making CI depend on a
 live cluster.
+
+This page is only applicable once a real cluster or staging cluster exists. If
+you are validating the repository without any target environment yet, stop at
+the local check and treat the server-side dry-run as deferred rollout guidance.
+
+## Applicability
+
+Use this page in two phases:
+
+- repository-only phase: run `make k8s-production-local-check`
+- environment rollout phase: run `make k8s-production-server-dry-run` after
+  you have a real cluster, valid kubeconfig, and environment-owned values
 
 ## Local Check
 
@@ -32,7 +44,7 @@ This renders both overlays and verifies the expected objects are present:
 
 ## Server-Side Dry Run
 
-Run this against the target cluster before the first apply:
+Run this against the chosen target cluster before the first apply:
 
 ```bash
 make k8s-production-server-dry-run
@@ -60,12 +72,13 @@ The cluster-check script now prints the active context and server first, then
 turns common TLS and credential failures into explicit remediation guidance
 instead of surfacing only a raw `kubectl` exit code.
 
-## Latest Recorded Attempt
+## Historical Environment Attempt
 
-The latest target-cluster evidence is recorded in
+The latest recorded environment-access failure is retained in
 [`k8s-production-server-dry-run-2026-04-12.md`](k8s-production-server-dry-run-2026-04-12.md).
 
-That attempt proved the repository overlays still render locally, but the
+That note is useful as a troubleshooting example, not as an open Stage 7
+repository blocker. It proved the overlays still rendered locally, but the
 operator workstation's kubeconfig had drifted from the target cluster:
 
 - kubeconfig CA data no longer matched the apiserver certificate chain
@@ -74,9 +87,9 @@ operator workstation's kubeconfig had drifted from the target cluster:
 - SSH access from the workstation to the control-plane node was not available,
   so `/etc/kubernetes/admin.conf` could not be refreshed in-place
 
-Treat this as an environment-owned blocker. The Stage 7 repository contract
-remains complete, but target-cluster dry-run evidence is not current again
-until the workstation regains valid Kubernetes admin access.
+Treat this as an environment-owned blocker. The Stage 7 repository contract can
+still be complete without fresh cluster evidence; only cluster rollout claims
+must wait until valid Kubernetes admin access exists again.
 
 ## Manual Cluster Checks
 

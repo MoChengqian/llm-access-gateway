@@ -168,6 +168,10 @@ The local production overlay evidence is recorded in
 The target-cluster preflight checklist is recorded in
 [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md).
 
+That cluster preflight is an environment acceptance gate. It becomes required
+only when a real target cluster exists and a rollout is about to happen; it is
+not a prerequisite for declaring the repository-side Stage 7 contract complete.
+
 The end-to-end readiness matrix is recorded in
 [`stage7-production-readiness.md`](stage7-production-readiness.md).
 
@@ -213,6 +217,11 @@ of truth, then check them through `cmd/nightlycheck` and render summaries throug
 `cmd/nightlyreport`.
 
 ## Stage 7 Completion Criteria
+
+These criteria describe repository completion. Environment-specific rollout
+acceptance is tracked separately through
+[`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md)
+and only applies once a real cluster exists.
 
 Stage 7 is complete when all of the following are true:
 

@@ -536,7 +536,8 @@ Stage 7 is complete for the v1 repository contract:
 - `deployments/k8s-overlays/production-hpa/` provides an optional renderable HPA
   overlay for clusters with metrics support
 - `scripts/k8s-production-cluster-check.sh` standardizes local render checks and
-  target-cluster server-side dry runs before real Kubernetes apply
+  target-cluster server-side dry runs before real Kubernetes apply when a real
+  environment exists
 - `docs/verification/stage7-production-readiness.md` provides the single
   readiness matrix across Compose, observability, Kubernetes, runtime,
   benchmarks, drills, and nightly evidence
@@ -547,6 +548,9 @@ Stage 7 is complete for the v1 repository contract:
   protect the runtime contract and now explicitly require production overlay
   rendering before the static contract
 - `scripts/stage7-verify.sh` standardizes static and runtime verification
+
+Real cluster rollout evidence remains environment-owned and can be completed
+later without changing the Stage 7 repository-complete judgment.
 
 Remaining future hardening is intentionally outside Stage 7:
 

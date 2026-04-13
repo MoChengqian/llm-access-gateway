@@ -1,6 +1,6 @@
 # Stage 7 Production Readiness Matrix
 
-Date: 2026-04-11
+Date: 2026-04-13
 
 ## Purpose
 
@@ -11,6 +11,11 @@ nightly evidence into one checklist.
 It is not a claim that any arbitrary cluster is production-ready by default.
 Cluster credentials, DNS, TLS, registry access, MySQL, Redis, provider quota,
 NetworkPolicy enforcement, and observability retention remain environment-owned.
+
+It also distinguishes repository completion from environment rollout
+acceptance. The repository can complete Stage 7 before any real cluster
+exists; a specific cluster only becomes rollout-ready after environment-owned
+checks pass.
 
 ## Readiness Matrix
 
@@ -24,7 +29,7 @@ NetworkPolicy enforcement, and observability retention remain environment-owned.
 | Kubernetes production render | [`k8s-production-overlay.md`](k8s-production-overlay.md) | `make k8s-production-render` | Required in CI |
 | Kubernetes optional HPA render | [`k8s-production-overlay.md`](k8s-production-overlay.md) | `make k8s-production-hpa-render` | Required in CI |
 | Kubernetes local preflight | [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md) | `make k8s-production-local-check` | Required before cluster dry-run |
-| Kubernetes server dry-run | [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md), [`k8s-production-server-dry-run-2026-04-12.md`](k8s-production-server-dry-run-2026-04-12.md) | `make k8s-production-server-dry-run` | Required before real apply |
+| Kubernetes server dry-run | [`k8s-production-cluster-checklist.md`](k8s-production-cluster-checklist.md), [`k8s-production-server-dry-run-2026-04-12.md`](k8s-production-server-dry-run-2026-04-12.md) | `make k8s-production-server-dry-run` | Environment gate before real apply |
 | Load baseline | [`benchmarks/methodology.md`](benchmarks/methodology.md) | `go run ./cmd/loadtest ... -json` | Canonical load tool |
 | Failure drills | [`failure-drills/provider-errors.md`](failure-drills/provider-errors.md) | `./scripts/provider-fallback-drill.sh create-fail` | Repeatable resilience evidence |
 | Streaming drills | [`failure-drills/streaming-failures.md`](failure-drills/streaming-failures.md) | `./scripts/provider-fallback-drill.sh stream-fail` | Repeatable streaming evidence |
@@ -91,7 +96,7 @@ make observability-demo-verify
 These checks prove local request handling, auth, usage, load, metrics, and OTLP
 export remain demonstrable without a target Kubernetes cluster.
 
-## Kubernetes Gate
+## Kubernetes Repository Gate
 
 Run local render checks first:
 
@@ -99,7 +104,14 @@ Run local render checks first:
 make k8s-production-local-check
 ```
 
-Run target-cluster dry-run checks before real apply:
+This is the repository-owned Kubernetes completion gate. It proves the shipped
+overlays still render, include the expected objects, and can be reviewed before
+any environment exists.
+
+## Kubernetes Environment Gate
+
+Run target-cluster dry-run checks only when you have chosen a real cluster and
+have valid cluster credentials:
 
 ```bash
 make k8s-production-server-dry-run
@@ -107,6 +119,9 @@ make k8s-production-server-dry-run
 
 This gate proves the target API server accepts the overlays and that HPA metrics
 support is available before the optional HPA overlay is applied.
+
+If no real cluster exists yet, this gate remains pending by definition. That is
+not a repository defect.
 
 ## Real Apply Gate
 
@@ -144,7 +159,7 @@ kubectl -n llm-access-gateway get hpa llm-access-gateway
 - This repository does not provide long-term metrics or trace retention.
 - This repository does not replace provider-side quota, billing, or incident controls.
 
-## Readiness Decision
+## Repository Completion Decision
 
 For the v1 repository contract, Stage 7 is complete when:
 
@@ -152,9 +167,21 @@ For the v1 repository contract, Stage 7 is complete when:
 - `make stage7-runtime` passes against a live gateway
 - `make observability-demo-verify` passes in a local demo environment
 - `make k8s-production-local-check` passes locally
-- `make k8s-production-server-dry-run` passes against the target cluster before real apply
 - nightly benchmark and failure-drill workflows remain green
 - SonarCloud computes an explicit quality-gate result for `main`
 
-If any of those fail, the project is not ready to claim production-style
-delivery for that environment.
+If any of those fail, the project is not ready to claim the Stage 7 repository
+contract.
+
+## Environment Promotion Decision
+
+A specific cluster environment is rollout-ready only when all of the following
+are true:
+
+- valid cluster access exists for the intended environment
+- `make k8s-production-server-dry-run` passes against that cluster
+- environment-owned values are replaced before apply
+- post-apply rollout and smoke checks pass in that environment
+
+Without a real cluster, the repository can still be Stage 7 complete, but no
+cluster-specific rollout claim should be made.

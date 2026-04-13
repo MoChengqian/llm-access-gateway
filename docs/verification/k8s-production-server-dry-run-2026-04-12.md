@@ -9,6 +9,10 @@ Record one target-cluster verification attempt for the Stage 7
 repository-owned overlays are valid but the workstation can no longer talk to
 the target cluster with trusted admin credentials.
 
+This is historical environment evidence, not an open repository-completion
+blocker. Use it to understand access-failure modes when a real cluster exists,
+not to judge repository-only Stage 7 progress.
+
 ## Target Context
 
 - `kubectl` context: `kubernetes-admin@kubernetes`
