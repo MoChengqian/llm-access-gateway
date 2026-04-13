@@ -1,5 +1,10 @@
 # LLM Access Gateway Documentation
 
+LLM Access Gateway is a Go-based multi-tenant AI gateway for model access
+governance: it keeps the external API OpenAI-compatible while making routing
+policy, quota enforcement, fallback behavior, observability, and delivery
+verification explicit and reviewable.
+
 This documentation is organized around decisions, runnable paths, and evidence.
 If you are new to the repository, do not read it folder by folder. Start with
 the path that matches your goal.
