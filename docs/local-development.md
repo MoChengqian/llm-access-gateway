@@ -4,58 +4,94 @@ This document is the shortest path to run the current repository locally with
 MySQL-backed auth, Redis-backed limiter counters, configurable provider adapters,
 and provider fallback enabled.
 
-All commands below are based on the current code and current repo layout:
+Use this page in two passes:
 
-- MySQL compose: `deployments/docker/docker-compose.yml`
-- Redis compose: `deployments/docker/docker-compose.yml`
-- local init command: `go run ./cmd/devinit`
-- gateway command: `go run ./cmd/gateway`
-- load test command: `go run ./cmd/loadtest`
-- route rule admin command: `go run ./cmd/routerulectl`
-- models endpoint: `GET /v1/models`
-- route policy table: `route_rules`
+1. get the gateway running locally
+2. verify the first request path before going deeper into drills or deployment
 
-## Verified Local Path
+## Fast First Run Path
 
-The current local verification path for this repo is:
+This is the shortest local startup path:
 
 ```bash
-docker compose -f deployments/docker/docker-compose.yml up -d
+docker compose -f deployments/docker/docker-compose.yml up -d mysql redis
+until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-mysql)" = "healthy" ]; do
+  sleep 1
+done
+until [ "$(docker inspect -f '{{.State.Health.Status}}' llm-access-gateway-redis)" = "healthy" ]; do
+  sleep 1
+done
 export APP_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/llm_access_gateway?parseTime=true'
 export APP_REDIS_ADDRESS='127.0.0.1:6379'
-export APP_SERVER_READ_HEADER_TIMEOUT_SECONDS='5'
-export APP_SERVER_READ_TIMEOUT_SECONDS='15'
-export APP_SERVER_WRITE_TIMEOUT_SECONDS='60'
-export APP_SERVER_IDLE_TIMEOUT_SECONDS='60'
-export APP_SERVER_MAX_REQUEST_BODY_BYTES='1048576'
-export APP_GATEWAY_PRIMARY_MOCK_FAIL_CREATE='false'
-export APP_GATEWAY_PRIMARY_MOCK_FAIL_STREAM='false'
 go run ./cmd/devinit
 go run ./cmd/gateway
 ```
 
-The expected API results are:
+Run `go run ./cmd/gateway` in a second terminal if you want to keep using the
+same shell for verification commands.
 
-- missing key -> `401`
-- invalid key -> `401`
-- rate limit exceeded -> `429`
-- token rate limit exceeded -> `429`
-- budget exceeded -> `403`
-- valid key -> `200`
-- models list -> `200`, and the gateway still returns aggregated models if at least one provider source is healthy
-- usage endpoint -> `200`, and only returns summary plus recent request usage for the authenticated tenant
-- `stream:true` -> `text/event-stream` and final `[DONE]`
-- if an upstream stream is interrupted after output starts, the gateway ends the stream without emitting a false `[DONE]`
-- forced primary provider failure still falls back to `200`
-- provider health can be inspected from `/debug/providers`
-- `cmd/devinit` seeds default `route_rules` from the current provider config, so local routing already runs from MySQL policy data
-- `cmd/routerulectl list|replace|sync-from-config` is the operator workflow for inspecting and updating persisted route rules
-- metrics can be inspected from `/metrics`
-- every response includes `X-Trace-Id` for log correlation
-- primary / secondary providers can be configured as `mock`, `openai`, `anthropic`, or `ollama`
-- provider readiness is refreshed by an active background probe loop
-- Hosted HTTP providers support timeout plus pre-stream retries before fallback
-- Anthropic providers translate OpenAI-style `system` messages into Anthropic's top-level `system` field and require `max_tokens` (default `1024`)
+At that point, the local base URL is:
+
+```text
+http://127.0.0.1:8080
+```
+
+and the seeded local API key is:
+
+```text
+lag-local-dev-key
+```
+
+## Fast First Verification Path
+
+Run these checks next:
+
+```bash
+curl -i http://127.0.0.1:8080/healthz
+curl -i http://127.0.0.1:8080/readyz
+curl -i http://127.0.0.1:8080/v1/models \
+  -H 'Authorization: Bearer lag-local-dev-key'
+curl -i 'http://127.0.0.1:8080/v1/usage?limit=5' \
+  -H 'Authorization: Bearer lag-local-dev-key'
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+curl -i -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+That path proves:
+
+- the process is alive
+- readiness is computed
+- the seed tenant and key work
+- non-stream and stream request paths are both live
+- model listing and usage reporting are reachable
+
+If you want the repository-owned runtime contract instead of manual `curl`
+checks, run:
+
+```bash
+make stage7-runtime
+```
+
+If you want the endpoint-by-endpoint reference after this first pass, continue
+with [api.md](api.md). If you want the full proof map, continue with
+[verification/README.md](verification/README.md).
+
+## What This Local Path Covers
+
+The local path in this file covers:
+
+- MySQL-backed auth
+- Redis-backed limiter counters
+- MySQL-seeded `route_rules`
+- provider health, fallback, and readiness
+- metrics and trace headers on live requests
+- the same first verification path referenced by [api.md](api.md)
 
 ## Prerequisites
 

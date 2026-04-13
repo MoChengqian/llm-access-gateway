@@ -1,6 +1,54 @@
 # API Endpoints
 
-This document provides detailed documentation for all HTTP endpoints exposed by the LLM Access Gateway.
+Use this page after [API Reference](../api.md). [Local Development](../local-development.md)
+gets the gateway running, and [API Reference](../api.md) gives the shortest
+first-pass checks. This file is the next layer: the authenticated tenant API
+contract, the request and error boundaries, and what each request actually
+proves.
+
+## Fast Detailed Verification Path
+
+If the first-pass checks already work, this is the shortest deep dive for the
+tenant-scoped HTTP surface:
+
+```bash
+curl -i http://127.0.0.1:8080/v1/models \
+  -H 'Authorization: Bearer lag-local-dev-key'
+curl -i 'http://127.0.0.1:8080/v1/usage?limit=5' \
+  -H 'Authorization: Bearer lag-local-dev-key'
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+curl -i -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
+curl -i 'http://127.0.0.1:8080/v1/usage?limit=bad' \
+  -H 'Authorization: Bearer lag-local-dev-key'
+```
+
+That path proves:
+
+- authenticated tenant-scoped endpoints are reachable with the seeded local key
+- model listing and usage inspection stay separate from completion execution
+- chat completions expose both JSON and SSE contracts
+- request validation failures stay at the gateway boundary with explicit HTTP status codes
+
+For the broader repository-owned proof path, keep
+[verification/README.md](../verification/README.md) open in parallel.
+
+## Scope Of This Page
+
+This file focuses on the authenticated tenant-scoped endpoints:
+
+- `GET /v1/models`
+- `GET /v1/usage`
+- `POST /v1/chat/completions`
+
+Operational endpoints such as `/healthz`, `/readyz`, `/debug/providers`, and
+`/metrics` stay in [API Reference](../api.md) because they belong to the
+first-pass repository check rather than the tenant API contract.
 
 ## GET /v1/models
 
@@ -222,6 +270,7 @@ Content-Type: application/json
 
 - [Authentication](authentication.md) - Detailed authentication and API key management
 - [POST /v1/chat/completions](endpoints.md#post-v1chatcompletions) - Create chat completions
+- [SSE Streaming Format](streaming.md) - Stream-specific protocol and failure boundaries
 - [Architecture: Provider Adapters](../architecture/provider-adapters.md) - Provider abstraction design
 
 ## GET /v1/usage
@@ -393,6 +442,7 @@ Content-Type: application/json
 - [Authentication](authentication.md) - API key requirements and tenant lookup
 - [Architecture: Governance](../architecture/governance.md) - RPM, TPM, and budget model
 - [Quota Enforcement Drill](../verification/failure-drills/quota-enforcement.md) - Observed rejection behavior
+- [API Reference](../api.md) - First-pass endpoint checks and operational routes
 
 ## POST /v1/chat/completions
 
@@ -887,3 +937,4 @@ Content-Type: application/json
 - [SSE Streaming Format](streaming.md) - Deep dive into streaming implementation
 - [Architecture: Governance](../architecture/governance.md) - Multi-tenant governance model
 - [Architecture: Streaming Proxy](../architecture/streaming-proxy.md) - Streaming proxy design
+- [Verification Index](../verification/README.md) - Stage 5 to Stage 7 proof map
