@@ -3,6 +3,58 @@
 This document describes the current HTTP surface exposed by the repository.
 All paths, headers, and examples are based on the current code.
 
+Use this page after [Local Development](local-development.md). That page gets
+the gateway running; this page tells you what to call first and what each
+endpoint proves.
+
+## Fast First Verification Path
+
+If you only want the minimum first-pass API check, use these requests after
+`go run ./cmd/devinit` and `go run ./cmd/gateway`:
+
+```bash
+curl -i http://127.0.0.1:8080/healthz
+curl -i http://127.0.0.1:8080/readyz
+curl -i http://127.0.0.1:8080/v1/models \
+  -H 'Authorization: Bearer lag-local-dev-key'
+curl -i 'http://127.0.0.1:8080/v1/usage?limit=5' \
+  -H 'Authorization: Bearer lag-local-dev-key'
+curl -i http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+curl -i -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+That first-pass path proves:
+
+- the process is live
+- readiness is computed from provider health
+- authenticated tenant-scoped endpoints work
+- non-stream and stream chat completions both work
+- the local seed key is valid for the current request path
+
+For the broader verification contract, read
+[verification/README.md](verification/README.md).
+
+## API Surface At A Glance
+
+Operational endpoints:
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /debug/providers`
+- `GET /metrics`
+
+Tenant-scoped endpoints:
+
+- `GET /v1/models`
+- `GET /v1/usage`
+- `POST /v1/chat/completions`
+
 Base URL for local development:
 
 ```text
@@ -20,6 +72,10 @@ Current local development key after `go run ./cmd/devinit`:
 ```text
 lag-local-dev-key
 ```
+
+The local first-run and first-verification language in this file intentionally
+matches [Local Development](local-development.md) so the first request path and
+the first API checks stay aligned.
 
 ## `GET /healthz`
 
