@@ -1,6 +1,44 @@
 # SSE Streaming Format
 
-This document describes the Server-Sent Events (SSE) streaming format used by the LLM Access Gateway for streaming chat completions.
+Use this page after [Local Development](../local-development.md) and the first
+stream check in [API Reference](../api.md). Once
+`POST /v1/chat/completions` with `"stream": true` is returning bytes, this file
+explains the exact SSE contract, the fallback boundary, and how to verify
+mid-stream behavior without guessing.
+
+## Fast Detailed Verification Path
+
+If you only want the shortest streaming-specific proof path, run:
+
+```bash
+curl -i -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer lag-local-dev-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"hello"}],"stream":true}'
+./scripts/provider-fallback-drill.sh stream-fail
+curl -s http://127.0.0.1:8080/metrics | grep -E 'lag_stream_(requests_total|chunks_total|ttft_milliseconds_)'
+```
+
+That path proves:
+
+- streaming opens as SSE rather than JSON
+- a healthy full stream ends with `data: [DONE]`
+- a pre-first-chunk upstream failure can still fall back to another backend
+- stream request, chunk, and TTFT metrics are exposed for correlation
+
+To inspect the post-first-chunk failure boundary, read
+[Streaming Failure Drill](../verification/failure-drills/streaming-failures.md)
+in parallel. The gateway deliberately does not emit a fake `[DONE]` once bytes
+have already been sent.
+
+## Boundary At A Glance
+
+The streaming contract has one critical split:
+
+- before the first chunk is flushed, the gateway can still retry or fall back
+- after the first chunk is flushed, the response is committed and can only finish or terminate
+
+Everything below expands that boundary in protocol detail.
 
 ## Overview
 
@@ -265,6 +303,8 @@ Token counting for streaming requests happens as chunks arrive, and the final us
 - [API Endpoints](endpoints.md) - Complete API reference including streaming requests
 - [Authentication](authentication.md) - API key authentication requirements
 - [Architecture: Streaming Proxy](../architecture/streaming-proxy.md) - Detailed streaming proxy design
+- [Streaming Failure Drill](../verification/failure-drills/streaming-failures.md) - Before-first-chunk vs after-first-chunk evidence
+- [Verification Index](../verification/README.md) - Stage 5 to Stage 7 proof map
 
 ## Verification
 

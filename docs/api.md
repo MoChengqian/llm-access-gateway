@@ -37,6 +37,12 @@ That first-pass path proves:
 - non-stream and stream chat completions both work
 - the local seed key is valid for the current request path
 
+If the first pass is green and you want the next layer of detail, continue with:
+
+- [api/endpoints.md](api/endpoints.md) for the tenant-scoped HTTP contract and error boundaries
+- [api/streaming.md](api/streaming.md) for SSE behavior, fallback limits, and TTFT checks
+- [api/authentication.md](api/authentication.md) for API key requirements and tenant lookup rules
+
 For the broader verification contract, read
 [verification/README.md](verification/README.md).
 
